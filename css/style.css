@@ -145,20 +145,14 @@ body {
     padding: 24px 20px;
     display: flex;
     align-items: center;
-    gap: 12px;
+    justify-content: center;
     border-bottom: 1px solid rgba(255,255,255,0.08);
 }
 
 .sidebar-logo {
-    height: 36px;
-    width: auto;
-}
-
-.sidebar-title {
-    color: var(--accent-400);
-    font-weight: 700;
-    font-size: 1.05rem;
-    letter-spacing: 0.5px;
+    max-width: 80%;
+    height: auto;
+    max-height: 44px;
 }
 
 .sidebar-nav {
