@@ -30,9 +30,9 @@ let tranchingTranches = [
 
 // ── Default values per type (for reset) ──
 const DEFAULTS = {
-    constant: { 'cr-principal': 500000, 'cr-rate': 4.5, 'cr-duration': 84, 'cr-insurance': 0, 'cr-insurance-rate': 0.30, 'cr-fees': 0 },
-    degressif: { 'cr-principal': 500000, 'cr-rate': 4.5, 'cr-duration': 84, 'cr-insurance': 0, 'cr-insurance-rate': 0.30, 'cr-fees': 0 },
-    infine: { 'cr-principal': 500000, 'cr-rate': 4.5, 'cr-duration': 84, 'cr-insurance': 0, 'cr-insurance-rate': 0.30, 'cr-fees': 0 },
+    constant: { 'cr-principal': 500000, 'cr-rate': 4.5, 'cr-duration': 84, 'cr-insurance': 0, 'cr-insurance-rate': 0.30, 'cr-fees': 0, 'cr-frequency': 'monthly', 'cr-deferral': 0 },
+    degressif: { 'cr-principal': 500000, 'cr-rate': 4.5, 'cr-duration': 84, 'cr-insurance': 0, 'cr-insurance-rate': 0.30, 'cr-fees': 0, 'cr-frequency': 'monthly', 'cr-deferral': 0 },
+    infine: { 'cr-principal': 500000, 'cr-rate': 4.5, 'cr-duration': 84, 'cr-insurance': 0, 'cr-insurance-rate': 0.30, 'cr-fees': 0, 'cr-frequency': 'monthly' },
     creditbail: { 'cr-principal': 500000, 'cr-deposit': 50000, 'cr-rate': 5.0, 'cr-duration': 60, 'cr-residual': 25000, 'cr-fees': 0 },
     revolving: { 'cr-principal': 1000000, 'cr-utilization': 60, 'cr-rate': 5.5, 'cr-commitment': 0.5, 'cr-duration': 12 },
     relais: { 'cr-principal': 300000, 'cr-salePrice': 450000, 'cr-rate': 5.0, 'cr-duration': 18, 'cr-capitalized': false, 'cr-fees': 0 },
@@ -242,6 +242,8 @@ function getRequiredFields(type) {
 }
 
 function getFormHTML(type) {
+    const hasDeferral = type === 'constant' || type === 'degressif';
+    const hasFrequency = type === 'constant' || type === 'degressif' || type === 'infine';
     const common = `
         <div class="form-row">
             <div class="form-group">
@@ -265,6 +267,31 @@ function getFormHTML(type) {
                     <span class="input-suffix">mois</span>
                 </div>
             </div>
+        </div>
+        <div class="form-row">
+            ${hasFrequency ? `<div class="form-group">
+                <label class="form-label">Fréquence d'amortissement</label>
+                <select class="form-select" id="cr-frequency">
+                    <option value="monthly">Mensuel</option>
+                    <option value="quarterly">Trimestriel</option>
+                    <option value="semiannual">Semestriel</option>
+                    <option value="annual">Annuel</option>
+                </select>
+            </div>` : ''}
+            ${hasDeferral ? `<div class="form-group">
+                <label class="form-label">Différé (mois)</label>
+                <div class="input-group">
+                    <input type="number" class="form-input" id="cr-deferral" value="0" min="0" max="60" step="1">
+                    <span class="input-suffix">mois</span>
+                </div>
+            </div>
+            <div class="form-group" id="deferral-type-group" style="display:none">
+                <label class="form-label">Type de différé</label>
+                <div class="toggle-group" id="deferral-type-toggle">
+                    <button type="button" class="toggle-btn active" data-dtype="partial">Partiel (intérêts)</button>
+                    <button type="button" class="toggle-btn" data-dtype="total">Total (capitalisé)</button>
+                </div>
+            </div>` : ''}
         </div>
         <div class="form-row">
             <div class="form-group insurance-group">
@@ -528,20 +555,23 @@ function getFormHTML(type) {
 function getResultsHTML(type, result) {
     const f = Financial.formatCurrency;
     const p = Financial.formatPercent;
+    const freq = result.frequency || 'monthly';
+    const payLabel = Financial.getPaymentLabel(freq);
+    const ppy = Financial.getPeriodsPerYear(freq);
+    const deferralInfo = result.deferralMonths > 0 ? `<div class="result-item"><div class="result-label">Différé</div><div class="result-value">${result.deferralMonths} mois (${result.deferralType === 'total' ? 'total' : 'partiel'})</div></div>` : '';
 
     switch (type) {
         case 'constant':
             return `
                 <div class="results-grid">
                     <div class="result-item">
-                        <div class="result-label">Mensualité</div>
-                        <div class="result-value">${f(result.monthlyPayment)}</div>
-                        <div class="result-sub">hors assurance: ${f(result.monthlyPaymentExInsurance)}</div>
+                        <div class="result-label">${payLabel}</div>
+                        <div class="result-value">${f(result.periodicPayment)}</div>
+                        ${freq === 'monthly' ? `<div class="result-sub">hors assurance: ${f(result.monthlyPaymentExInsurance)}</div>` : ''}
                     </div>
                     <div class="result-item">
-                        <div class="result-label">Annuité totale</div>
-                        <div class="result-value">${f(result.monthlyPayment * 12)}</div>
-                        <div class="result-sub">service de la dette annuel</div>
+                        <div class="result-label">Service de dette annuel</div>
+                        <div class="result-value">${f(result.periodicPayment * ppy)}</div>
                     </div>
                     <div class="result-item">
                         <div class="result-label">Coût total des intérêts</div>
@@ -559,26 +589,28 @@ function getResultsHTML(type, result) {
                         <div class="result-label">Assurance totale</div>
                         <div class="result-value">${f(result.totalInsurance)}</div>
                     </div>
+                    ${deferralInfo}
+                    ${result.taeg != null ? `<div class="result-item"><div class="result-label">TAEG</div><div class="result-value">${result.taeg.toFixed(2)} %</div></div>` : ''}
                 </div>`;
 
-        case 'degressif':
+        case 'degressif': {
+            const firstYearPeriods = Math.min(ppy, result.schedule.length);
             return `
                 <div class="results-grid">
                     <div class="result-item">
-                        <div class="result-label">1ère mensualité</div>
+                        <div class="result-label">1ère ${payLabel.toLowerCase()}</div>
                         <div class="result-value">${f(result.firstPayment)}</div>
                     </div>
                     <div class="result-item">
-                        <div class="result-label">Annuité 1ère année</div>
-                        <div class="result-value">${f(result.schedule.slice(0, 12).reduce((s, r) => s + r.payment, 0))}</div>
-                        <div class="result-sub">service de la dette annuel</div>
+                        <div class="result-label">Service de dette 1ère année</div>
+                        <div class="result-value">${f(result.schedule.slice(0, firstYearPeriods).reduce((s, r) => s + r.payment, 0))}</div>
                     </div>
                     <div class="result-item">
-                        <div class="result-label">Dernière mensualité</div>
+                        <div class="result-label">Dernière ${payLabel.toLowerCase()}</div>
                         <div class="result-value">${f(result.lastPayment)}</div>
                     </div>
                     <div class="result-item">
-                        <div class="result-label">Mensualité moyenne</div>
+                        <div class="result-label">${payLabel} moyenne</div>
                         <div class="result-value">${f(result.averagePayment)}</div>
                     </div>
                     <div class="result-item">
@@ -589,19 +621,20 @@ function getResultsHTML(type, result) {
                         <div class="result-label">Coût total</div>
                         <div class="result-value">${f(result.totalCost)}</div>
                     </div>
+                    ${deferralInfo}
                 </div>`;
+        }
 
         case 'infine':
             return `
                 <div class="results-grid">
                     <div class="result-item">
-                        <div class="result-label">Mensualité (intérêts)</div>
-                        <div class="result-value">${f(result.monthlyPayment)}</div>
+                        <div class="result-label">${payLabel} (intérêts)</div>
+                        <div class="result-value">${f(result.periodicPayment)}</div>
                     </div>
                     <div class="result-item">
-                        <div class="result-label">Annuité totale</div>
-                        <div class="result-value">${f(result.monthlyPayment * 12)}</div>
-                        <div class="result-sub">service de la dette annuel</div>
+                        <div class="result-label">Service de dette annuel</div>
+                        <div class="result-value">${f(result.periodicPayment * ppy)}</div>
                     </div>
                     <div class="result-item">
                         <div class="result-label">Échéance finale</div>
@@ -809,17 +842,23 @@ function runSimulation() {
         ? { insuranceMonthly: 0, insuranceRate: val('cr-insurance-rate'), insuranceMode: insMode.nature }
         : { insuranceMonthly: val('cr-insurance'), insuranceRate: 0, insuranceMode: 'ci' };
 
+    // Read frequency and deferral for applicable types
+    const frequency = document.getElementById('cr-frequency')?.value || 'monthly';
+    const deferralMonths = parseFloat(document.getElementById('cr-deferral')?.value) || 0;
+    const deferralTypeBtn = document.querySelector('#deferral-type-toggle .toggle-btn.active');
+    const deferralType = deferralTypeBtn?.dataset.dtype || 'partial';
+
     switch (currentType) {
         case 'constant':
-            params = { principal: val('cr-principal'), annualRate: val('cr-rate'), durationMonths: val('cr-duration'), ...insuranceParams, fees: val('cr-fees') };
+            params = { principal: val('cr-principal'), annualRate: val('cr-rate'), durationMonths: val('cr-duration'), ...insuranceParams, fees: val('cr-fees'), frequency, deferralMonths, deferralType };
             result = Financial.amortissableConstant(params);
             break;
         case 'degressif':
-            params = { principal: val('cr-principal'), annualRate: val('cr-rate'), durationMonths: val('cr-duration'), ...insuranceParams, fees: val('cr-fees') };
+            params = { principal: val('cr-principal'), annualRate: val('cr-rate'), durationMonths: val('cr-duration'), ...insuranceParams, fees: val('cr-fees'), frequency, deferralMonths, deferralType };
             result = Financial.amortissableDegressif(params);
             break;
         case 'infine':
-            params = { principal: val('cr-principal'), annualRate: val('cr-rate'), durationMonths: val('cr-duration'), ...insuranceParams, fees: val('cr-fees') };
+            params = { principal: val('cr-principal'), annualRate: val('cr-rate'), durationMonths: val('cr-duration'), ...insuranceParams, fees: val('cr-fees'), frequency };
             result = Financial.inFine(params);
             break;
         case 'creditbail':
@@ -850,12 +889,52 @@ function runSimulation() {
 
     // Render results
     const resultsDiv = document.getElementById('credit-results');
+    const supportsPrepayment = ['constant', 'degressif', 'infine'].includes(currentType);
     if (resultsDiv) {
         resultsDiv.innerHTML = `
             <div class="results-panel">
                 ${getResultsHTML(currentType, result)}
             </div>
+            ${supportsPrepayment ? `
+            <div class="card section" style="margin-top:20px">
+                <div class="card-header">
+                    <div>
+                        <div class="card-title">Remboursement Anticipé</div>
+                        <div class="card-subtitle">Simuler un remboursement partiel ou total avec IRA</div>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Période du remboursement (n° échéance)</label>
+                        <div class="input-group">
+                            <input type="number" class="form-input" id="ra-period" value="24" min="1" max="${result.schedule.length}" step="1">
+                            <span class="input-suffix">/ ${result.schedule.length}</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Montant remboursé (€)</label>
+                        <div class="input-group">
+                            <input type="number" class="form-input" id="ra-amount" value="100000" min="1000" step="1000">
+                            <span class="input-suffix">€</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Stratégie</label>
+                        <select class="form-select" id="ra-strategy">
+                            <option value="reduceDuration">Réduire la durée</option>
+                            <option value="reducePayment">Réduire les échéances</option>
+                        </select>
+                    </div>
+                </div>
+                <button type="button" class="btn btn-outline" id="btn-calc-prepayment" style="margin-top:12px">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                    Calculer l'impact
+                </button>
+                <div id="prepayment-results"></div>
+            </div>` : ''}
         `;
+        // Setup prepayment button
+        document.getElementById('btn-calc-prepayment')?.addEventListener('click', runPrepaymentAnalysis);
     }
 
     // Render charts
@@ -888,11 +967,15 @@ function renderScheduleTable(schedule) {
     const container = document.getElementById('schedule-table');
     if (!container || !schedule?.length) return;
 
+    const freq = lastResult?.results?.frequency || 'monthly';
+    const periodLabel = Financial.getPeriodLabel(freq);
+    const payLabel = Financial.getPaymentLabel(freq);
+
     const first = schedule[0];
     const columns = [];
 
-    if ('period' in first) columns.push({ key: 'period', label: 'Période' });
-    if ('payment' in first) columns.push({ key: 'payment', label: 'Mensualité', format: 'currency' });
+    if ('period' in first) columns.push({ key: 'period', label: periodLabel });
+    if ('payment' in first) columns.push({ key: 'payment', label: payLabel, format: 'currency' });
     if ('cashPayment' in first) columns.push({ key: 'cashPayment', label: 'Cash', format: 'currency' });
     if ('principal' in first) columns.push({ key: 'principal', label: 'Capital', format: 'currency' });
     if ('interest' in first) columns.push({ key: 'interest', label: 'Intérêts', format: 'currency' });
@@ -929,6 +1012,99 @@ function renderScheduleTable(schedule) {
             this.remove();
         });
     }
+}
+
+// ── Prepayment analysis ──
+function runPrepaymentAnalysis() {
+    if (!lastResult?.results?.schedule) return;
+    const period = parseInt(document.getElementById('ra-period')?.value) || 24;
+    const amount = parseFloat(document.getElementById('ra-amount')?.value) || 100000;
+    const strategy = document.getElementById('ra-strategy')?.value || 'reduceDuration';
+
+    const analysis = Financial.prepaymentAnalysis({
+        schedule: lastResult.results.schedule,
+        principal: lastResult.params.principal,
+        annualRate: lastResult.params.annualRate,
+        frequency: lastResult.params.frequency || 'monthly',
+        prepaymentPeriod: period,
+        prepaymentAmount: amount,
+        strategy,
+        insuranceMonthly: lastResult.params.insuranceMonthly,
+        insuranceRate: lastResult.params.insuranceRate,
+        insuranceMode: lastResult.params.insuranceMode,
+        type: currentType
+    });
+
+    const container = document.getElementById('prepayment-results');
+    if (!container || !analysis) {
+        if (container) container.innerHTML = '<p style="color:var(--danger);margin-top:12px">Période invalide ou CRD nul à cette date.</p>';
+        return;
+    }
+
+    const f = Financial.formatCurrency;
+    const freq = lastResult.params.frequency || 'monthly';
+    const pLabel = Financial.getPeriodLabel(freq);
+    const c = analysis.comparison;
+
+    container.innerHTML = `
+        <div style="margin-top:20px">
+            <div class="results-grid" style="margin-bottom:16px">
+                <div class="result-item">
+                    <div class="result-label">CRD à la période ${period}</div>
+                    <div class="result-value">${f(analysis.crdAtDate)}</div>
+                </div>
+                <div class="result-item">
+                    <div class="result-label">Montant remboursé</div>
+                    <div class="result-value">${f(analysis.prepaymentAmount)}</div>
+                    <div class="result-sub">${analysis.isTotal ? 'Remboursement total' : 'Remboursement partiel'}</div>
+                </div>
+                <div class="result-item">
+                    <div class="result-label">IRA (indemnités)</div>
+                    <div class="result-value" style="color:var(--danger)">${f(analysis.ira)}</div>
+                    <div class="result-sub">max(3% CRD = ${f(analysis.ira3pct)}, 6 mois int. = ${f(analysis.ira6mois)})</div>
+                </div>
+                <div class="result-item">
+                    <div class="result-label">Coût total du RA</div>
+                    <div class="result-value">${f(analysis.totalCostPrepayment)}</div>
+                    <div class="result-sub">capital + IRA</div>
+                </div>
+            </div>
+            <h4 style="margin:16px 0 8px;font-size:0.95rem">Comparaison avant / après</h4>
+            <div class="table-container">
+                <table class="data-table">
+                    <thead><tr><th></th><th>Avant RA</th><th>Après RA</th><th>Économie</th></tr></thead>
+                    <tbody>
+                        <tr><td>Total intérêts</td><td class="number">${f(c.before.totalInterest)}</td><td class="number">${f(c.after.totalInterest)}</td><td class="number" style="color:var(--success)">${f(c.savings.interest)}</td></tr>
+                        <tr><td>Durée (${pLabel.toLowerCase()})</td><td class="number">${c.before.duration}</td><td class="number">${c.after.duration}</td><td class="number" style="color:var(--success)">${c.savings.duration > 0 ? '-' + c.savings.duration : '—'}</td></tr>
+                        <tr><td>Coût total (int. + ass. + IRA)</td><td class="number">${f(c.before.totalCost)}</td><td class="number">${f(c.after.totalCost)}</td><td class="number" style="color:${c.savings.netSavings > 0 ? 'var(--success)' : 'var(--danger)'}">${f(c.savings.netSavings)}</td></tr>
+                        ${!analysis.isTotal && c.after.periodicPayment ? `<tr><td>Nouvelle échéance</td><td class="number">—</td><td class="number">${f(c.after.periodicPayment)}</td><td class="number">—</td></tr>` : ''}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
+// ── Deferral toggle ──
+function setupDeferralToggle() {
+    const deferralInput = document.getElementById('cr-deferral');
+    const deferralGroup = document.getElementById('deferral-type-group');
+    const deferralToggle = document.getElementById('deferral-type-toggle');
+
+    if (deferralInput && deferralGroup) {
+        const show = () => {
+            deferralGroup.style.display = (parseFloat(deferralInput.value) || 0) > 0 ? '' : 'none';
+        };
+        deferralInput.addEventListener('input', show);
+        show();
+    }
+
+    deferralToggle?.addEventListener('click', e => {
+        const btn = e.target.closest('.toggle-btn');
+        if (!btn) return;
+        deferralToggle.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+    });
 }
 
 function saveSimulation() {
@@ -1205,6 +1381,8 @@ function loadPendingReload() {
             annualRate: 'cr-rate',
             cashRate: 'cr-rate',
             durationMonths: 'cr-duration',
+            frequency: 'cr-frequency',
+            deferralMonths: 'cr-deferral',
             insuranceMonthly: 'cr-insurance',
             insuranceRate: 'cr-insurance-rate',
             fees: 'cr-fees',
@@ -1260,9 +1438,18 @@ function loadPendingReload() {
         setupTranchingListeners();
     }
 
+    // Restore deferral toggle
+    if (pending.params?.deferralType) {
+        const dtToggle = document.getElementById('deferral-type-toggle');
+        dtToggle?.querySelectorAll('.toggle-btn').forEach(b =>
+            b.classList.toggle('active', b.dataset.dtype === pending.params.deferralType)
+        );
+    }
+
     // Setup live formatting and insurance toggle after populating
     setupLiveFormatting();
     setupInsuranceToggle();
+    setupDeferralToggle();
 }
 
 export const CreditModule = {
@@ -1372,9 +1559,10 @@ export const CreditModule = {
             const sub = document.querySelector('.card-subtitle');
             if (sub) sub.textContent = CREDIT_TYPES.find(t => t.id === currentType)?.desc || '';
 
-            // Re-setup live formatting and insurance toggle
+            // Re-setup live formatting, insurance toggle, deferral toggle
             setupLiveFormatting();
             setupInsuranceToggle();
+            setupDeferralToggle();
             if (currentType === 'tranching') setupTranchingListeners();
         });
 
@@ -1394,9 +1582,10 @@ export const CreditModule = {
         document.getElementById('btn-export-pdf')?.addEventListener('click', exportPdf);
         document.getElementById('btn-export-excel')?.addEventListener('click', exportExcel);
 
-        // Setup live formatting and insurance toggle
+        // Setup live formatting, insurance toggle, deferral toggle
         setupLiveFormatting();
         setupInsuranceToggle();
+        setupDeferralToggle();
         if (currentType === 'tranching') setupTranchingListeners();
 
         // Handle pending reload from history

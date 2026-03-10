@@ -101,29 +101,78 @@ export const Financial = {
     },
 
     // =============================================
+    // HELPERS
+    // =============================================
+
+    _frequencyMap: { monthly: 12, quarterly: 4, semiannual: 2, annual: 1 },
+
+    _frequencyLabels: { monthly: 'Mensualité', quarterly: 'Échéance trim.', semiannual: 'Échéance sem.', annual: 'Annuité' },
+
+    _periodLabels: { monthly: 'Mois', quarterly: 'Trim.', semiannual: 'Sem.', annual: 'Année' },
+
+    getPeriodsPerYear(frequency = 'monthly') {
+        return this._frequencyMap[frequency] || 12;
+    },
+
+    getPaymentLabel(frequency = 'monthly') {
+        return this._frequencyLabels[frequency] || 'Mensualité';
+    },
+
+    getPeriodLabel(frequency = 'monthly') {
+        return this._periodLabels[frequency] || 'Mois';
+    },
+
+    // =============================================
     // AMORTIZATION SCHEDULES
     // =============================================
 
     /**
-     * Crédit Amortissable - Mensualités Constantes
+     * Crédit Amortissable - Échéances Constantes
+     * Supports frequency (monthly/quarterly/semiannual/annual)
+     * Supports deferral (partial: interest-only, total: capitalized interest)
      */
-    amortissableConstant({ principal, annualRate, durationMonths, insuranceMonthly = 0, insuranceRate = 0, insuranceMode = 'ci', fees = 0 }) {
-        const monthlyRate = annualRate / 100 / 12;
-        const payment = Math.abs(this.pmt(monthlyRate, durationMonths, principal));
-        const getInsurance = (balance) => {
+    amortissableConstant({ principal, annualRate, durationMonths, insuranceMonthly = 0, insuranceRate = 0, insuranceMode = 'ci', fees = 0, frequency = 'monthly', deferralMonths = 0, deferralType = 'partial' }) {
+        const ppy = this.getPeriodsPerYear(frequency);
+        const periodicRate = annualRate / 100 / ppy;
+        const totalPeriods = Math.round(durationMonths / (12 / ppy));
+        const deferralPeriods = Math.min(Math.round(deferralMonths / (12 / ppy)), totalPeriods - 1);
+        const amortPeriods = totalPeriods - deferralPeriods;
+
+        const getInsurance = (bal) => {
             if (insuranceRate > 0) {
-                const base = insuranceMode === 'crd' ? balance : principal;
-                return base * insuranceRate / 100 / 12;
+                const base = insuranceMode === 'crd' ? bal : principal;
+                return base * insuranceRate / 100 / ppy;
             }
-            return insuranceMonthly;
+            return insuranceMonthly * (12 / ppy);
         };
+
         const schedule = [];
         let balance = principal;
         let totalInterest = 0;
         let totalInsurance = 0;
 
-        for (let i = 1; i <= durationMonths; i++) {
-            const interest = balance * monthlyRate;
+        // Phase 1: Deferral
+        for (let i = 1; i <= deferralPeriods; i++) {
+            const interest = balance * periodicRate;
+            const ins = getInsurance(balance);
+            if (deferralType === 'total') {
+                balance += interest; // capitalize
+                totalInterest += interest;
+                totalInsurance += ins;
+                schedule.push({ period: i, payment: ins, principal: 0, interest: 0, insurance: ins, balance, totalInterest, totalInsurance, deferred: true });
+            } else {
+                totalInterest += interest;
+                totalInsurance += ins;
+                schedule.push({ period: i, payment: interest + ins, principal: 0, interest, insurance: ins, balance, totalInterest, totalInsurance, deferred: true });
+            }
+        }
+
+        // Phase 2: Amortization
+        const amortBalance = balance;
+        const payment = amortPeriods > 0 ? Math.abs(this.pmt(periodicRate, amortPeriods, amortBalance)) : 0;
+
+        for (let i = 1; i <= amortPeriods; i++) {
+            const interest = balance * periodicRate;
             const principalPart = payment - interest;
             const ins = getInsurance(balance);
             balance = Math.max(0, balance - principalPart);
@@ -131,7 +180,7 @@ export const Financial = {
             totalInsurance += ins;
 
             schedule.push({
-                period: i,
+                period: deferralPeriods + i,
                 payment: payment + ins,
                 principal: principalPart,
                 interest,
@@ -145,47 +194,75 @@ export const Financial = {
         const totalPayment = schedule.reduce((s, r) => s + r.payment, 0) + fees;
         const totalCost = totalPayment - principal;
         const firstInsurance = schedule[0]?.insurance || 0;
+        const firstAmortRow = schedule.find(r => !r.deferred) || schedule[0];
 
-        // TAEG calculation (use per-period cashflows for variable insurance)
+        // TAEG (annualized)
         const cashflows = [-principal + fees];
-        for (const row of schedule) {
-            cashflows.push(row.payment);
-        }
+        for (const row of schedule) cashflows.push(row.payment);
         let taeg;
-        try { taeg = this.irr(cashflows) * 12 * 100; } catch { taeg = null; }
+        try { taeg = this.irr(cashflows) * ppy * 100; } catch { taeg = null; }
 
         return {
-            monthlyPayment: payment + firstInsurance,
-            monthlyPaymentExInsurance: payment,
+            periodicPayment: firstAmortRow ? firstAmortRow.payment : 0,
+            monthlyPayment: (firstAmortRow ? firstAmortRow.payment : 0) / (12 / ppy),
+            monthlyPaymentExInsurance: payment / (12 / ppy),
             totalInterest,
             totalInsurance,
             totalCost,
             totalPayment,
             taeg,
+            frequency,
+            deferralMonths,
+            deferralType,
             schedule
         };
     },
 
     /**
-     * Crédit Amortissable - Amortissement Constant (mensualités dégressives)
+     * Crédit Amortissable - Amortissement Constant (échéances dégressives)
+     * Supports frequency + deferral
      */
-    amortissableDegressif({ principal, annualRate, durationMonths, insuranceMonthly = 0, insuranceRate = 0, insuranceMode = 'ci', fees = 0 }) {
-        const monthlyRate = annualRate / 100 / 12;
-        const constantPrincipal = principal / durationMonths;
-        const getInsurance = (balance) => {
+    amortissableDegressif({ principal, annualRate, durationMonths, insuranceMonthly = 0, insuranceRate = 0, insuranceMode = 'ci', fees = 0, frequency = 'monthly', deferralMonths = 0, deferralType = 'partial' }) {
+        const ppy = this.getPeriodsPerYear(frequency);
+        const periodicRate = annualRate / 100 / ppy;
+        const totalPeriods = Math.round(durationMonths / (12 / ppy));
+        const deferralPeriods = Math.min(Math.round(deferralMonths / (12 / ppy)), totalPeriods - 1);
+        const amortPeriods = totalPeriods - deferralPeriods;
+
+        const getInsurance = (bal) => {
             if (insuranceRate > 0) {
-                const base = insuranceMode === 'crd' ? balance : principal;
-                return base * insuranceRate / 100 / 12;
+                const base = insuranceMode === 'crd' ? bal : principal;
+                return base * insuranceRate / 100 / ppy;
             }
-            return insuranceMonthly;
+            return insuranceMonthly * (12 / ppy);
         };
+
         const schedule = [];
         let balance = principal;
         let totalInterest = 0;
         let totalInsurance = 0;
 
-        for (let i = 1; i <= durationMonths; i++) {
-            const interest = balance * monthlyRate;
+        // Phase 1: Deferral
+        for (let i = 1; i <= deferralPeriods; i++) {
+            const interest = balance * periodicRate;
+            const ins = getInsurance(balance);
+            if (deferralType === 'total') {
+                balance += interest;
+                totalInterest += interest;
+                totalInsurance += ins;
+                schedule.push({ period: i, payment: ins, principal: 0, interest: 0, insurance: ins, balance, totalInterest, totalInsurance, deferred: true });
+            } else {
+                totalInterest += interest;
+                totalInsurance += ins;
+                schedule.push({ period: i, payment: interest + ins, principal: 0, interest, insurance: ins, balance, totalInterest, totalInsurance, deferred: true });
+            }
+        }
+
+        // Phase 2: Amortization
+        const constantPrincipal = amortPeriods > 0 ? balance / amortPeriods : 0;
+
+        for (let i = 1; i <= amortPeriods; i++) {
+            const interest = balance * periodicRate;
             const payment = constantPrincipal + interest;
             const ins = getInsurance(balance);
             balance = Math.max(0, balance - constantPrincipal);
@@ -193,7 +270,7 @@ export const Financial = {
             totalInsurance += ins;
 
             schedule.push({
-                period: i,
+                period: deferralPeriods + i,
                 payment: payment + ins,
                 principal: constantPrincipal,
                 interest,
@@ -206,54 +283,62 @@ export const Financial = {
 
         const totalPayment = schedule.reduce((s, r) => s + r.payment, 0) + fees;
         const totalCost = totalPayment - principal;
-        const firstPayment = schedule[0].payment;
-        const lastPayment = schedule[schedule.length - 1].payment;
+        const firstAmortIdx = schedule.findIndex(r => !r.deferred);
+        const firstPayment = firstAmortIdx >= 0 ? schedule[firstAmortIdx].payment : 0;
+        const lastPayment = schedule[schedule.length - 1]?.payment || 0;
 
         return {
             firstPayment,
             lastPayment,
-            averagePayment: totalPayment / durationMonths,
+            averagePayment: totalPayment / totalPeriods,
+            periodicPayment: firstPayment,
             totalInterest,
             totalInsurance,
             totalCost,
             totalPayment,
+            frequency,
+            deferralMonths,
+            deferralType,
             schedule
         };
     },
 
     /**
      * Crédit In Fine - Intérêts seuls puis remboursement capital
+     * Supports frequency
      */
-    inFine({ principal, annualRate, durationMonths, insuranceMonthly = 0, insuranceRate = 0, insuranceMode = 'ci', fees = 0 }) {
-        const monthlyRate = annualRate / 100 / 12;
-        const monthlyInterest = principal * monthlyRate;
-        const getInsurance = (balance) => {
+    inFine({ principal, annualRate, durationMonths, insuranceMonthly = 0, insuranceRate = 0, insuranceMode = 'ci', fees = 0, frequency = 'monthly' }) {
+        const ppy = this.getPeriodsPerYear(frequency);
+        const periodicRate = annualRate / 100 / ppy;
+        const totalPeriods = Math.round(durationMonths / (12 / ppy));
+        const periodicInterest = principal * periodicRate;
+
+        const getInsurance = () => {
             if (insuranceRate > 0) {
-                const base = insuranceMode === 'crd' ? balance : principal;
-                return base * insuranceRate / 100 / 12;
+                return principal * insuranceRate / 100 / ppy;
             }
-            return insuranceMonthly;
+            return insuranceMonthly * (12 / ppy);
         };
         const schedule = [];
         let totalInterest = 0;
         let totalInsurance = 0;
 
-        for (let i = 1; i <= durationMonths; i++) {
-            const isLast = i === durationMonths;
-            const balance = isLast ? 0 : principal;
+        for (let i = 1; i <= totalPeriods; i++) {
+            const isLast = i === totalPeriods;
+            const bal = isLast ? 0 : principal;
             const principalPart = isLast ? principal : 0;
-            const payment = monthlyInterest + (isLast ? principal : 0);
-            const ins = getInsurance(principal); // In Fine: balance = principal until last period
-            totalInterest += monthlyInterest;
+            const payment = periodicInterest + (isLast ? principal : 0);
+            const ins = getInsurance();
+            totalInterest += periodicInterest;
             totalInsurance += ins;
 
             schedule.push({
                 period: i,
                 payment: payment + ins,
                 principal: principalPart,
-                interest: monthlyInterest,
+                interest: periodicInterest,
                 insurance: ins,
-                balance,
+                balance: bal,
                 totalInterest,
                 totalInsurance
             });
@@ -264,13 +349,159 @@ export const Financial = {
         const firstInsurance = schedule[0]?.insurance || 0;
 
         return {
-            monthlyPayment: monthlyInterest + firstInsurance,
-            finalPayment: principal + monthlyInterest + firstInsurance,
+            periodicPayment: periodicInterest + firstInsurance,
+            monthlyPayment: (periodicInterest + firstInsurance) / (12 / ppy),
+            finalPayment: principal + periodicInterest + firstInsurance,
             totalInterest,
             totalInsurance,
             totalCost,
             totalPayment,
+            frequency,
             schedule
+        };
+    },
+
+    // =============================================
+    // PREPAYMENT ANALYSIS (IRA)
+    // =============================================
+
+    /**
+     * Analyse de remboursement anticipé avec calcul des IRA
+     * @param {object} params - { schedule, principal, annualRate, frequency, prepaymentPeriod, prepaymentAmount, strategy }
+     * strategy: 'reduceDuration' | 'reducePayment'
+     */
+    prepaymentAnalysis({ schedule, principal, annualRate, frequency = 'monthly', prepaymentPeriod, prepaymentAmount, strategy = 'reduceDuration', insuranceMonthly = 0, insuranceRate = 0, insuranceMode = 'ci', type = 'constant', deferralMonths = 0, deferralType = 'partial' }) {
+        const ppy = this.getPeriodsPerYear(frequency);
+        const periodicRate = annualRate / 100 / ppy;
+
+        // Find CRD at prepayment date
+        const row = schedule[prepaymentPeriod - 1];
+        if (!row) return null;
+        const crdAtDate = row.balance;
+        if (crdAtDate <= 0) return null;
+
+        const actualPrepayment = Math.min(prepaymentAmount, crdAtDate);
+        const isTotal = actualPrepayment >= crdAtDate * 0.999;
+
+        // IRA = max(3% du CRD, 6 mois d'intérêts sur montant remboursé)
+        // "6 mois d'intérêts" = montant remboursé × taux mensuel × 6
+        const ira3pct = crdAtDate * 0.03;
+        const ira6mois = actualPrepayment * (annualRate / 100 / 12) * 6;
+        const ira = Math.max(ira3pct, ira6mois);
+
+        // Before totals
+        const beforeTotalInterest = schedule[schedule.length - 1].totalInterest;
+        const beforeTotalInsurance = schedule[schedule.length - 1].totalInsurance || 0;
+        const beforeDuration = schedule.length;
+
+        // Compute interest paid up to prepayment
+        const interestBeforePrepay = row.totalInterest;
+        const insuranceBeforePrepay = row.totalInsurance || 0;
+
+        let after = null;
+        if (!isTotal) {
+            const newCrd = crdAtDate - actualPrepayment;
+            const remainingPeriodsOriginal = schedule.length - prepaymentPeriod;
+
+            if (strategy === 'reduceDuration') {
+                // Same periodic payment, fewer periods
+                const origPayment = schedule.find(r => r.principal > 0)?.payment || schedule[prepaymentPeriod]?.payment || 0;
+                const origPaymentExIns = origPayment - (schedule[prepaymentPeriod]?.insurance || 0);
+                // How many periods to repay newCrd with same payment?
+                let bal = newCrd;
+                let periods = 0;
+                let extraInterest = 0;
+                let extraInsurance = 0;
+                while (bal > 0.01 && periods < 1000) {
+                    const int = bal * periodicRate;
+                    const getIns = () => {
+                        if (insuranceRate > 0) {
+                            const base = insuranceMode === 'crd' ? bal : principal;
+                            return base * insuranceRate / 100 / ppy;
+                        }
+                        return insuranceMonthly * (12 / ppy);
+                    };
+                    const ins = getIns();
+                    const princ = Math.min(origPaymentExIns - int, bal);
+                    if (princ <= 0) break;
+                    bal = Math.max(0, bal - princ);
+                    extraInterest += int;
+                    extraInsurance += ins;
+                    periods++;
+                }
+                after = {
+                    totalInterest: interestBeforePrepay + extraInterest,
+                    totalInsurance: insuranceBeforePrepay + extraInsurance,
+                    duration: prepaymentPeriod + periods,
+                    periodicPayment: origPayment
+                };
+            } else {
+                // Same duration, lower payment
+                const newPayment = remainingPeriodsOriginal > 0 ? Math.abs(this.pmt(periodicRate, remainingPeriodsOriginal, newCrd)) : 0;
+                let bal = newCrd;
+                let extraInterest = 0;
+                let extraInsurance = 0;
+                for (let i = 0; i < remainingPeriodsOriginal; i++) {
+                    const int = bal * periodicRate;
+                    const getIns = () => {
+                        if (insuranceRate > 0) {
+                            const base = insuranceMode === 'crd' ? bal : principal;
+                            return base * insuranceRate / 100 / ppy;
+                        }
+                        return insuranceMonthly * (12 / ppy);
+                    };
+                    const ins = getIns();
+                    const princ = newPayment - int;
+                    bal = Math.max(0, bal - princ);
+                    extraInterest += int;
+                    extraInsurance += ins;
+                }
+                after = {
+                    totalInterest: interestBeforePrepay + extraInterest,
+                    totalInsurance: insuranceBeforePrepay + extraInsurance,
+                    duration: beforeDuration,
+                    periodicPayment: newPayment + (schedule[0]?.insurance || 0)
+                };
+            }
+        } else {
+            // Total prepayment
+            after = {
+                totalInterest: interestBeforePrepay,
+                totalInsurance: insuranceBeforePrepay,
+                duration: prepaymentPeriod,
+                periodicPayment: 0
+            };
+        }
+
+        return {
+            prepaymentPeriod,
+            crdAtDate,
+            prepaymentAmount: actualPrepayment,
+            isTotal,
+            ira,
+            ira3pct,
+            ira6mois,
+            totalCostPrepayment: actualPrepayment + ira,
+            comparison: {
+                before: {
+                    totalInterest: beforeTotalInterest,
+                    totalInsurance: beforeTotalInsurance,
+                    totalCost: beforeTotalInterest + beforeTotalInsurance,
+                    duration: beforeDuration
+                },
+                after: {
+                    totalInterest: after.totalInterest,
+                    totalInsurance: after.totalInsurance,
+                    totalCost: after.totalInterest + after.totalInsurance + ira,
+                    duration: after.duration,
+                    periodicPayment: after.periodicPayment
+                },
+                savings: {
+                    interest: beforeTotalInterest - after.totalInterest,
+                    duration: beforeDuration - after.duration,
+                    netSavings: (beforeTotalInterest + beforeTotalInsurance) - (after.totalInterest + after.totalInsurance + ira)
+                }
+            }
         };
     },
 

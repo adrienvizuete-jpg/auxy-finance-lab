@@ -3,6 +3,7 @@
  */
 
 import { PARAM_LABELS, RESULT_LABELS, t, formatValue } from './i18n.js';
+import { LOGO_BASE64 } from './logo-data.js';
 
 export const Export = {
 
@@ -147,20 +148,29 @@ export const Export = {
         const pageWidth = doc.internal.pageSize.getWidth();
         let y = 20;
 
-        // Header
+        // Header with logo
         doc.setFillColor(26, 53, 72); // primary-800
-        doc.rect(0, 0, pageWidth, 35, 'F');
+        doc.rect(0, 0, pageWidth, 38, 'F');
+
+        // Add logo (white on dark blue background)
+        try {
+            doc.addImage(LOGO_BASE64, 'PNG', 15, 4, 52, 18);
+        } catch (e) {
+            // Fallback text if logo fails
+            doc.setTextColor(255, 255, 255);
+            doc.setFontSize(18);
+            doc.setFont('helvetica', 'bold');
+            doc.text('AUXY PARTNERS', 15, 15);
+        }
+
         doc.setTextColor(255, 255, 255);
-        doc.setFontSize(18);
-        doc.setFont('helvetica', 'bold');
-        doc.text('AUXY PARTNERS', 15, 15);
         doc.setFontSize(11);
         doc.setFont('helvetica', 'normal');
-        doc.text(title, 15, 25);
+        doc.text(title, 15, 28);
         doc.setFontSize(9);
-        doc.text(`Généré le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}`, pageWidth - 15, 25, { align: 'right' });
+        doc.text(`Généré le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}`, pageWidth - 15, 28, { align: 'right' });
 
-        y = 45;
+        y = 48;
         doc.setTextColor(26, 53, 72);
 
         for (const section of sections) {
@@ -227,7 +237,7 @@ export const Export = {
             doc.setPage(i);
             doc.setFontSize(8);
             doc.setTextColor(150, 150, 150);
-            doc.text(`Auxy Partners - Finance Lab | Page ${i}/${totalPages}`, pageWidth / 2, 290, { align: 'center' });
+            doc.text(`Document généré par Auxy Partners — confidentiel | Page ${i}/${totalPages}`, pageWidth / 2, 290, { align: 'center' });
         }
 
         doc.save(`${filename}_${new Date().toISOString().slice(0, 10)}.pdf`);

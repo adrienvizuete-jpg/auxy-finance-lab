@@ -24,7 +24,10 @@ export const PARAM_LABELS = {
     equityKicker: 'Equity kicker (%)',
     totalDebt: 'Dette totale (\u20ac)',
     annualCashflow: 'Cash-flow annuel (\u20ac)',
-    growthRate: 'Croissance annuelle (%)'
+    growthRate: 'Croissance annuelle (%)',
+    frequency: "Fréquence d'amortissement",
+    deferralMonths: 'Différé (mois)',
+    deferralType: 'Type de différé'
 };
 
 export const RESULT_LABELS = {
