@@ -23,9 +23,9 @@ const CREDIT_TYPES = [
 let currentType = 'constant';
 let lastResult = null;
 let tranchingTranches = [
-    { name: 'Senior A', amount: 3000000, rate: 3.5, duration: 84, type: 'constant' },
-    { name: 'Senior B', amount: 2000000, rate: 4.5, duration: 60, type: 'constant' },
-    { name: 'Mezzanine', amount: 1000000, rate: 8.0, duration: 60, type: 'infine' }
+    { name: 'Senior A', amount: 3000000, rate: 3.5, duration: 84, type: 'constant', frequency: 'monthly' },
+    { name: 'Senior B', amount: 2000000, rate: 4.5, duration: 60, type: 'constant', frequency: 'monthly' },
+    { name: 'Mezzanine', amount: 1000000, rate: 8.0, duration: 60, type: 'infine', frequency: 'monthly' }
 ];
 
 // ── Default values per type (for reset) ──
@@ -107,6 +107,7 @@ function getInsuranceMode() {
 
 // ── Tranching helpers ──
 function renderTranchingRows() {
+    const freq = t => t.frequency || 'monthly';
     return tranchingTranches.map((t, i) => `
         <tr data-index="${i}">
             <td><input type="text" class="form-input form-input-sm" value="${t.name}" data-field="name" style="min-width:100px"></td>
@@ -117,6 +118,14 @@ function renderTranchingRows() {
                 <select class="form-input form-input-sm" data-field="type">
                     <option value="constant" ${t.type === 'constant' ? 'selected' : ''}>Constant</option>
                     <option value="infine" ${t.type === 'infine' ? 'selected' : ''}>In Fine</option>
+                </select>
+            </td>
+            <td>
+                <select class="form-input form-input-sm" data-field="frequency" style="min-width:110px">
+                    <option value="monthly" ${freq(t) === 'monthly' ? 'selected' : ''}>Mensuel</option>
+                    <option value="quarterly" ${freq(t) === 'quarterly' ? 'selected' : ''}>Trimestriel</option>
+                    <option value="semiannual" ${freq(t) === 'semiannual' ? 'selected' : ''}>Semestriel</option>
+                    <option value="annual" ${freq(t) === 'annual' ? 'selected' : ''}>Annuel</option>
                 </select>
             </td>
             <td>
@@ -144,7 +153,7 @@ function setupTranchingListeners() {
         const field = e.target.dataset.field;
         if (field && tranchingTranches[index]) {
             const val = e.target.value;
-            tranchingTranches[index][field] = (field === 'name' || field === 'type') ? val : parseFloat(val) || 0;
+            tranchingTranches[index][field] = (field === 'name' || field === 'type' || field === 'frequency') ? val : parseFloat(val) || 0;
         }
         refreshTranchingTotal();
     });
@@ -156,7 +165,7 @@ function setupTranchingListeners() {
         const field = e.target.dataset.field;
         if (field && tranchingTranches[index]) {
             const val = e.target.value;
-            tranchingTranches[index][field] = (field === 'name' || field === 'type') ? val : parseFloat(val) || 0;
+            tranchingTranches[index][field] = (field === 'name' || field === 'type' || field === 'frequency') ? val : parseFloat(val) || 0;
         }
         refreshTranchingTotal();
     });
@@ -171,7 +180,7 @@ function setupTranchingListeners() {
     });
 
     document.getElementById('btn-add-tranche')?.addEventListener('click', () => {
-        tranchingTranches.push({ name: `Tranche ${tranchingTranches.length + 1}`, amount: 1000000, rate: 5.0, duration: 60, type: 'constant' });
+        tranchingTranches.push({ name: `Tranche ${tranchingTranches.length + 1}`, amount: 1000000, rate: 5.0, duration: 60, type: 'constant', frequency: 'monthly' });
         document.getElementById('tranching-rows').innerHTML = renderTranchingRows();
         refreshTranchingTotal();
     });
@@ -540,6 +549,7 @@ function getFormHTML(type) {
                                     <th>Taux (%)</th>
                                     <th>Durée (mois)</th>
                                     <th>Type</th>
+                                    <th>Fréquence</th>
                                     <th></th>
                                 </tr>
                             </thead>
@@ -800,10 +810,16 @@ function getResultsHTML(type, result) {
                 <div style="margin-top:24px">
                     <h3 style="font-size:1rem;font-weight:600;margin-bottom:12px;color:var(--text-primary)">Détail par tranche</h3>
                     <div class="grid-auto">
-                        ${result.tranches.map(tr => `
+                        ${result.tranches.map(tr => {
+                            const trFreq = tr.frequency || 'monthly';
+                            const trPayLabel = Financial.getPaymentLabel(trFreq);
+                            const freqLabels = { monthly: 'Mensuel', quarterly: 'Trimestriel', semiannual: 'Semestriel', annual: 'Annuel' };
+                            const periodicPay = tr.result.periodicPayment || tr.result.monthlyPayment || tr.result.schedule?.[0]?.payment || 0;
+                            return `
                             <div class="card" style="padding:16px">
                                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
                                     <span class="badge badge-blue">${tr.type === 'infine' ? 'In Fine' : 'Constant'}</span>
+                                    <span class="badge" style="background:var(--bg-secondary);color:var(--text-secondary);font-size:0.7rem">${freqLabels[trFreq]}</span>
                                     <strong>${tr.name}</strong>
                                 </div>
                                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:0.85rem">
@@ -812,10 +828,10 @@ function getResultsHTML(type, result) {
                                     <div><span style="color:var(--text-muted)">Durée:</span> ${tr.duration} mois</div>
                                     <div><span style="color:var(--text-muted)">Intérêts:</span> ${f(tr.result.totalInterest)}</div>
                                     <div><span style="color:var(--text-muted)">Coût:</span> ${f(tr.result.totalCost)}</div>
-                                    <div><span style="color:var(--text-muted)">Mensualité:</span> ${f(tr.result.monthlyPayment || tr.result.schedule?.[0]?.payment || 0)}</div>
+                                    <div><span style="color:var(--text-muted)">${trPayLabel}:</span> ${f(periodicPay)}</div>
                                 </div>
-                            </div>
-                        `).join('')}
+                            </div>`;
+                        }).join('')}
                     </div>
                 </div>`;
         }
@@ -1168,9 +1184,9 @@ function resetForm() {
     // Special reset for tranching
     if (currentType === 'tranching') {
         tranchingTranches = [
-            { name: 'Senior A', amount: 3000000, rate: 3.5, duration: 84, type: 'constant' },
-            { name: 'Senior B', amount: 2000000, rate: 4.5, duration: 60, type: 'constant' },
-            { name: 'Mezzanine', amount: 1000000, rate: 8.0, duration: 60, type: 'infine' }
+            { name: 'Senior A', amount: 3000000, rate: 3.5, duration: 84, type: 'constant', frequency: 'monthly' },
+            { name: 'Senior B', amount: 2000000, rate: 4.5, duration: 60, type: 'constant', frequency: 'monthly' },
+            { name: 'Mezzanine', amount: 1000000, rate: 8.0, duration: 60, type: 'infine', frequency: 'monthly' }
         ];
         document.getElementById('tranching-rows').innerHTML = renderTranchingRows();
         refreshTranchingTotal();
@@ -1300,12 +1316,14 @@ function exportTranchingExcel() {
         ['']
     ];
 
+    const freqLabelsExcel = { monthly: 'Mensuel', quarterly: 'Trimestriel', semiannual: 'Semestriel', annual: 'Annuel' };
     result.tranches.forEach((tr, i) => {
         summaryData.push([`Tranche ${i + 1}: ${tr.name}`]);
         summaryData.push(['  Montant', Financial.formatCurrency(tr.amount)]);
         summaryData.push(['  Taux', tr.rate + ' %']);
         summaryData.push(['  Durée', tr.duration + ' mois']);
         summaryData.push(['  Type', tr.type === 'infine' ? 'In Fine' : 'Constant']);
+        summaryData.push(['  Fréquence', freqLabelsExcel[tr.frequency || 'monthly']]);
         summaryData.push(['  Intérêts totaux', Financial.formatCurrency(tr.result.totalInterest)]);
         summaryData.push(['  Coût total', Financial.formatCurrency(tr.result.totalCost)]);
         summaryData.push(['']);
@@ -1336,8 +1354,9 @@ function exportTranchingExcel() {
         const schedule = tr.result.schedule;
         if (!schedule?.length) return;
         const keys = Object.keys(schedule[0]);
+        const trFreq = tr.frequency || 'monthly';
         const labels = {
-            period: 'Période', payment: 'Mensualité', principal: 'Capital',
+            period: Financial.getPeriodLabel(trFreq), payment: Financial.getPaymentLabel(trFreq), principal: 'Capital',
             interest: 'Intérêts', insurance: 'Assurance', balance: 'CRD',
             totalInterest: 'Int. Cumulés', totalInsurance: 'Ass. Cumulées'
         };

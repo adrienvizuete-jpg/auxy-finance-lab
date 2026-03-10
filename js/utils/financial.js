@@ -688,12 +688,14 @@ export const Financial = {
      */
     tranching(tranches) {
         const trancheResults = tranches.map(t => {
+            const freq = t.frequency || 'monthly';
             const params = {
                 principal: t.amount,
                 annualRate: t.rate,
                 durationMonths: t.duration,
                 insuranceMonthly: 0,
-                fees: 0
+                fees: 0,
+                frequency: freq
             };
             const result = t.type === 'infine'
                 ? this.inFine(params)
@@ -701,25 +703,37 @@ export const Financial = {
             return { ...t, result };
         });
 
+        // Normalize all tranche schedules to monthly periods for consolidated view
+        // Each tranche may have different frequency, so we expand to monthly
         const maxDuration = Math.max(...tranches.map(t => t.duration));
 
-        // Build consolidated schedule
+        // Build consolidated schedule (monthly)
         const consolidatedSchedule = [];
-        for (let period = 1; period <= maxDuration; period++) {
+        for (let month = 1; month <= maxDuration; month++) {
             let totalPayment = 0, totalPrincipal = 0, totalInterest = 0, totalBalance = 0;
 
             for (const tr of trancheResults) {
-                const row = tr.result.schedule[period - 1];
+                const freq = tr.frequency || 'monthly';
+                const ppy = this.getPeriodsPerYear(freq);
+                const monthsPerPeriod = 12 / ppy;
+
+                // Find the corresponding period for this month
+                const periodIndex = Math.ceil(month / monthsPerPeriod) - 1;
+                const row = tr.result.schedule[periodIndex];
                 if (row) {
-                    totalPayment += row.payment;
-                    totalPrincipal += row.principal;
-                    totalInterest += row.interest;
+                    // Only count payment on the actual period boundary month
+                    const isPeriodBoundary = (month % monthsPerPeriod === 0) || (monthsPerPeriod === 1);
+                    if (isPeriodBoundary) {
+                        totalPayment += row.payment;
+                        totalPrincipal += row.principal;
+                        totalInterest += row.interest;
+                    }
                     totalBalance += row.balance;
                 }
             }
 
             consolidatedSchedule.push({
-                period,
+                period: month,
                 payment: totalPayment,
                 principal: totalPrincipal,
                 interest: totalInterest,
