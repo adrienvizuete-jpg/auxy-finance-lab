@@ -174,7 +174,7 @@ export const Export = {
         doc.setTextColor(26, 53, 72);
 
         for (const section of sections) {
-            if (y > 260) {
+            if (y > 250) {
                 doc.addPage();
                 y = 20;
             }
@@ -183,22 +183,22 @@ export const Export = {
                 doc.setFontSize(13);
                 doc.setFont('helvetica', 'bold');
                 doc.text(section.text, 15, y);
-                y += 8;
+                y += 10;
             }
 
             if (section.type === 'keyvalue') {
-                doc.setFontSize(9);
+                doc.setFontSize(10);
                 section.items.forEach(item => {
-                    if (y > 275) { doc.addPage(); y = 20; }
+                    if (y > 260) { doc.addPage(); y = 20; }
                     doc.setFont('helvetica', 'normal');
                     doc.setTextColor(107, 114, 128);
                     doc.text(String(item.label), 15, y);
                     doc.setFont('helvetica', 'bold');
                     doc.setTextColor(26, 53, 72);
-                    doc.text(String(item.value), 90, y);
-                    y += 6;
+                    doc.text(String(item.value), 95, y);
+                    y += 7;
                 });
-                y += 4;
+                y += 8;
             }
 
             if (section.type === 'table') {
@@ -210,18 +210,18 @@ export const Export = {
                     headStyles: {
                         fillColor: [26, 53, 72],
                         textColor: [255, 255, 255],
-                        fontSize: 8,
+                        fontSize: 9,
                         fontStyle: 'bold'
                     },
                     bodyStyles: {
-                        fontSize: 7.5,
+                        fontSize: 9,
                         textColor: [55, 65, 81]
                     },
                     alternateRowStyles: { fillColor: [240, 244, 247] },
                     margin: { left: 15, right: 15 },
-                    styles: { cellPadding: 3 }
+                    styles: { cellPadding: 4 }
                 });
-                y = doc.lastAutoTable.finalY + 10;
+                y = doc.lastAutoTable.finalY + 14;
             }
 
             if (section.type === 'separator') {
@@ -237,7 +237,7 @@ export const Export = {
             doc.setPage(i);
             doc.setFontSize(8);
             doc.setTextColor(150, 150, 150);
-            doc.text(`Document généré par Auxy Partners — confidentiel | Page ${i}/${totalPages}`, pageWidth / 2, 290, { align: 'center' });
+            doc.text(`Confidentiel — Auxy Partners | Page ${i}/${totalPages}`, pageWidth / 2, 290, { align: 'center' });
         }
 
         doc.save(`${filename}_${new Date().toISOString().slice(0, 10)}.pdf`);

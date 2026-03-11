@@ -111,9 +111,9 @@ function renderTranchingRows() {
     return tranchingTranches.map((t, i) => `
         <tr data-index="${i}">
             <td><input type="text" class="form-input form-input-sm" value="${t.name}" data-field="name" style="min-width:100px"></td>
-            <td><input type="number" class="form-input form-input-sm" value="${t.amount}" data-field="amount" min="0" step="100000"></td>
-            <td><input type="number" class="form-input form-input-sm" value="${t.rate}" data-field="rate" min="0" max="30" step="0.25" style="width:80px"></td>
-            <td><input type="number" class="form-input form-input-sm" value="${t.duration}" data-field="duration" min="1" max="360" step="1" style="width:80px"></td>
+            <td><input type="number" class="form-input form-input-sm" value="${t.amount}" data-field="amount" min="0" step="1"></td>
+            <td><input type="number" class="form-input form-input-sm" value="${t.rate}" data-field="rate" min="0" max="50" step="0.25" style="width:80px"></td>
+            <td><input type="number" class="form-input form-input-sm" value="${t.duration}" data-field="duration" min="1" max="720" step="1" style="width:80px"></td>
             <td>
                 <select class="form-input form-input-sm" data-field="type">
                     <option value="constant" ${t.type === 'constant' ? 'selected' : ''}>Constant</option>
@@ -258,21 +258,21 @@ function getFormHTML(type) {
             <div class="form-group">
                 <label class="form-label">Montant emprunté (€)</label>
                 <div class="input-group">
-                    <input type="number" class="form-input" id="cr-principal" value="500000" min="1000" step="1000">
+                    <input type="number" class="form-input" id="cr-principal" value="500000" min="0" step="1">
                     <span class="input-suffix">€</span>
                 </div>
             </div>
             <div class="form-group">
                 <label class="form-label">Taux annuel (%)</label>
                 <div class="input-group">
-                    <input type="number" class="form-input" id="cr-rate" value="4.5" min="0.01" max="30" step="0.01">
+                    <input type="number" class="form-input" id="cr-rate" value="4.5" min="0.01" max="50" step="0.01">
                     <span class="input-suffix">%</span>
                 </div>
             </div>
             <div class="form-group">
                 <label class="form-label">Durée (mois)</label>
                 <div class="input-group">
-                    <input type="number" class="form-input" id="cr-duration" value="84" min="1" max="600" step="1">
+                    <input type="number" class="form-input" id="cr-duration" value="84" min="1" max="720" step="1">
                     <span class="input-suffix">mois</span>
                 </div>
             </div>
@@ -310,7 +310,7 @@ function getFormHTML(type) {
                     <button type="button" class="toggle-btn" data-mode="rate">Taux %</button>
                 </div>
                 <div class="input-group" id="insurance-amount-group">
-                    <input type="number" class="form-input" id="cr-insurance" value="0" min="0" step="10">
+                    <input type="number" class="form-input" id="cr-insurance" value="0" min="0" step="1">
                     <span class="input-suffix">€</span>
                 </div>
                 <div class="input-group hidden" id="insurance-rate-group">
@@ -325,7 +325,7 @@ function getFormHTML(type) {
             <div class="form-group">
                 <label class="form-label">Frais de dossier (€)</label>
                 <div class="input-group">
-                    <input type="number" class="form-input" id="cr-fees" value="0" min="0" step="100">
+                    <input type="number" class="form-input" id="cr-fees" value="0" min="0" step="1">
                     <span class="input-suffix">€</span>
                 </div>
             </div>
@@ -343,14 +343,14 @@ function getFormHTML(type) {
                     <div class="form-group">
                         <label class="form-label">Valeur du bien (€)</label>
                         <div class="input-group">
-                            <input type="number" class="form-input" id="cr-principal" value="500000" min="1000" step="1000">
+                            <input type="number" class="form-input" id="cr-principal" value="500000" min="0" step="1">
                             <span class="input-suffix">€</span>
                         </div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Apport initial (€)</label>
                         <div class="input-group">
-                            <input type="number" class="form-input" id="cr-deposit" value="50000" min="0" step="1000">
+                            <input type="number" class="form-input" id="cr-deposit" value="50000" min="0" step="1">
                             <span class="input-suffix">€</span>
                         </div>
                     </div>
@@ -359,21 +359,21 @@ function getFormHTML(type) {
                     <div class="form-group">
                         <label class="form-label">Taux annuel (%)</label>
                         <div class="input-group">
-                            <input type="number" class="form-input" id="cr-rate" value="5.0" min="0.01" max="30" step="0.01">
+                            <input type="number" class="form-input" id="cr-rate" value="5.0" min="0.01" max="50" step="0.01">
                             <span class="input-suffix">%</span>
                         </div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Durée (mois)</label>
                         <div class="input-group">
-                            <input type="number" class="form-input" id="cr-duration" value="60" min="1" max="360" step="1">
+                            <input type="number" class="form-input" id="cr-duration" value="60" min="1" max="720" step="1">
                             <span class="input-suffix">mois</span>
                         </div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Valeur résiduelle (€)</label>
                         <div class="input-group">
-                            <input type="number" class="form-input" id="cr-residual" value="25000" min="0" step="1000">
+                            <input type="number" class="form-input" id="cr-residual" value="25000" min="0" step="1">
                             <span class="input-suffix">€</span>
                         </div>
                     </div>
@@ -382,7 +382,7 @@ function getFormHTML(type) {
                     <div class="form-group">
                         <label class="form-label">Frais (€)</label>
                         <div class="input-group">
-                            <input type="number" class="form-input" id="cr-fees" value="0" min="0" step="100">
+                            <input type="number" class="form-input" id="cr-fees" value="0" min="0" step="1">
                             <span class="input-suffix">€</span>
                         </div>
                     </div>
@@ -394,7 +394,7 @@ function getFormHTML(type) {
                     <div class="form-group">
                         <label class="form-label">Ligne de crédit (€)</label>
                         <div class="input-group">
-                            <input type="number" class="form-input" id="cr-principal" value="1000000" min="1000" step="10000">
+                            <input type="number" class="form-input" id="cr-principal" value="1000000" min="0" step="1">
                             <span class="input-suffix">€</span>
                         </div>
                     </div>
@@ -410,7 +410,7 @@ function getFormHTML(type) {
                     <div class="form-group">
                         <label class="form-label">Taux d'intérêt annuel (%)</label>
                         <div class="input-group">
-                            <input type="number" class="form-input" id="cr-rate" value="5.5" min="0.01" max="30" step="0.01">
+                            <input type="number" class="form-input" id="cr-rate" value="5.5" min="0.01" max="50" step="0.01">
                             <span class="input-suffix">%</span>
                         </div>
                     </div>
@@ -424,7 +424,7 @@ function getFormHTML(type) {
                     <div class="form-group">
                         <label class="form-label">Durée (mois)</label>
                         <div class="input-group">
-                            <input type="number" class="form-input" id="cr-duration" value="12" min="1" max="120" step="1">
+                            <input type="number" class="form-input" id="cr-duration" value="12" min="1" max="720" step="1">
                             <span class="input-suffix">mois</span>
                         </div>
                     </div>
@@ -436,14 +436,14 @@ function getFormHTML(type) {
                     <div class="form-group">
                         <label class="form-label">Montant du prêt relais (€)</label>
                         <div class="input-group">
-                            <input type="number" class="form-input" id="cr-principal" value="300000" min="1000" step="10000">
+                            <input type="number" class="form-input" id="cr-principal" value="300000" min="0" step="1">
                             <span class="input-suffix">€</span>
                         </div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Prix de vente estimé (€)</label>
                         <div class="input-group">
-                            <input type="number" class="form-input" id="cr-salePrice" value="450000" min="1000" step="10000">
+                            <input type="number" class="form-input" id="cr-salePrice" value="450000" min="0" step="1">
                             <span class="input-suffix">€</span>
                         </div>
                     </div>
@@ -452,14 +452,14 @@ function getFormHTML(type) {
                     <div class="form-group">
                         <label class="form-label">Taux annuel (%)</label>
                         <div class="input-group">
-                            <input type="number" class="form-input" id="cr-rate" value="5.0" min="0.01" max="30" step="0.01">
+                            <input type="number" class="form-input" id="cr-rate" value="5.0" min="0.01" max="50" step="0.01">
                             <span class="input-suffix">%</span>
                         </div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Durée (mois)</label>
                         <div class="input-group">
-                            <input type="number" class="form-input" id="cr-duration" value="18" min="1" max="36" step="1">
+                            <input type="number" class="form-input" id="cr-duration" value="18" min="1" max="720" step="1">
                             <span class="input-suffix">mois</span>
                         </div>
                     </div>
@@ -473,7 +473,7 @@ function getFormHTML(type) {
                     <div class="form-group">
                         <label class="form-label">Frais (€)</label>
                         <div class="input-group">
-                            <input type="number" class="form-input" id="cr-fees" value="0" min="0" step="100">
+                            <input type="number" class="form-input" id="cr-fees" value="0" min="0" step="1">
                             <span class="input-suffix">€</span>
                         </div>
                     </div>
@@ -485,14 +485,14 @@ function getFormHTML(type) {
                     <div class="form-group">
                         <label class="form-label">Montant (€)</label>
                         <div class="input-group">
-                            <input type="number" class="form-input" id="cr-principal" value="2000000" min="10000" step="50000">
+                            <input type="number" class="form-input" id="cr-principal" value="2000000" min="0" step="1">
                             <span class="input-suffix">€</span>
                         </div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Durée (mois)</label>
                         <div class="input-group">
-                            <input type="number" class="form-input" id="cr-duration" value="60" min="1" max="120" step="1">
+                            <input type="number" class="form-input" id="cr-duration" value="60" min="1" max="720" step="1">
                             <span class="input-suffix">mois</span>
                         </div>
                     </div>
@@ -501,7 +501,7 @@ function getFormHTML(type) {
                     <div class="form-group">
                         <label class="form-label">Taux cash (%/an)</label>
                         <div class="input-group">
-                            <input type="number" class="form-input" id="cr-rate" value="8.0" min="0" max="30" step="0.25">
+                            <input type="number" class="form-input" id="cr-rate" value="8.0" min="0" max="50" step="0.25">
                             <span class="input-suffix">%</span>
                         </div>
                     </div>
@@ -524,7 +524,7 @@ function getFormHTML(type) {
                     <div class="form-group">
                         <label class="form-label">Frais (€)</label>
                         <div class="input-group">
-                            <input type="number" class="form-input" id="cr-fees" value="0" min="0" step="1000">
+                            <input type="number" class="form-input" id="cr-fees" value="0" min="0" step="1">
                             <span class="input-suffix">€</span>
                         </div>
                     </div>
@@ -930,7 +930,7 @@ function runSimulation() {
                     <div class="form-group">
                         <label class="form-label">Montant remboursé (€)</label>
                         <div class="input-group">
-                            <input type="number" class="form-input" id="ra-amount" value="100000" min="1000" step="1000">
+                            <input type="number" class="form-input" id="ra-amount" value="100000" min="0" step="1">
                             <span class="input-suffix">€</span>
                         </div>
                     </div>
@@ -1273,9 +1273,16 @@ function exportPdf() {
         const sched = lastResult.results.schedule;
         const first = sched[0];
         const keys = Object.keys(first).filter(k => k !== 'totalInterest' && k !== 'totalInsurance' && k !== 'totalCommitment' && k !== 'totalCashInterest' && k !== 'totalPikInterest');
+        const scheduleLabels = {
+            period: 'Période', payment: 'Échéance', principal: 'Capital',
+            interest: 'Intérêts', insurance: 'Assurance', balance: 'CRD',
+            utilized: 'Utilisé', unused: 'Non utilisé', commitmentFee: 'Com. Engagement',
+            totalCost: 'Coût Total', cashPayment: 'Paiement Cash', pikInterest: 'Intérêts PIK',
+            capitalizedInterest: 'Int. Capitalisés'
+        };
         sections.push({
             type: 'table',
-            headers: keys,
+            headers: keys.map(k => scheduleLabels[k] || k),
             rows: sched.map(row => keys.map(k => typeof row[k] === 'number' ? Financial.formatNumber(row[k], 2) : row[k]))
         });
     }

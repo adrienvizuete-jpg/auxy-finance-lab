@@ -20,8 +20,8 @@ let detteNonRef = [
 ];
 
 let tranchesSenior = [
-    { label: 'A', pct: 70, duration: 6 },
-    { label: 'B', pct: 30, duration: 7 }
+    { label: 'A', pct: 70, duration: 6, taux: 3.5 },
+    { label: 'B', pct: 30, duration: 7, taux: 4.5 }
 ];
 
 let ebitda = 3750;
@@ -44,10 +44,10 @@ function compute() {
     const detteSenior = Math.max(0, totalEmplois - fondsPropres);
     const pctFP = totalEmplois > 0 ? (fondsPropres / totalEmplois * 100) : 0;
     const pctSenior = totalEmplois > 0 ? (detteSenior / totalEmplois * 100) : 0;
-    const tranchesDetail = tranchesSenior.map(t => ({
-        ...t,
-        amount: detteSenior * t.pct / 100
-    }));
+    const tranchesDetail = tranchesSenior.map(t => {
+        const amount = detteSenior * t.pct / 100;
+        return { ...t, amount };
+    });
     const detteFinClosing = detteSenior + totalDetteNonRef;
     const dfn = detteFinClosing - tresorerieMin;
     const ratioLevier = ebitda > 0 ? dfn / ebitda : 0;
@@ -83,16 +83,29 @@ function renderDetteNonRefRows() {
     `).join('');
 }
 
+function computeAnnuity(amount, taux, durationYears) {
+    if (amount <= 0 || !taux || taux <= 0 || durationYears <= 0) return 0;
+    const monthlyRate = taux / 100 / 12;
+    const months = durationYears * 12;
+    const monthlyPayment = Financial.pmt(monthlyRate, months, -amount);
+    return monthlyPayment * 12;
+}
+
 function renderTranchesRows(c) {
-    return tranchesSenior.map((t, i) => `
+    return tranchesSenior.map((t, i) => {
+        const amount = c.detteSenior * t.pct / 100;
+        const annuity = computeAnnuity(amount, t.taux || 0, t.duration || 1);
+        return `
         <tr data-section="tranches" data-index="${i}">
             <td><input class="er-input" type="text" value="${t.label}" data-field="label" style="width:80px"></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${t.pct}" data-field="pct" step="5" min="0" max="100"></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${t.duration}" data-field="duration" step="1" min="1"></td>
-            <td style="text-align:right" class="er-computed">${fmtK(c.detteSenior * t.pct / 100)}</td>
+            <td style="text-align:right"><input class="er-input narrow" type="number" value="${t.taux || 0}" data-field="taux" step="0.1" min="0" max="50" style="width:80px"></td>
+            <td style="text-align:right" class="er-computed">${fmtK(amount)}</td>
+            <td style="text-align:right" class="er-computed">${fmtK(annuity)}</td>
             <td style="width:30px">${tranchesSenior.length > 1 ? `<button class="er-remove-btn" data-action="remove">${X_SVG}</button>` : ''}</td>
         </tr>
-    `).join('');
+    `}).join('');
 }
 
 // ── Recalculate and update display ──
@@ -143,12 +156,21 @@ function recalculate() {
     const elDnrTotal = document.getElementById('er-dnr-total');
     if (elDnrTotal) elDnrTotal.textContent = fmtK(c.totalDetteNonRef);
 
+    // Annuité totale
+    const totalAnnuity = tranchesSenior.reduce((sum, t) => {
+        const amount = c.detteSenior * t.pct / 100;
+        return sum + computeAnnuity(amount, t.taux || 0, t.duration || 1);
+    }, 0);
+    const elAnnuityTotal = document.getElementById('er-annuity-total');
+    if (elAnnuityTotal) elAnnuityTotal.textContent = fmtK(totalAnnuity);
+
     // KPIs
     const setKpi = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
     setKpi('kpi-ve', fmtK(c.veRetenue));
     setKpi('kpi-df-closing', fmtK(c.detteFinClosing));
     setKpi('kpi-dfn', fmtK(c.dfn));
     setKpi('kpi-levier', fmtRatio(c.ratioLevier));
+    setKpi('kpi-annuity-total', fmtK(totalAnnuity));
 
     // Store last result
     lastResult = {
@@ -281,8 +303,11 @@ function exportExcel() {
     rows.push([]);
 
     // Tranches
-    rows.push(['TRANCHES DETTE SENIOR', '% Senior', 'Durée (ans)', 'Montant']);
-    c.tranchesDetail.forEach(t => rows.push([`Tranche ${t.label}`, t.pct / 100, t.duration, t.amount]));
+    rows.push(['TRANCHES DETTE SENIOR', '% Senior', 'Durée (ans)', 'Taux (%)', 'Montant', 'Annuité']);
+    c.tranchesDetail.forEach(t => {
+        const annuity = computeAnnuity(t.amount, t.taux || 0, t.duration || 1);
+        rows.push([`Tranche ${t.label}`, t.pct / 100, t.duration, (t.taux || 0) / 100, t.amount, annuity]);
+    });
     rows.push([]);
 
     // Dette non refinancée
@@ -305,7 +330,7 @@ function exportExcel() {
     const ws = XLSX.utils.aoa_to_sheet(rows);
 
     // Column widths
-    ws['!cols'] = [{ wch: 32 }, { wch: 14 }, { wch: 14 }, { wch: 14 }];
+    ws['!cols'] = [{ wch: 32 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }];
 
     XLSX.utils.book_append_sheet(wb, ws, 'Emplois-Ressources');
     XLSX.writeFile(wb, 'Emplois_Ressources.xlsx');
@@ -433,13 +458,22 @@ export const StructuredModule = {
                                 <th>Tranche</th>
                                 <th style="text-align:right">% Senior</th>
                                 <th style="text-align:right">Durée (ans)</th>
+                                <th style="text-align:right">Taux (%)</th>
                                 <th style="text-align:right">Montant (k€)</th>
+                                <th style="text-align:right">Annuité (k€)</th>
                                 <th></th>
                             </tr>
                         </thead>
                         <tbody id="er-tranches-body">
                             ${renderTranchesRows(c)}
                         </tbody>
+                        <tfoot>
+                            <tr class="er-total-row">
+                                <td colspan="5">Total</td>
+                                <td style="text-align:right" id="er-annuity-total">—</td>
+                                <td></td>
+                            </tr>
+                        </tfoot>
                     </table>
                 </div>
                 <div id="er-tranches-pct-warn" style="color:var(--warning);font-size:0.8rem;margin:8px 12px;display:none"></div>
@@ -498,6 +532,11 @@ export const StructuredModule = {
                         <div class="kpi-label">Ratio Levier Net</div>
                         <div class="kpi-value highlight" id="kpi-levier">${fmtRatio(c.ratioLevier)}</div>
                     </div>
+                    <div class="er-kpi-card">
+                        <div class="kpi-label">Annuité Totale</div>
+                        <div class="kpi-value" id="kpi-annuity-total">—</div>
+                        <div style="font-size:0.7rem;color:var(--text-muted);margin-top:4px">Service de dette annuel</div>
+                    </div>
                 </div>
             </div>
 
@@ -549,7 +588,7 @@ export const StructuredModule = {
         tranchesBody?.addEventListener('click', handleRemove);
 
         document.getElementById('er-add-tranche')?.addEventListener('click', () => {
-            tranchesSenior.push({ label: String.fromCharCode(65 + tranchesSenior.length), pct: 0, duration: 5 });
+            tranchesSenior.push({ label: String.fromCharCode(65 + tranchesSenior.length), pct: 0, duration: 5, taux: 3.0 });
             recalculate();
         });
 
