@@ -27,7 +27,20 @@ export const PARAM_LABELS = {
     growthRate: 'Croissance annuelle (%)',
     frequency: "Fréquence d'amortissement",
     deferralMonths: 'Différé (mois)',
-    deferralType: 'Type de différé'
+    deferralType: 'Type de différé',
+    // Immobilier
+    propertyValue: 'Valeur du bien (\u20ac)',
+    acquisitionCost: 'Co\u00fbt d\'acquisition (\u20ac)',
+    travauxCost: 'Travaux (\u20ac)',
+    fraisNotaire: 'Frais de notaire (\u20ac)',
+    fraisDivers: 'Frais divers (\u20ac)',
+    grossRent: 'Loyer brut annuel (\u20ac)',
+    taxeFonciere: 'Taxe fonci\u00e8re (\u20ac)',
+    fraisGestion: 'Frais de gestion (\u20ac)',
+    vacancyRate: 'Taux de vacance (%)',
+    entretien: 'Entretien (\u20ac)',
+    capRate: 'Taux de capitalisation (%)',
+    loanAmount: 'Montant du pr\u00eat (\u20ac)'
 };
 
 export const RESULT_LABELS = {
@@ -61,7 +74,13 @@ export const RESULT_LABELS = {
     allInCost: 'Co\u00fbt all-in',
     annualDebtService: 'Annuit\u00e9 totale',
     weightedRate: 'Taux moyen pond\u00e9r\u00e9',
-    totalDebt: 'Dette totale'
+    totalDebt: 'Dette totale',
+    // Immobilier
+    noi: 'NOI',
+    dscr: 'DSCR',
+    ltc: 'Ratio LTC',
+    valuation: 'Valorisation',
+    annualDebtServiceImmo: 'Service de dette annuel'
 };
 
 export const TYPE_LABELS = {
@@ -73,7 +92,8 @@ export const TYPE_LABELS = {
     relais: 'Pr\u00eat Relais',
     mezzanine: 'Dette Mezzanine',
     structured: 'Financement Structur\u00e9',
-    tranching: 'Tranching (LBO)'
+    tranching: 'Tranching (LBO)',
+    immobilier: 'Immobilier'
 };
 
 /**

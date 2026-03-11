@@ -9,6 +9,7 @@ import { StructuredModule } from './modules/structured.js';
 import { BenchmarkModule } from './modules/benchmark.js';
 import { CalculatorModule, StressTestModule } from './modules/tools.js';
 import { HistoryModule } from './modules/history.js';
+import { ImmobilierModule } from './modules/immobilier.js';
 import { Storage } from './utils/storage.js';
 
 // =============================================
@@ -20,6 +21,7 @@ const modules = {
     credit: CreditModule,
     structured: StructuredModule,
     benchmark: BenchmarkModule,
+    immobilier: ImmobilierModule,
     calculator: CalculatorModule,
     stress: StressTestModule,
     history: HistoryModule
