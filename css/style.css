@@ -1479,6 +1479,66 @@ body {
     margin-bottom: 8px;
 }
 
+/* === Benchmark Insurance & Guarantee === */
+.bench-insurance-section {
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+    margin-top: 12px;
+}
+.bench-section-title {
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+}
+.bench-ins-person,
+.bench-guarantee {
+    margin-bottom: 10px;
+}
+.bench-ins-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.bench-ins-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+}
+.bench-ins-mini-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+.bench-toggle-group {
+    display: inline-flex;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-sm);
+    padding: 2px;
+    gap: 2px;
+}
+.bench-p2-collapsed .bench-ins-row {
+    display: none;
+}
+.form-input-sm {
+    padding: 4px 8px;
+    font-size: 0.82rem;
+    max-width: 120px;
+}
+.btn-xs {
+    padding: 2px 8px;
+    font-size: 0.72rem;
+    border-radius: var(--radius-sm);
+}
+
 /* === Tranching form === */
 .tranching-form .data-table .form-input,
 .tranching-form .data-table select.form-input {

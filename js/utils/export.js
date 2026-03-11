@@ -261,9 +261,11 @@ export const Export = {
         const fmtCur2 = v => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(v);
 
         const typeLabels = { constant: 'Amortissable', degressif: 'Dégressif', infine: 'In Fine' };
+        const modeLabels = { amount: 'Montant fixe', rate: 'Taux' };
+        const natureLabels = { ci: 'Capital Emprunte', crd: 'Capital Restant Du' };
 
         const sections = [
-            { type: 'title', text: 'Comparaison de Prêts - Benchmark' },
+            { type: 'title', text: 'Comparaison de Prets - Benchmark' },
             { type: 'separator' }
         ];
 
@@ -271,24 +273,42 @@ export const Export = {
         sections.push({
             type: 'keyvalue',
             items: [
-                { label: 'Nombre de prêts comparés', value: String(loans.length) },
+                { label: 'Nombre de prets compares', value: String(loans.length) },
                 { label: 'Date d\'analyse', value: new Date().toLocaleDateString('fr-FR') }
             ]
         });
         sections.push({ type: 'separator' });
 
         // Main comparison table
-        const headers = ['Prêt', 'Montant', 'Taux', 'Durée', 'Type', 'Mensualité', 'Total Int.', 'Coût Total'];
-        const rows = loans.map(l => [
-            l.name,
-            fmtCur(l.principal),
-            l.rate + '%',
-            l.duration + ' mois',
-            typeLabels[l.type] || l.type,
-            fmtCur2(l.monthlyPayment),
-            fmtCur(l.totalInterest),
-            fmtCur(l.totalCost)
-        ]);
+        const hasInsurance = loans.some(l => l.totalInsurance > 0);
+        const hasGuarantee = loans.some(l => l.guaranteeAmount > 0);
+
+        const headers = ['Pret', 'Montant', 'Taux', 'Duree', 'Type', 'Mensualite'];
+        if (hasInsurance) headers.push('Ass./mois', 'Cout Ass.');
+        if (hasGuarantee) headers.push('Garantie');
+        headers.push('Total Int.', 'Cout Total', 'TAEG');
+
+        const rows = loans.map(l => {
+            const row = [
+                l.name,
+                fmtCur(l.principal),
+                l.rate + '%',
+                l.duration + ' mois',
+                typeLabels[l.type] || l.type,
+                fmtCur2(l.monthlyPayment)
+            ];
+            if (hasInsurance) {
+                row.push(fmtCur2(l.avgMonthlyInsurance || 0));
+                row.push(fmtCur(l.totalInsurance || 0));
+            }
+            if (hasGuarantee) {
+                row.push(fmtCur(l.guaranteeAmount || 0));
+            }
+            row.push(fmtCur(l.totalInterest));
+            row.push(fmtCur(l.totalCost));
+            row.push(l.taeg ? l.taeg.toFixed(2) + ' %' : '--');
+            return row;
+        });
 
         sections.push({ type: 'table', headers, rows });
 
@@ -300,37 +320,71 @@ export const Export = {
 
             sections.push({ type: 'separator' });
             sections.push({ type: 'title', text: 'Analyse' });
-            sections.push({
-                type: 'keyvalue',
-                items: [
-                    { label: 'Coût total le plus bas', value: `${bestCost.name} (${fmtCur(bestCost.totalCost)})` },
-                    { label: 'Mensualité la plus basse', value: `${bestPayment.name} (${fmtCur2(bestPayment.monthlyPayment)})` },
-                    { label: 'Intérêts les plus bas', value: `${bestInterest.name} (${fmtCur(bestInterest.totalInterest)})` }
-                ]
-            });
+            const analysisItems = [
+                { label: 'Cout total le plus bas', value: `${bestCost.name} (${fmtCur(bestCost.totalCost)})` },
+                { label: 'Mensualite la plus basse', value: `${bestPayment.name} (${fmtCur2(bestPayment.monthlyPayment)})` },
+                { label: 'Interets les plus bas', value: `${bestInterest.name} (${fmtCur(bestInterest.totalInterest)})` }
+            ];
+            if (hasInsurance) {
+                const bestIns = loans.reduce((a, b) => (a.totalInsurance || 0) < (b.totalInsurance || 0) ? a : b);
+                analysisItems.push({ label: 'Assurance la moins chere', value: `${bestIns.name} (${fmtCur(bestIns.totalInsurance || 0)})` });
+            }
+            sections.push({ type: 'keyvalue', items: analysisItems });
         }
 
         // Individual loan details
         sections.push({ type: 'separator' });
-        sections.push({ type: 'title', text: 'Détail par prêt' });
+        sections.push({ type: 'title', text: 'Detail par pret' });
 
         loans.forEach(l => {
-            sections.push({
-                type: 'keyvalue',
-                items: [
-                    { label: `── ${l.name} ──`, value: '' },
-                    { label: 'Montant emprunté', value: fmtCur(l.principal) },
-                    { label: 'Taux annuel', value: l.rate + ' %' },
-                    { label: 'Durée', value: `${l.duration} mois (${(l.duration / 12).toFixed(1)} ans)` },
-                    { label: 'Type', value: typeLabels[l.type] || l.type },
-                    { label: 'Mensualité', value: fmtCur2(l.monthlyPayment) },
-                    { label: 'Total intérêts', value: fmtCur(l.totalInterest) },
-                    { label: 'Coût total', value: fmtCur(l.totalCost) },
-                    ...(l.taeg ? [{ label: 'TAEG', value: (l.taeg).toFixed(2) + ' %' }] : [])
-                ]
-            });
+            const items = [
+                { label: `-- ${l.name} --`, value: '' },
+                { label: 'Montant emprunte', value: fmtCur(l.principal) },
+                { label: 'Taux annuel', value: l.rate + ' %' },
+                { label: 'Duree', value: `${l.duration} mois (${(l.duration / 12).toFixed(1)} ans)` },
+                { label: 'Type', value: typeLabels[l.type] || l.type }
+            ];
+
+            // Insurance detail
+            if (l.insP1 && l.insP1.quotite > 0) {
+                const p1 = l.insP1;
+                const desc = p1.mode === 'rate'
+                    ? `${p1.value}% ${natureLabels[p1.nature] || p1.nature}, quotite ${p1.quotite}%`
+                    : `${fmtCur2(p1.value)}/mois, quotite ${p1.quotite}%`;
+                items.push({ label: 'Assurance Empr. 1', value: desc });
+            }
+            if (l.insP2 && l.insP2.quotite > 0) {
+                const p2 = l.insP2;
+                const desc = p2.mode === 'rate'
+                    ? `${p2.value}% ${natureLabels[p2.nature] || p2.nature}, quotite ${p2.quotite}%`
+                    : `${fmtCur2(p2.value)}/mois, quotite ${p2.quotite}%`;
+                items.push({ label: 'Assurance Empr. 2', value: desc });
+            }
+
+            // Guarantee detail
+            if (l.guaranteeAmount > 0) {
+                const g = l.guarantee;
+                const desc = g.mode === 'percent'
+                    ? `${g.value}% du capital = ${fmtCur(l.guaranteeAmount)}`
+                    : fmtCur(l.guaranteeAmount);
+                items.push({ label: 'Garantie', value: desc });
+            }
+
+            items.push(
+                { label: 'Mensualite', value: fmtCur2(l.monthlyPayment) },
+                { label: 'Total interets', value: fmtCur(l.totalInterest) }
+            );
+            if (l.totalInsurance > 0) {
+                items.push({ label: 'Cout assurance total', value: fmtCur(l.totalInsurance) });
+            }
+            items.push({ label: 'Cout total', value: fmtCur(l.totalCost) });
+            if (l.taeg) {
+                items.push({ label: 'TAEG', value: l.taeg.toFixed(2) + ' %' });
+            }
+
+            sections.push({ type: 'keyvalue', items });
         });
 
-        this.toPdf('Benchmark - Comparaison de Prêts', sections, 'benchmark');
+        this.toPdf('Benchmark - Comparaison de Prets', sections, 'benchmark');
     }
 };
