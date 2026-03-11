@@ -632,6 +632,7 @@ function getResultsHTML(type, result) {
                         <div class="result-value">${f(result.totalCost)}</div>
                     </div>
                     ${deferralInfo}
+                    ${result.taeg != null ? `<div class="result-item"><div class="result-label">TAEG</div><div class="result-value">${result.taeg.toFixed(2)} %</div></div>` : ''}
                 </div>`;
         }
 
@@ -658,6 +659,7 @@ function getResultsHTML(type, result) {
                         <div class="result-label">Coût total</div>
                         <div class="result-value">${f(result.totalCost)}</div>
                     </div>
+                    ${result.taeg != null ? `<div class="result-item"><div class="result-label">TAEG</div><div class="result-value">${result.taeg.toFixed(2)} %</div></div>` : ''}
                 </div>`;
 
         case 'creditbail':
@@ -683,6 +685,7 @@ function getResultsHTML(type, result) {
                         <div class="result-label">Coût total</div>
                         <div class="result-value">${f(result.totalCost)}</div>
                     </div>
+                    ${result.taeg != null ? `<div class="result-item"><div class="result-label">TAEG</div><div class="result-value">${result.taeg.toFixed(2)} %</div></div>` : ''}
                 </div>`;
 
         case 'revolving':
@@ -744,6 +747,7 @@ function getResultsHTML(type, result) {
                         <div class="result-label">LTV</div>
                         <div class="result-value">${p(result.ltv)}</div>
                     </div>
+                    ${result.taeg != null ? `<div class="result-item"><div class="result-label">TAEG</div><div class="result-value">${result.taeg.toFixed(2)} %</div></div>` : ''}
                 </div>`;
 
         case 'mezzanine':
@@ -778,6 +782,7 @@ function getResultsHTML(type, result) {
                         <div class="result-label">All-in cost</div>
                         <div class="result-value">${p(result.allInCost)}</div>
                     </div>
+                    ${result.taeg != null ? `<div class="result-item"><div class="result-label">TAEG</div><div class="result-value">${result.taeg.toFixed(2)} %</div></div>` : ''}
                 </div>`;
 
         case 'tranching': {

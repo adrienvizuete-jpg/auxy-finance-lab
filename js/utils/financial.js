@@ -65,25 +65,38 @@ export const Financial = {
     },
 
     /**
-     * Internal Rate of Return (IRR) - Newton's method
+     * Internal Rate of Return (IRR) - Newton's method with multiple guesses
      */
     irr(cashflows, guess = 0.1) {
         const maxIter = 1000;
         const tolerance = 1e-10;
-        let rate = guess;
 
-        for (let i = 0; i < maxIter; i++) {
-            let npv = 0;
-            let dnpv = 0;
-            for (let j = 0; j < cashflows.length; j++) {
-                npv += cashflows[j] / Math.pow(1 + rate, j);
-                dnpv -= j * cashflows[j] / Math.pow(1 + rate, j + 1);
+        const tryGuess = (initialGuess) => {
+            let rate = initialGuess;
+            for (let i = 0; i < maxIter; i++) {
+                let npv = 0;
+                let dnpv = 0;
+                for (let j = 0; j < cashflows.length; j++) {
+                    const factor = Math.pow(1 + rate, j);
+                    npv += cashflows[j] / factor;
+                    dnpv -= j * cashflows[j] / (factor * (1 + rate));
+                }
+                if (Math.abs(dnpv) < 1e-20) return null;
+                const newRate = rate - npv / dnpv;
+                if (!isFinite(newRate) || newRate <= -1) return null;
+                if (Math.abs(newRate - rate) < tolerance) return newRate;
+                rate = newRate;
             }
-            const newRate = rate - npv / dnpv;
-            if (Math.abs(newRate - rate) < tolerance) return newRate;
-            rate = newRate;
+            return null;
+        };
+
+        // Try multiple guesses to improve convergence
+        const guesses = [guess, 0.01, 0.001, 0.05, 0.2, -0.01];
+        for (const g of guesses) {
+            const result = tryGuess(g);
+            if (result !== null && isFinite(result)) return result;
         }
-        return rate;
+        throw new Error('IRR did not converge');
     },
 
     /**
@@ -94,10 +107,12 @@ export const Financial = {
     },
 
     /**
-     * TAEG (Taux Annuel Effectif Global)
+     * TAEG (Taux Annuel Effectif Global) - EU directive 2008/48/CE
+     * Actuarial annualization: (1 + periodic_irr)^ppy - 1
      */
-    taeg(cashflows) {
-        return this.irr(cashflows) * 12;
+    taeg(cashflows, periodsPerYear = 12) {
+        const periodicRate = this.irr(cashflows);
+        return (Math.pow(1 + periodicRate, periodsPerYear) - 1) * 100;
     },
 
     // =============================================
@@ -196,11 +211,11 @@ export const Financial = {
         const firstInsurance = schedule[0]?.insurance || 0;
         const firstAmortRow = schedule.find(r => !r.deferred) || schedule[0];
 
-        // TAEG (annualized)
+        // TAEG (actuarial annualization per EU directive)
         const cashflows = [-principal + fees];
         for (const row of schedule) cashflows.push(row.payment);
         let taeg;
-        try { taeg = this.irr(cashflows) * ppy * 100; } catch { taeg = null; }
+        try { taeg = this.taeg(cashflows, ppy); } catch { taeg = null; }
 
         return {
             periodicPayment: firstAmortRow ? firstAmortRow.payment : 0,
@@ -287,6 +302,12 @@ export const Financial = {
         const firstPayment = firstAmortIdx >= 0 ? schedule[firstAmortIdx].payment : 0;
         const lastPayment = schedule[schedule.length - 1]?.payment || 0;
 
+        // TAEG
+        const cashflows = [-principal + fees];
+        for (const row of schedule) cashflows.push(row.payment);
+        let taeg;
+        try { taeg = this.taeg(cashflows, ppy); } catch { taeg = null; }
+
         return {
             firstPayment,
             lastPayment,
@@ -296,6 +317,7 @@ export const Financial = {
             totalInsurance,
             totalCost,
             totalPayment,
+            taeg,
             frequency,
             deferralMonths,
             deferralType,
@@ -348,6 +370,12 @@ export const Financial = {
         const totalCost = totalPayment - principal;
         const firstInsurance = schedule[0]?.insurance || 0;
 
+        // TAEG
+        const cashflows = [-principal + fees];
+        for (const row of schedule) cashflows.push(row.payment);
+        let taeg;
+        try { taeg = this.taeg(cashflows, ppy); } catch { taeg = null; }
+
         return {
             periodicPayment: periodicInterest + firstInsurance,
             monthlyPayment: (periodicInterest + firstInsurance) / (12 / ppy),
@@ -356,6 +384,7 @@ export const Financial = {
             totalInsurance,
             totalCost,
             totalPayment,
+            taeg,
             frequency,
             schedule
         };
@@ -537,6 +566,13 @@ export const Financial = {
 
         const totalCost = deposit + totalRent + residualValue - assetValue + fees;
 
+        // TAEG: borrower receives financed amount net of fees, pays rent, then residual
+        const cashflows = [-financed + fees];
+        for (const row of schedule) cashflows.push(row.payment);
+        cashflows[cashflows.length - 1] += residualValue;
+        let taeg;
+        try { taeg = this.taeg(cashflows, 12); } catch { taeg = null; }
+
         return {
             monthlyRent: payment,
             deposit,
@@ -546,6 +582,7 @@ export const Financial = {
             totalInterest,
             totalCost,
             totalPayment: deposit + totalRent + residualValue + fees,
+            taeg,
             schedule
         };
     },
@@ -622,6 +659,13 @@ export const Financial = {
         const finalBalance = capitalizedInterest ? balance : bridgeAmount;
         const netProceeds = expectedSalePrice - finalBalance;
 
+        // TAEG
+        const cashflows = [-bridgeAmount + fees];
+        for (const row of schedule) cashflows.push(row.payment);
+        cashflows[cashflows.length - 1] += finalBalance; // repayment of capital at end
+        let taeg;
+        try { taeg = this.taeg(cashflows, 12); } catch { taeg = null; }
+
         return {
             monthlyPayment: capitalizedInterest ? 0 : bridgeAmount * monthlyRate,
             finalBalance,
@@ -629,6 +673,7 @@ export const Financial = {
             totalCost: totalInterest + fees,
             netProceeds,
             ltv: (bridgeAmount / expectedSalePrice * 100),
+            taeg,
             schedule
         };
     },
@@ -666,6 +711,13 @@ export const Financial = {
         const finalRepayment = balance;
         const kickerValue = principal * (equityKicker / 100);
 
+        // TAEG: receive principal - fees, pay cash interest monthly, repay balance + kicker at end
+        const cashflows = [-principal + fees];
+        for (const row of schedule) cashflows.push(row.cashPayment);
+        cashflows[cashflows.length - 1] += finalRepayment + kickerValue;
+        let taeg;
+        try { taeg = this.taeg(cashflows, 12); } catch { taeg = null; }
+
         return {
             monthlyCashPayment: principal * monthlyCashRate,
             finalRepayment,
@@ -674,6 +726,7 @@ export const Financial = {
             equityKickerValue: kickerValue,
             totalCost: totalCashInterest + totalPikInterest + kickerValue + fees - principal,
             allInCost: ((totalCashInterest + totalPikInterest + kickerValue) / principal / durationMonths * 12) * 100,
+            taeg,
             schedule
         };
     },
