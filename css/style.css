@@ -1607,18 +1607,35 @@ body {
    IMMOBILIER MODULE
    ============================================ */
 
-.immo-nature-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
+/* Form sections inside single card */
+.immo-form-section {
+    padding: 16px 0;
+    border-bottom: 1px solid var(--border);
+}
+.immo-form-section:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+.immo-form-section:first-child {
+    padding-top: 0;
 }
 
-.immo-nature-grid .toggle-btn {
-    flex: 1 1 auto;
-    min-width: 140px;
-    text-align: center;
-    font-size: 0.85rem;
-    padding: 8px 14px;
+.immo-section-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--primary-500, #2e86ab);
+    margin-bottom: 12px;
+}
+
+.immo-section-total {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    text-transform: none;
+    letter-spacing: 0;
+    margin-left: 8px;
 }
 
 /* KPI Badges */
@@ -1668,10 +1685,7 @@ body {
 .memo-negative { background: var(--danger-bg, #fde8e8); border-left: 4px solid var(--danger, #e74c3c); }
 
 @media (max-width: 768px) {
-    .immo-nature-grid {
+    .immo-form-section .form-row {
         flex-direction: column;
-    }
-    .immo-nature-grid .toggle-btn {
-        min-width: auto;
     }
 }
