@@ -20,8 +20,8 @@ let detteNonRef = [
 ];
 
 let tranchesSenior = [
-    { label: 'A', pct: 70, duration: 6, taux: 3.5 },
-    { label: 'B', pct: 30, duration: 7, taux: 4.5 }
+    { label: 'A', pct: 70, duration: 6, taux: 3.5, amortType: 'constant', frequency: 'mensuel' },
+    { label: 'B', pct: 30, duration: 7, taux: 4.5, amortType: 'constant', frequency: 'mensuel' }
 ];
 
 let ebitda = 3750;
@@ -83,24 +83,56 @@ function renderDetteNonRefRows() {
     `).join('');
 }
 
-function computeAnnuity(amount, taux, durationYears) {
+const FREQ_MAP = { mensuel: 12, trimestriel: 4, semestriel: 2, annuel: 1, infine: 1 };
+const AMORT_LABELS = { constant: 'Constant', degressif: 'Dégressif', infine: 'In Fine' };
+const FREQ_LABELS = { mensuel: 'Mensuel', trimestriel: 'Trimestriel', semestriel: 'Semestriel', annuel: 'Annuel', infine: 'In Fine' };
+
+function computeAnnuity(amount, taux, durationYears, amortType = 'constant', frequency = 'mensuel') {
     if (amount <= 0 || !taux || taux <= 0 || durationYears <= 0) return 0;
-    const monthlyRate = taux / 100 / 12;
-    const months = durationYears * 12;
-    const monthlyPayment = Financial.pmt(monthlyRate, months, -amount);
-    return monthlyPayment * 12;
+
+    const periodsPerYear = FREQ_MAP[frequency] || 12;
+    const periodicRate = taux / 100 / periodsPerYear;
+    const totalPeriods = durationYears * periodsPerYear;
+
+    // In Fine frequency = interest only each year, principal at maturity
+    if (frequency === 'infine' || amortType === 'infine') {
+        // Annual interest only
+        return amount * taux / 100;
+    }
+
+    if (amortType === 'degressif') {
+        // Degressive: constant principal + decreasing interest → first year annuity
+        const principalPerPeriod = amount / totalPeriods;
+        // Average annuity over first year (sum of first periodsPerYear payments)
+        let annuity = 0;
+        let balance = amount;
+        for (let p = 0; p < periodsPerYear; p++) {
+            const interest = balance * periodicRate;
+            annuity += principalPerPeriod + interest;
+            balance -= principalPerPeriod;
+        }
+        return annuity;
+    }
+
+    // Constant (amortissable constant) - standard PMT
+    const periodicPayment = Financial.pmt(periodicRate, totalPeriods, -amount);
+    return periodicPayment * periodsPerYear;
 }
 
 function renderTranchesRows(c) {
     return tranchesSenior.map((t, i) => {
         const amount = c.detteSenior * t.pct / 100;
-        const annuity = computeAnnuity(amount, t.taux || 0, t.duration || 1);
+        const annuity = computeAnnuity(amount, t.taux || 0, t.duration || 1, t.amortType || 'constant', t.frequency || 'mensuel');
+        const selAmort = (val) => Object.entries(AMORT_LABELS).map(([k, v]) => `<option value="${k}" ${k === (t.amortType || 'constant') ? 'selected' : ''}>${v}</option>`).join('');
+        const selFreq = (val) => Object.entries(FREQ_LABELS).map(([k, v]) => `<option value="${k}" ${k === (t.frequency || 'mensuel') ? 'selected' : ''}>${v}</option>`).join('');
         return `
         <tr data-section="tranches" data-index="${i}">
-            <td><input class="er-input" type="text" value="${t.label}" data-field="label" style="width:80px"></td>
+            <td><input class="er-input" type="text" value="${t.label}" data-field="label" style="width:70px"></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${t.pct}" data-field="pct" step="5" min="0" max="100"></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${t.duration}" data-field="duration" step="1" min="1"></td>
-            <td style="text-align:right"><input class="er-input narrow" type="number" value="${t.taux || 0}" data-field="taux" step="0.1" min="0" max="50" style="width:80px"></td>
+            <td style="text-align:right"><input class="er-input narrow" type="number" value="${t.taux || 0}" data-field="taux" step="0.1" min="0" max="50" style="width:70px"></td>
+            <td><select class="er-input" data-field="amortType" style="width:100px;font-size:0.75rem">${selAmort()}</select></td>
+            <td><select class="er-input" data-field="frequency" style="width:100px;font-size:0.75rem">${selFreq()}</select></td>
             <td style="text-align:right" class="er-computed">${fmtK(amount)}</td>
             <td style="text-align:right" class="er-computed">${fmtK(annuity)}</td>
             <td style="width:30px">${tranchesSenior.length > 1 ? `<button class="er-remove-btn" data-action="remove">${X_SVG}</button>` : ''}</td>
@@ -159,7 +191,7 @@ function recalculate() {
     // Annuité totale
     const totalAnnuity = tranchesSenior.reduce((sum, t) => {
         const amount = c.detteSenior * t.pct / 100;
-        return sum + computeAnnuity(amount, t.taux || 0, t.duration || 1);
+        return sum + computeAnnuity(amount, t.taux || 0, t.duration || 1, t.amortType || 'constant', t.frequency || 'mensuel');
     }, 0);
     const elAnnuityTotal = document.getElementById('er-annuity-total');
     if (elAnnuityTotal) elAnnuityTotal.textContent = fmtK(totalAnnuity);
@@ -192,7 +224,9 @@ function handleTableInput(e) {
     const field = input.dataset.field;
     if (field === undefined) return;
 
-    const val = field === 'label' ? input.value : (parseFloat(input.value) || 0);
+    const isSelect = input.tagName === 'SELECT';
+    const isText = field === 'label' || isSelect;
+    const val = isText ? input.value : (parseFloat(input.value) || 0);
 
     if (section === 'emplois' && emplois[index]) emplois[index][field] = val;
     else if (section === 'detteNonRef' && detteNonRef[index]) detteNonRef[index][field] = val;
@@ -303,10 +337,10 @@ function exportExcel() {
     rows.push([]);
 
     // Tranches
-    rows.push(['TRANCHES DETTE SENIOR', '% Senior', 'Durée (ans)', 'Taux (%)', 'Montant', 'Annuité']);
+    rows.push(['TRANCHES DETTE SENIOR', '% Senior', 'Durée (ans)', 'Taux (%)', 'Amortissement', 'Fréquence', 'Montant', 'Annuité']);
     c.tranchesDetail.forEach(t => {
-        const annuity = computeAnnuity(t.amount, t.taux || 0, t.duration || 1);
-        rows.push([`Tranche ${t.label}`, t.pct / 100, t.duration, (t.taux || 0) / 100, t.amount, annuity]);
+        const annuity = computeAnnuity(t.amount, t.taux || 0, t.duration || 1, t.amortType || 'constant', t.frequency || 'mensuel');
+        rows.push([`Tranche ${t.label}`, t.pct / 100, t.duration, (t.taux || 0) / 100, AMORT_LABELS[t.amortType] || 'Constant', FREQ_LABELS[t.frequency] || 'Mensuel', t.amount, annuity]);
     });
     rows.push([]);
 
@@ -330,7 +364,7 @@ function exportExcel() {
     const ws = XLSX.utils.aoa_to_sheet(rows);
 
     // Column widths
-    ws['!cols'] = [{ wch: 32 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }];
+    ws['!cols'] = [{ wch: 32 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }];
 
     XLSX.utils.book_append_sheet(wb, ws, 'Emplois-Ressources');
     XLSX.writeFile(wb, 'Emplois_Ressources.xlsx');
@@ -459,6 +493,8 @@ export const StructuredModule = {
                                 <th style="text-align:right">% Senior</th>
                                 <th style="text-align:right">Durée (ans)</th>
                                 <th style="text-align:right">Taux (%)</th>
+                                <th>Amortissement</th>
+                                <th>Fréquence</th>
                                 <th style="text-align:right">Montant (k€)</th>
                                 <th style="text-align:right">Annuité (k€)</th>
                                 <th></th>
@@ -469,7 +505,7 @@ export const StructuredModule = {
                         </tbody>
                         <tfoot>
                             <tr class="er-total-row">
-                                <td colspan="5">Total</td>
+                                <td colspan="7">Total</td>
                                 <td style="text-align:right" id="er-annuity-total">—</td>
                                 <td></td>
                             </tr>
@@ -585,10 +621,11 @@ export const StructuredModule = {
         // ── Tranches table ──
         const tranchesBody = document.getElementById('er-tranches-body');
         tranchesBody?.addEventListener('input', handleTableInput);
+        tranchesBody?.addEventListener('change', handleTableInput);
         tranchesBody?.addEventListener('click', handleRemove);
 
         document.getElementById('er-add-tranche')?.addEventListener('click', () => {
-            tranchesSenior.push({ label: String.fromCharCode(65 + tranchesSenior.length), pct: 0, duration: 5, taux: 3.0 });
+            tranchesSenior.push({ label: String.fromCharCode(65 + tranchesSenior.length), pct: 0, duration: 5, taux: 3.0, amortType: 'constant', frequency: 'mensuel' });
             recalculate();
         });
 

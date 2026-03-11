@@ -8,6 +8,14 @@ import { LOGO_BASE64 } from './logo-data.js';
 export const Export = {
 
     /**
+     * Sanitize strings for PDF rendering (replaces narrow no-break spaces with regular spaces)
+     */
+    _sanitizePdf(str) {
+        if (typeof str !== 'string') return str;
+        return str.replace(/[\u202F\u00A0]/g, ' ');
+    },
+
+    /**
      * Export schedule to Excel
      */
     toExcel(schedule, filename = 'simulation', sheetName = 'Amortissement') {
@@ -166,7 +174,7 @@ export const Export = {
         doc.setTextColor(255, 255, 255);
         doc.setFontSize(11);
         doc.setFont('helvetica', 'normal');
-        doc.text(title, 15, 28);
+        doc.text(this._sanitizePdf(title), 15, 28);
         doc.setFontSize(9);
         doc.text(`Généré le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}`, pageWidth - 15, 28, { align: 'right' });
 
@@ -182,7 +190,7 @@ export const Export = {
             if (section.type === 'title') {
                 doc.setFontSize(13);
                 doc.setFont('helvetica', 'bold');
-                doc.text(section.text, 15, y);
+                doc.text(this._sanitizePdf(section.text), 15, y);
                 y += 10;
             }
 
@@ -192,20 +200,22 @@ export const Export = {
                     if (y > 260) { doc.addPage(); y = 20; }
                     doc.setFont('helvetica', 'normal');
                     doc.setTextColor(107, 114, 128);
-                    doc.text(String(item.label), 15, y);
+                    doc.text(this._sanitizePdf(String(item.label)), 15, y);
                     doc.setFont('helvetica', 'bold');
                     doc.setTextColor(26, 53, 72);
-                    doc.text(String(item.value), 95, y);
+                    doc.text(this._sanitizePdf(String(item.value)), 95, y);
                     y += 7;
                 });
                 y += 8;
             }
 
             if (section.type === 'table') {
+                const sanitizedHeaders = section.headers.map(h => this._sanitizePdf(String(h)));
+                const sanitizedRows = section.rows.map(row => row.map(cell => this._sanitizePdf(String(cell))));
                 doc.autoTable({
                     startY: y,
-                    head: [section.headers],
-                    body: section.rows,
+                    head: [sanitizedHeaders],
+                    body: sanitizedRows,
                     theme: 'grid',
                     headStyles: {
                         fillColor: [26, 53, 72],
