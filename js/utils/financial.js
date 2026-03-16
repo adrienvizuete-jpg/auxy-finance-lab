@@ -933,7 +933,7 @@ export const Financial = {
     /**
      * Sensitivity analysis - varies rate and duration
      */
-    sensitivityAnalysis({ principal, baseRate, baseDuration, rateRange, durationRange, insuranceMonthly = 0 }) {
+    sensitivityAnalysis({ principal, baseRate, baseDuration, rateRange, durationRange, insuranceMonthly = 0, frequency = 'monthly' }) {
         const results = [];
         for (const rateDelta of rateRange) {
             const row = [];
@@ -948,7 +948,8 @@ export const Financial = {
                     principal,
                     annualRate: rate,
                     durationMonths: duration,
-                    insuranceMonthly
+                    insuranceMonthly,
+                    frequency
                 });
                 row.push({
                     rate,

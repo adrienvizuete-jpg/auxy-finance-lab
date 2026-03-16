@@ -295,6 +295,15 @@ export const StressTestModule = {
                         <label class="form-label">Assurance/mois (\u20ac)</label>
                         <input type="number" class="form-input" id="st-insurance" value="0" step="10">
                     </div>
+                    <div class="form-group">
+                        <label class="form-label">Fr\u00e9quence</label>
+                        <select class="form-select" id="st-frequency">
+                            <option value="monthly" selected>Mensuel</option>
+                            <option value="quarterly">Trimestriel</option>
+                            <option value="semiannual">Semestriel</option>
+                            <option value="annual">Annuel</option>
+                        </select>
+                    </div>
                 </div>
 
                 <div class="card-title" style="margin-top:20px;font-size:0.95rem">Plage de variation du taux</div>
@@ -383,6 +392,10 @@ export const StressTestModule = {
             const rateMin = parseFloat(document.getElementById('st-rate-min').value);
             const rateMax = parseFloat(document.getElementById('st-rate-max').value);
             const rateStep = Math.max(0.25, parseFloat(document.getElementById('st-rate-step').value));
+            const frequency = document.getElementById('st-frequency').value;
+
+            const freqLabels = { monthly: 'Mensuel', quarterly: 'Trimestriel', semiannual: 'Semestriel', annual: 'Annuel' };
+            const freqLabel = freqLabels[frequency] || 'Mensuel';
 
             const rateRange = this._buildRateRange(rateMin, rateMax, rateStep);
             const durationRange = [-24, -12, 0, 12, 24, 36];
@@ -390,11 +403,12 @@ export const StressTestModule = {
             const results = Financial.sensitivityAnalysis({
                 principal, baseRate, baseDuration,
                 rateRange, durationRange,
-                insuranceMonthly: insurance
+                insuranceMonthly: insurance,
+                frequency
             });
 
             // Base case
-            const baseSim = Financial.amortissableConstant({ principal, annualRate: baseRate, durationMonths: baseDuration, insuranceMonthly: insurance });
+            const baseSim = Financial.amortissableConstant({ principal, annualRate: baseRate, durationMonths: baseDuration, insuranceMonthly: insurance, frequency });
             const basePayment = baseSim.monthlyPayment;
             const baseCost = baseSim.totalCost;
             const baseInterest = baseSim.totalInterest;
@@ -408,24 +422,24 @@ export const StressTestModule = {
             const worstCell = allCells.reduce((a, b) => a.totalCost > b.totalCost ? a : b);
 
             // Store for exports
-            this._lastAnalysis = { principal, baseRate, baseDuration, insurance, rateRange, durationRange, results, baseSim, allCells, worstCell };
+            this._lastAnalysis = { principal, baseRate, baseDuration, insurance, frequency, freqLabel, rateRange, durationRange, results, baseSim, allCells, worstCell };
 
             const container = document.getElementById('st-results');
             container.innerHTML = `
                 <!-- KPI Summary -->
                 <div class="grid-4 section">
                     <div class="card st-kpi-card">
-                        <div class="st-kpi-label">Mensualit\u00e9 de base</div>
+                        <div class="st-kpi-label">\u00c9ch\u00e9ance de base (${freqLabel})</div>
                         <div class="st-kpi-value">${Financial.formatCurrency(basePayment)}</div>
                         <div class="st-kpi-sub">${baseRate.toFixed(2)}% \u2014 ${baseDuration} mois</div>
                     </div>
                     <div class="card st-kpi-card">
-                        <div class="st-kpi-label">Mensualit\u00e9 min / max</div>
+                        <div class="st-kpi-label">\u00c9ch\u00e9ance min / max</div>
                         <div class="st-kpi-value" style="color:var(--success)">${Financial.formatCurrency(minPayment)}</div>
                         <div class="st-kpi-sub" style="color:var(--danger)">${Financial.formatCurrency(maxPayment)}</div>
                     </div>
                     <div class="card st-kpi-card">
-                        <div class="st-kpi-label">\u00c9cart max mensualit\u00e9</div>
+                        <div class="st-kpi-label">\u00c9cart max \u00e9ch\u00e9ance</div>
                         <div class="st-kpi-value" style="color:var(--warning)">${Financial.formatCurrency(maxPayment - minPayment, 0)}</div>
                         <div class="st-kpi-sub">${((maxPayment - minPayment) / basePayment * 100).toFixed(1)}% de variation</div>
                     </div>
@@ -438,7 +452,7 @@ export const StressTestModule = {
 
                 <!-- Matrices -->
                 ${this._buildHeatmapTable(
-                    'Matrice de sensibilit\u00e9 \u2014 Mensualit\u00e9',
+                    'Matrice de sensibilit\u00e9 \u2014 \u00c9ch\u00e9ance (' + freqLabel + ')',
                     'Base : ' + Financial.formatCurrency(basePayment),
                     results, rateRange, durationRange, baseRate, baseDuration,
                     'monthlyPayment', basePayment, [5, 15]
@@ -460,13 +474,13 @@ export const StressTestModule = {
 
                 <!-- Line chart: rate impact -->
                 <div class="card section">
-                    <div class="card-title">Impact du taux sur la mensualit\u00e9 (dur\u00e9e fixe : ${baseDuration} mois)</div>
+                    <div class="card-title">Impact du taux sur l'\u00e9ch\u00e9ance ${freqLabel.toLowerCase()} (dur\u00e9e fixe : ${baseDuration} mois)</div>
                     <div class="chart-container"><canvas id="chart-stress-line"></canvas></div>
                 </div>
 
                 <!-- Heatmap chart -->
                 <div class="card section">
-                    <div class="card-title">Carte thermique \u2014 Mensualit\u00e9</div>
+                    <div class="card-title">Carte thermique \u2014 \u00c9ch\u00e9ance (${freqLabel})</div>
                     <div id="st-heatmap-container" style="overflow-x:auto"><canvas id="chart-stress-heatmap"></canvas></div>
                 </div>
 
@@ -487,7 +501,7 @@ export const StressTestModule = {
             const validRates = rateRange.filter(rd => baseRate + rd > 0);
             const lineLabels = validRates.map(rd => (baseRate + rd).toFixed(2) + '%');
             const lineData = validRates.map(rd => {
-                const sim = Financial.amortissableConstant({ principal, annualRate: baseRate + rd, durationMonths: baseDuration, insuranceMonthly: insurance });
+                const sim = Financial.amortissableConstant({ principal, annualRate: baseRate + rd, durationMonths: baseDuration, insuranceMonthly: insurance, frequency });
                 return sim.monthlyPayment;
             });
 
@@ -673,6 +687,7 @@ export const StressTestModule = {
                 { label: 'Montant emprunte', value: fmtCur(d.principal) },
                 { label: 'Taux de base', value: d.baseRate.toFixed(2) + ' %' },
                 { label: 'Duree de base', value: d.baseDuration + ' mois (' + (d.baseDuration / 12).toFixed(1) + ' ans)' },
+                { label: 'Frequence d\'amortissement', value: d.freqLabel },
                 { label: 'Assurance mensuelle', value: fmtCur2(d.insurance) },
                 { label: 'Plage de taux testee', value: (d.baseRate + d.rateRange[0]).toFixed(2) + '% a ' + (d.baseRate + d.rateRange[d.rateRange.length - 1]).toFixed(2) + '%' },
                 { label: 'Date d\'analyse', value: new Date().toLocaleDateString('fr-FR') }
@@ -768,6 +783,7 @@ export const StressTestModule = {
             ['Montant', d.principal],
             ['Taux de base', d.baseRate + '%'],
             ['Dur\u00e9e de base', d.baseDuration + ' mois'],
+            ['Fr\u00e9quence', d.freqLabel],
             ['Assurance/mois', d.insurance],
             ['Date', new Date().toLocaleDateString('fr-FR')],
             [''],
