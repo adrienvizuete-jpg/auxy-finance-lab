@@ -1199,6 +1199,32 @@ body {
 .heat-medium { background: rgba(217,119,6,0.15); color: var(--warning); }
 .heat-high { background: rgba(220,38,38,0.15); color: var(--danger); }
 
+/* === Stress Test KPI Cards === */
+.st-kpi-card {
+    padding: 16px 20px;
+    text-align: center;
+}
+.st-kpi-label {
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-bottom: 6px;
+}
+.st-kpi-value {
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: var(--primary-700);
+    font-variant-numeric: tabular-nums;
+}
+.st-kpi-sub {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+}
+
 /* === Print === */
 @media print {
     .sidebar, .mobile-header, .btn, .tabs { display: none !important; }

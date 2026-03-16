@@ -4,6 +4,7 @@
 
 import { Financial } from '../utils/financial.js';
 import { Charts } from '../utils/charts.js';
+import { Export } from '../utils/export.js';
 
 // =============================================
 // FINANCIAL CALCULATOR
@@ -266,11 +267,13 @@ export const CalculatorModule = {
 // =============================================
 
 export const StressTestModule = {
+    _lastAnalysis: null,
+
     render() {
         return `
             <div class="page-header">
                 <h1>Stress Test</h1>
-                <p>Analyse de sensibilit\u00e9 - Impact des variations de taux et de dur\u00e9e sur la mensualit\u00e9</p>
+                <p>Analyse de sensibilit\u00e9 — Impact des variations de taux et de dur\u00e9e sur le co\u00fbt du cr\u00e9dit</p>
             </div>
 
             <div class="card section">
@@ -293,6 +296,23 @@ export const StressTestModule = {
                         <input type="number" class="form-input" id="st-insurance" value="0" step="10">
                     </div>
                 </div>
+
+                <div class="card-title" style="margin-top:20px;font-size:0.95rem">Plage de variation du taux</div>
+                <div class="form-row" style="margin-top:8px">
+                    <div class="form-group">
+                        <label class="form-label">Variation min (pts)</label>
+                        <input type="number" class="form-input" id="st-rate-min" value="-2" step="0.5">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Variation max (pts)</label>
+                        <input type="number" class="form-input" id="st-rate-max" value="2" step="0.5">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Pas (pts)</label>
+                        <input type="number" class="form-input" id="st-rate-step" value="0.5" step="0.25" min="0.25">
+                    </div>
+                </div>
+
                 <button class="btn btn-primary btn-lg" id="st-run" style="margin-top:16px">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                     Lancer l'analyse
@@ -303,14 +323,68 @@ export const StressTestModule = {
         `;
     },
 
+    _buildRateRange(min, max, step) {
+        const range = [];
+        for (let v = min; v <= max + 0.001; v += step) {
+            range.push(Math.round(v * 100) / 100);
+        }
+        // Ensure 0 is in the range
+        if (!range.includes(0)) range.push(0);
+        range.sort((a, b) => a - b);
+        return range;
+    },
+
+    _buildHeatmapTable(title, badge, results, rateRange, durationRange, baseRate, baseDuration, valueKey, baseValue, thresholds) {
+        return `
+            <div class="card section">
+                <div class="card-header">
+                    <div class="card-title">${title}</div>
+                    ${badge ? `<div class="badge badge-blue">${badge}</div>` : ''}
+                </div>
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Taux \\ Dur\u00e9e</th>
+                                ${durationRange.map(d => `<th style="text-align:center">${baseDuration + d} mois</th>`).join('')}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${results.map((row, ri) => `
+                                <tr>
+                                    <td style="font-weight:600">${(baseRate + rateRange[ri]).toFixed(2)}%</td>
+                                    ${row.map(cell => {
+                                        if (!cell) return '<td class="heatmap-cell">\u2014</td>';
+                                        const val = cell[valueKey];
+                                        const diff = val - baseValue;
+                                        const pctDiff = (diff / baseValue) * 100;
+                                        const cls = Math.abs(pctDiff) < thresholds[0] ? 'heat-low' : Math.abs(pctDiff) < thresholds[1] ? 'heat-medium' : 'heat-high';
+                                        const isBase = rateRange[ri] === 0 && cell.duration === baseDuration;
+                                        return `<td class="heatmap-cell ${cls}" style="${isBase ? 'font-weight:800;outline:2px solid var(--primary-500)' : ''}">
+                                            ${Financial.formatCurrency(val, valueKey === 'monthlyPayment' ? undefined : 0)}
+                                            <div style="font-size:0.7rem;opacity:0.7">${diff >= 0 ? '+' : ''}${Financial.formatCurrency(diff, 0)}</div>
+                                        </td>`;
+                                    }).join('')}
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+    },
+
     init() {
         document.getElementById('st-run')?.addEventListener('click', () => {
             const principal = parseFloat(document.getElementById('st-principal').value);
             const baseRate = parseFloat(document.getElementById('st-rate').value);
             const baseDuration = parseInt(document.getElementById('st-duration').value);
             const insurance = parseFloat(document.getElementById('st-insurance').value);
+            const rateMin = parseFloat(document.getElementById('st-rate-min').value);
+            const rateMax = parseFloat(document.getElementById('st-rate-max').value);
+            const rateStep = Math.max(0.25, parseFloat(document.getElementById('st-rate-step').value));
 
-            const rateRange = [-2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2, 3];
+            const rateRange = this._buildRateRange(rateMin, rateMax, rateStep);
             const durationRange = [-24, -12, 0, 12, 24, 36];
 
             const results = Financial.sensitivityAnalysis({
@@ -322,97 +396,393 @@ export const StressTestModule = {
             // Base case
             const baseSim = Financial.amortissableConstant({ principal, annualRate: baseRate, durationMonths: baseDuration, insuranceMonthly: insurance });
             const basePayment = baseSim.monthlyPayment;
+            const baseCost = baseSim.totalCost;
+            const baseInterest = baseSim.totalInterest;
+
+            // Flatten all valid cells for KPIs
+            const allCells = results.flat().filter(c => c !== null);
+            const minPayment = Math.min(...allCells.map(c => c.monthlyPayment));
+            const maxPayment = Math.max(...allCells.map(c => c.monthlyPayment));
+            const maxInterest = Math.max(...allCells.map(c => c.totalInterest));
+            const maxCost = Math.max(...allCells.map(c => c.totalCost));
+            const worstCell = allCells.reduce((a, b) => a.totalCost > b.totalCost ? a : b);
+
+            // Store for exports
+            this._lastAnalysis = { principal, baseRate, baseDuration, insurance, rateRange, durationRange, results, baseSim, allCells, worstCell };
 
             const container = document.getElementById('st-results');
             container.innerHTML = `
-                <div class="card section">
-                    <div class="card-header">
-                        <div class="card-title">Matrice de sensibilit\u00e9 - Mensualit\u00e9</div>
-                        <div class="badge badge-blue">Base: ${Financial.formatCurrency(basePayment)}</div>
+                <!-- KPI Summary -->
+                <div class="grid-4 section">
+                    <div class="card st-kpi-card">
+                        <div class="st-kpi-label">Mensualit\u00e9 de base</div>
+                        <div class="st-kpi-value">${Financial.formatCurrency(basePayment)}</div>
+                        <div class="st-kpi-sub">${baseRate.toFixed(2)}% \u2014 ${baseDuration} mois</div>
                     </div>
-                    <div class="table-container">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th>Taux \\ Dur\u00e9e</th>
-                                    ${durationRange.map(d => `<th style="text-align:center">${baseDuration + d} mois</th>`).join('')}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${results.map((row, ri) => `
-                                    <tr>
-                                        <td style="font-weight:600">${(baseRate + rateRange[ri]).toFixed(2)}%</td>
-                                        ${row.map(cell => {
-                                            if (!cell) return '<td class="heatmap-cell">\u2014</td>';
-                                            const diff = cell.monthlyPayment - basePayment;
-                                            const pctDiff = (diff / basePayment) * 100;
-                                            const cls = Math.abs(pctDiff) < 5 ? 'heat-low' : Math.abs(pctDiff) < 15 ? 'heat-medium' : 'heat-high';
-                                            const isBase = rateRange[ri] === 0 && cell.duration === baseDuration;
-                                            return `<td class="heatmap-cell ${cls}" style="${isBase ? 'font-weight:800;outline:2px solid var(--primary-500)' : ''}">
-                                                ${Financial.formatCurrency(cell.monthlyPayment)}
-                                                <div style="font-size:0.7rem;opacity:0.7">${diff >= 0 ? '+' : ''}${Financial.formatCurrency(diff, 0)}</div>
-                                            </td>`;
-                                        }).join('')}
-                                    </tr>
-                                `).join('')}
-                            </tbody>
-                        </table>
+                    <div class="card st-kpi-card">
+                        <div class="st-kpi-label">Mensualit\u00e9 min / max</div>
+                        <div class="st-kpi-value" style="color:var(--success)">${Financial.formatCurrency(minPayment)}</div>
+                        <div class="st-kpi-sub" style="color:var(--danger)">${Financial.formatCurrency(maxPayment)}</div>
+                    </div>
+                    <div class="card st-kpi-card">
+                        <div class="st-kpi-label">\u00c9cart max mensualit\u00e9</div>
+                        <div class="st-kpi-value" style="color:var(--warning)">${Financial.formatCurrency(maxPayment - minPayment, 0)}</div>
+                        <div class="st-kpi-sub">${((maxPayment - minPayment) / basePayment * 100).toFixed(1)}% de variation</div>
+                    </div>
+                    <div class="card st-kpi-card">
+                        <div class="st-kpi-label">Pire sc\u00e9nario (co\u00fbt total)</div>
+                        <div class="st-kpi-value" style="color:var(--danger)">${Financial.formatCurrency(maxCost, 0)}</div>
+                        <div class="st-kpi-sub">${worstCell.rate.toFixed(2)}% \u2014 ${worstCell.duration} mois</div>
                     </div>
                 </div>
 
+                <!-- Matrices -->
+                ${this._buildHeatmapTable(
+                    'Matrice de sensibilit\u00e9 \u2014 Mensualit\u00e9',
+                    'Base : ' + Financial.formatCurrency(basePayment),
+                    results, rateRange, durationRange, baseRate, baseDuration,
+                    'monthlyPayment', basePayment, [5, 15]
+                )}
+
+                ${this._buildHeatmapTable(
+                    'Matrice de sensibilit\u00e9 \u2014 Co\u00fbt total',
+                    'Base : ' + Financial.formatCurrency(baseCost, 0),
+                    results, rateRange, durationRange, baseRate, baseDuration,
+                    'totalCost', baseCost, [10, 30]
+                )}
+
+                ${this._buildHeatmapTable(
+                    'Matrice de sensibilit\u00e9 \u2014 Int\u00e9r\u00eats totaux',
+                    'Base : ' + Financial.formatCurrency(baseInterest, 0),
+                    results, rateRange, durationRange, baseRate, baseDuration,
+                    'totalInterest', baseInterest, [15, 40]
+                )}
+
+                <!-- Line chart: rate impact -->
                 <div class="card section">
-                    <div class="card-header">
-                        <div class="card-title">Matrice de sensibilit\u00e9 - Co\u00fbt total</div>
-                    </div>
-                    <div class="table-container">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th>Taux \\ Dur\u00e9e</th>
-                                    ${durationRange.map(d => `<th style="text-align:center">${baseDuration + d} mois</th>`).join('')}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${results.map((row, ri) => `
-                                    <tr>
-                                        <td style="font-weight:600">${(baseRate + rateRange[ri]).toFixed(2)}%</td>
-                                        ${row.map(cell => {
-                                            if (!cell) return '<td class="heatmap-cell">\u2014</td>';
-                                            const baseCost = baseSim.totalCost;
-                                            const diff = cell.totalCost - baseCost;
-                                            const pctDiff = (diff / baseCost) * 100;
-                                            const cls = Math.abs(pctDiff) < 10 ? 'heat-low' : Math.abs(pctDiff) < 30 ? 'heat-medium' : 'heat-high';
-                                            return `<td class="heatmap-cell ${cls}">
-                                                ${Financial.formatCurrency(cell.totalCost, 0)}
-                                            </td>`;
-                                        }).join('')}
-                                    </tr>
-                                `).join('')}
-                            </tbody>
-                        </table>
-                    </div>
+                    <div class="card-title">Impact du taux sur la mensualit\u00e9 (dur\u00e9e fixe : ${baseDuration} mois)</div>
+                    <div class="chart-container"><canvas id="chart-stress-line"></canvas></div>
                 </div>
 
+                <!-- Heatmap chart -->
                 <div class="card section">
-                    <div class="card-title">Impact du taux sur la mensualit\u00e9</div>
-                    <div class="chart-container"><canvas id="chart-stress-rate"></canvas></div>
+                    <div class="card-title">Carte thermique \u2014 Mensualit\u00e9</div>
+                    <div id="st-heatmap-container" style="overflow-x:auto"><canvas id="chart-stress-heatmap"></canvas></div>
+                </div>
+
+                <!-- Export buttons -->
+                <div class="section" style="display:flex;gap:12px;flex-wrap:wrap">
+                    <button class="btn btn-primary" id="st-export-pdf">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        Exporter PDF
+                    </button>
+                    <button class="btn btn-outline" id="st-export-xlsx">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        Exporter Excel
+                    </button>
                 </div>
             `;
 
-            // Chart: rate impact
-            const rateData = rateRange.map(rd => {
-                const r = baseRate + rd;
-                if (r <= 0) return null;
-                const sim = Financial.amortissableConstant({ principal, annualRate: r, durationMonths: baseDuration, insuranceMonthly: insurance });
+            // === Line chart: mensualit\u00e9 par taux (dur\u00e9e fixe) ===
+            const validRates = rateRange.filter(rd => baseRate + rd > 0);
+            const lineLabels = validRates.map(rd => (baseRate + rd).toFixed(2) + '%');
+            const lineData = validRates.map(rd => {
+                const sim = Financial.amortissableConstant({ principal, annualRate: baseRate + rd, durationMonths: baseDuration, insuranceMonthly: insurance });
                 return sim.monthlyPayment;
-            }).filter(v => v !== null);
+            });
 
-            const rateLabels = rateRange.filter((rd, i) => baseRate + rd > 0).map(rd => (baseRate + rd).toFixed(2) + '%');
+            Charts.destroy('chart-stress-line');
+            const ctxLine = document.getElementById('chart-stress-line');
+            if (ctxLine) {
+                const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+                const theme = {
+                    text: isDark ? '#94a3b8' : '#4b5563',
+                    grid: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+                    bg: isDark ? '#1a2736' : '#ffffff'
+                };
+                new Chart(ctxLine, {
+                    type: 'line',
+                    data: {
+                        labels: lineLabels,
+                        datasets: [{
+                            label: 'Mensualit\u00e9',
+                            data: lineData,
+                            borderColor: Charts.COLORS.primary,
+                            backgroundColor: Charts.COLORS.primary + '20',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 4,
+                            pointHoverRadius: 6,
+                            pointBackgroundColor: lineData.map((v, i) => validRates[i] === 0 ? Charts.COLORS.accent : Charts.COLORS.primary),
+                            borderWidth: 2.5
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: { intersect: false },
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                backgroundColor: theme.bg,
+                                titleColor: theme.text,
+                                bodyColor: theme.text,
+                                borderColor: theme.grid,
+                                borderWidth: 1,
+                                padding: 12,
+                                callbacks: {
+                                    label: ctx => `Mensualit\u00e9 : ${Financial.formatCurrency(ctx.raw)}`
+                                }
+                            }
+                        },
+                        scales: {
+                            x: {
+                                grid: { display: false },
+                                ticks: { color: theme.text },
+                                title: { display: true, text: 'Taux annuel', color: theme.text }
+                            },
+                            y: {
+                                grid: { color: theme.grid },
+                                ticks: {
+                                    color: theme.text,
+                                    callback: v => new Intl.NumberFormat('fr-FR', { notation: 'compact' }).format(v) + ' \u20ac'
+                                },
+                                title: { display: true, text: 'Mensualit\u00e9 (\u20ac)', color: theme.text }
+                            }
+                        }
+                    }
+                });
+            }
 
-            Charts.benchmarkComparison('chart-stress-rate',
-                rateLabels.map((label, i) => ({ name: label, value: rateData[i] })),
-                { key: 'value', label: 'Mensualit\u00e9', format: v => Financial.formatCurrency(v) }
-            );
+            // === Heatmap canvas ===
+            this._drawHeatmap(results, rateRange, durationRange, baseRate, baseDuration, basePayment);
+
+            // === Export handlers ===
+            document.getElementById('st-export-pdf')?.addEventListener('click', () => this._exportPdf());
+            document.getElementById('st-export-xlsx')?.addEventListener('click', () => this._exportExcel());
         });
+    },
+
+    _drawHeatmap(results, rateRange, durationRange, baseRate, baseDuration, basePayment) {
+        const canvas = document.getElementById('chart-stress-heatmap');
+        if (!canvas) return;
+
+        const rows = results.length;
+        const cols = durationRange.length;
+        const cellW = 100, cellH = 44, headerW = 70, headerH = 30;
+        const w = headerW + cols * cellW;
+        const h = headerH + rows * cellH;
+        const dpr = window.devicePixelRatio || 1;
+
+        canvas.width = w * dpr;
+        canvas.height = h * dpr;
+        canvas.style.width = w + 'px';
+        canvas.style.height = h + 'px';
+
+        const ctx = canvas.getContext('2d');
+        ctx.scale(dpr, dpr);
+
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        const textColor = isDark ? '#94a3b8' : '#374151';
+        const headerBg = isDark ? '#1a2736' : '#f0f4f7';
+
+        // Draw column headers
+        ctx.fillStyle = headerBg;
+        ctx.fillRect(0, 0, w, headerH);
+        ctx.fillRect(0, 0, headerW, h);
+        ctx.font = '600 11px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = textColor;
+        for (let c = 0; c < cols; c++) {
+            ctx.fillText((baseDuration + durationRange[c]) + 'm', headerW + c * cellW + cellW / 2, headerH / 2);
+        }
+
+        // Draw row headers + cells
+        for (let r = 0; r < rows; r++) {
+            const y = headerH + r * cellH;
+            ctx.fillStyle = textColor;
+            ctx.font = '600 11px system-ui, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText((baseRate + rateRange[r]).toFixed(2) + '%', headerW / 2, y + cellH / 2);
+
+            for (let c = 0; c < cols; c++) {
+                const cell = results[r][c];
+                const x = headerW + c * cellW;
+
+                if (!cell) {
+                    ctx.fillStyle = isDark ? '#1e293b' : '#f9fafb';
+                    ctx.fillRect(x, y, cellW, cellH);
+                    ctx.fillStyle = '#9ca3af';
+                    ctx.font = '11px system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('\u2014', x + cellW / 2, y + cellH / 2);
+                    continue;
+                }
+
+                const pctDiff = ((cell.monthlyPayment - basePayment) / basePayment) * 100;
+                let bgColor;
+                if (pctDiff <= -10) bgColor = 'rgba(5,150,105,0.35)';
+                else if (pctDiff <= -5) bgColor = 'rgba(5,150,105,0.20)';
+                else if (pctDiff <= 5) bgColor = 'rgba(5,150,105,0.10)';
+                else if (pctDiff <= 15) bgColor = 'rgba(217,119,6,0.20)';
+                else bgColor = 'rgba(220,38,38,0.25)';
+
+                ctx.fillStyle = bgColor;
+                ctx.fillRect(x, y, cellW, cellH);
+
+                // Outline base case
+                if (rateRange[r] === 0 && cell.duration === baseDuration) {
+                    ctx.strokeStyle = '#1d5f7f';
+                    ctx.lineWidth = 2.5;
+                    ctx.strokeRect(x + 1, y + 1, cellW - 2, cellH - 2);
+                }
+
+                // Cell borders
+                ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+                ctx.lineWidth = 0.5;
+                ctx.strokeRect(x, y, cellW, cellH);
+
+                // Value
+                ctx.fillStyle = textColor;
+                ctx.font = '600 12px system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(Financial.formatCurrency(cell.monthlyPayment), x + cellW / 2, y + cellH / 2 - 6);
+
+                // Diff
+                const diff = cell.monthlyPayment - basePayment;
+                ctx.font = '10px system-ui, sans-serif';
+                ctx.fillStyle = diff > 0 ? '#dc2626' : diff < 0 ? '#059669' : '#6b7280';
+                ctx.fillText((diff >= 0 ? '+' : '') + Financial.formatCurrency(diff, 0), x + cellW / 2, y + cellH / 2 + 10);
+            }
+        }
+    },
+
+    _exportPdf() {
+        const d = this._lastAnalysis;
+        if (!d) return;
+
+        const fmtCur = v => Financial.formatCurrency(v, 0);
+        const fmtCur2 = v => Financial.formatCurrency(v);
+        const baseSim = d.baseSim;
+
+        const sections = [
+            { type: 'title', text: 'Stress Test \u2014 Analyse de Sensibilite' },
+            { type: 'separator' },
+            { type: 'keyvalue', items: [
+                { label: 'Montant emprunte', value: fmtCur(d.principal) },
+                { label: 'Taux de base', value: d.baseRate.toFixed(2) + ' %' },
+                { label: 'Duree de base', value: d.baseDuration + ' mois (' + (d.baseDuration / 12).toFixed(1) + ' ans)' },
+                { label: 'Assurance mensuelle', value: fmtCur2(d.insurance) },
+                { label: 'Plage de taux testee', value: (d.baseRate + d.rateRange[0]).toFixed(2) + '% a ' + (d.baseRate + d.rateRange[d.rateRange.length - 1]).toFixed(2) + '%' },
+                { label: 'Date d\'analyse', value: new Date().toLocaleDateString('fr-FR') }
+            ]},
+            { type: 'separator' },
+            { type: 'title', text: 'Indicateurs Cles' },
+            { type: 'keyvalue', items: [
+                { label: 'Mensualite de base', value: fmtCur2(baseSim.monthlyPayment) },
+                { label: 'Cout total de base', value: fmtCur(baseSim.totalCost) },
+                { label: 'Interets de base', value: fmtCur(baseSim.totalInterest) },
+                { label: 'Mensualite min', value: fmtCur2(Math.min(...d.allCells.map(c => c.monthlyPayment))) },
+                { label: 'Mensualite max', value: fmtCur2(Math.max(...d.allCells.map(c => c.monthlyPayment))) },
+                { label: 'Ecart max mensualite', value: fmtCur(Math.max(...d.allCells.map(c => c.monthlyPayment)) - Math.min(...d.allCells.map(c => c.monthlyPayment))) },
+                { label: 'Pire scenario', value: `${d.worstCell.rate.toFixed(2)}% / ${d.worstCell.duration} mois = ${fmtCur(d.worstCell.totalCost)}` }
+            ]},
+            { type: 'separator' }
+        ];
+
+        // Matrice Mensualit\u00e9
+        const buildMatrixSection = (title, valueKey) => {
+            const headers = ['Taux \\ Duree', ...d.durationRange.map(dd => (d.baseDuration + dd) + ' mois')];
+            const rows = d.results.map((row, ri) => [
+                (d.baseRate + d.rateRange[ri]).toFixed(2) + '%',
+                ...row.map(cell => cell ? Financial.formatCurrency(cell[valueKey], valueKey === 'monthlyPayment' ? undefined : 0) : '\u2014')
+            ]);
+            sections.push({ type: 'title', text: title });
+            sections.push({ type: 'table', headers, rows });
+        };
+
+        buildMatrixSection('Matrice \u2014 Mensualite', 'monthlyPayment');
+        buildMatrixSection('Matrice \u2014 Cout Total', 'totalCost');
+        buildMatrixSection('Matrice \u2014 Interets Totaux', 'totalInterest');
+
+        // Analyse textuelle
+        sections.push({ type: 'separator' });
+        sections.push({ type: 'title', text: 'Analyse' });
+
+        const baseP = baseSim.monthlyPayment;
+        const worstP = Math.max(...d.allCells.map(c => c.monthlyPayment));
+        const bestP = Math.min(...d.allCells.map(c => c.monthlyPayment));
+        const surchargeMax = d.worstCell.totalCost - baseSim.totalCost;
+
+        const analysisItems = [
+            { label: 'Variation mensualite', value: `De ${fmtCur2(bestP)} a ${fmtCur2(worstP)}, soit un ecart de ${fmtCur(worstP - bestP)} (${((worstP - bestP) / baseP * 100).toFixed(1)}%)` },
+            { label: 'Surcharge maximale', value: `Le pire scenario (${d.worstCell.rate.toFixed(2)}% sur ${d.worstCell.duration} mois) coute ${fmtCur(surchargeMax)} de plus que le scenario de base` },
+            { label: 'Sensibilite au taux', value: `Une hausse de 0.50 pt entraine environ ${fmtCur(Math.abs(this._sensibilityPerHalfPoint(d)))} de variation mensuelle` }
+        ];
+
+        sections.push({ type: 'keyvalue', items: analysisItems });
+
+        Export.toPdf('Stress Test \u2014 Analyse de Sensibilite', sections, 'stress_test');
+    },
+
+    _sensibilityPerHalfPoint(d) {
+        const baseP = d.baseSim.monthlyPayment;
+        const idx05 = d.rateRange.indexOf(0.5);
+        if (idx05 >= 0) {
+            const row = d.results[idx05];
+            const colBase = d.durationRange.indexOf(0);
+            if (colBase >= 0 && row[colBase]) {
+                return row[colBase].monthlyPayment - baseP;
+            }
+        }
+        // Fallback: estimate from min/max
+        const range = d.rateRange[d.rateRange.length - 1] - d.rateRange[0];
+        const maxP = Math.max(...d.allCells.map(c => c.monthlyPayment));
+        const minP = Math.min(...d.allCells.map(c => c.monthlyPayment));
+        return (maxP - minP) / (range / 0.5);
+    },
+
+    _exportExcel() {
+        const d = this._lastAnalysis;
+        if (!d) return;
+        if (typeof XLSX === 'undefined') { alert('Biblioth\u00e8que Excel non charg\u00e9e'); return; }
+
+        const wb = XLSX.utils.book_new();
+
+        const buildSheet = (sheetName, valueKey, decimals) => {
+            const headers = ['Taux \\ Dur\u00e9e', ...d.durationRange.map(dd => (d.baseDuration + dd) + ' mois')];
+            const rows = d.results.map((row, ri) => [
+                (d.baseRate + d.rateRange[ri]).toFixed(2) + '%',
+                ...row.map(cell => cell ? Math.round(cell[valueKey] * (decimals ? 100 : 1)) / (decimals ? 100 : 1) : null)
+            ]);
+            const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+            ws['!cols'] = headers.map(() => ({ wch: 16 }));
+            XLSX.utils.book_append_sheet(wb, ws, sheetName);
+        };
+
+        // Summary sheet
+        const summary = [
+            ['AUXY PARTNERS \u2014 Stress Test'],
+            [''],
+            ['Montant', d.principal],
+            ['Taux de base', d.baseRate + '%'],
+            ['Dur\u00e9e de base', d.baseDuration + ' mois'],
+            ['Assurance/mois', d.insurance],
+            ['Date', new Date().toLocaleDateString('fr-FR')],
+            [''],
+            ['Mensualit\u00e9 de base', Math.round(d.baseSim.monthlyPayment * 100) / 100],
+            ['Co\u00fbt total de base', Math.round(d.baseSim.totalCost)],
+            ['Int\u00e9r\u00eats de base', Math.round(d.baseSim.totalInterest)]
+        ];
+        const summaryWs = XLSX.utils.aoa_to_sheet(summary);
+        summaryWs['!cols'] = [{ wch: 25 }, { wch: 20 }];
+        XLSX.utils.book_append_sheet(wb, summaryWs, 'R\u00e9sum\u00e9');
+
+        buildSheet('Mensualit\u00e9', 'monthlyPayment', true);
+        buildSheet('Co\u00fbt Total', 'totalCost', false);
+        buildSheet('Int\u00e9r\u00eats', 'totalInterest', false);
+
+        XLSX.writeFile(wb, `stress_test_${new Date().toISOString().slice(0, 10)}.xlsx`);
     }
 };
