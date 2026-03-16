@@ -433,17 +433,17 @@ export const StressTestModule = {
                         <div class="st-kpi-sub">${baseRate.toFixed(2)}% \u2014 ${baseDuration} mois</div>
                     </div>
                     <div class="card st-kpi-card">
-                        <div class="st-kpi-label">\u00c9ch\u00e9ance min / max</div>
-                        <div class="st-kpi-value" style="color:var(--success)">${Financial.formatCurrency(minPayment)}</div>
-                        <div class="st-kpi-sub" style="color:var(--danger)">${Financial.formatCurrency(maxPayment)}</div>
+                        <div class="st-kpi-label">Co\u00fbt total de base</div>
+                        <div class="st-kpi-value">${Financial.formatCurrency(baseCost, 0)}</div>
+                        <div class="st-kpi-sub">${baseRate.toFixed(2)}% \u2014 ${baseDuration} mois</div>
                     </div>
                     <div class="card st-kpi-card">
-                        <div class="st-kpi-label">\u00c9cart max \u00e9ch\u00e9ance</div>
-                        <div class="st-kpi-value" style="color:var(--warning)">${Financial.formatCurrency(maxPayment - minPayment, 0)}</div>
-                        <div class="st-kpi-sub">${((maxPayment - minPayment) / basePayment * 100).toFixed(1)}% de variation</div>
+                        <div class="st-kpi-label">Co\u00fbt total min</div>
+                        <div class="st-kpi-value" style="color:var(--success)">${Financial.formatCurrency(Math.min(...allCells.map(c => c.totalCost)), 0)}</div>
+                        <div class="st-kpi-sub">${(() => { const best = allCells.reduce((a, b) => a.totalCost < b.totalCost ? a : b); return best.rate.toFixed(2) + '% \u2014 ' + best.duration + ' mois'; })()}</div>
                     </div>
                     <div class="card st-kpi-card">
-                        <div class="st-kpi-label">Pire sc\u00e9nario (co\u00fbt total)</div>
+                        <div class="st-kpi-label">Co\u00fbt total max</div>
                         <div class="st-kpi-value" style="color:var(--danger)">${Financial.formatCurrency(maxCost, 0)}</div>
                         <div class="st-kpi-sub">${worstCell.rate.toFixed(2)}% \u2014 ${worstCell.duration} mois</div>
                     </div>
