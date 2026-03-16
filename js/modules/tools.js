@@ -318,7 +318,7 @@ export const StressTestModule = {
                     </div>
                     <div class="form-group">
                         <label class="form-label">Pas (pts)</label>
-                        <input type="number" class="form-input" id="st-rate-step" value="0.5" step="0.25" min="0.25">
+                        <input type="number" class="form-input" id="st-rate-step" value="0.10" step="0.05" min="0.05">
                     </div>
                 </div>
 
@@ -391,7 +391,7 @@ export const StressTestModule = {
             const insurance = parseFloat(document.getElementById('st-insurance').value);
             const rateMin = parseFloat(document.getElementById('st-rate-min').value);
             const rateMax = parseFloat(document.getElementById('st-rate-max').value);
-            const rateStep = Math.max(0.25, parseFloat(document.getElementById('st-rate-step').value));
+            const rateStep = Math.max(0.05, parseFloat(document.getElementById('st-rate-step').value));
             const frequency = document.getElementById('st-frequency').value;
 
             const freqLabels = { monthly: 'Mensuel', quarterly: 'Trimestriel', semiannual: 'Semestriel', annual: 'Annuel' };
@@ -411,7 +411,6 @@ export const StressTestModule = {
             const baseSim = Financial.amortissableConstant({ principal, annualRate: baseRate, durationMonths: baseDuration, insuranceMonthly: insurance, frequency });
             const basePayment = baseSim.monthlyPayment;
             const baseCost = baseSim.totalCost;
-            const baseInterest = baseSim.totalInterest;
 
             // Flatten all valid cells for KPIs
             const allCells = results.flat().filter(c => c !== null);
@@ -465,23 +464,10 @@ export const StressTestModule = {
                     'totalCost', baseCost, [10, 30]
                 )}
 
-                ${this._buildHeatmapTable(
-                    'Matrice de sensibilit\u00e9 \u2014 Int\u00e9r\u00eats totaux',
-                    'Base : ' + Financial.formatCurrency(baseInterest, 0),
-                    results, rateRange, durationRange, baseRate, baseDuration,
-                    'totalInterest', baseInterest, [15, 40]
-                )}
-
                 <!-- Line chart: rate impact -->
                 <div class="card section">
                     <div class="card-title">Impact du taux sur l'\u00e9ch\u00e9ance ${freqLabel.toLowerCase()} (dur\u00e9e fixe : ${baseDuration} mois)</div>
                     <div class="chart-container"><canvas id="chart-stress-line"></canvas></div>
-                </div>
-
-                <!-- Heatmap chart -->
-                <div class="card section">
-                    <div class="card-title">Carte thermique \u2014 \u00c9ch\u00e9ance (${freqLabel})</div>
-                    <div id="st-heatmap-container" style="overflow-x:auto"><canvas id="chart-stress-heatmap"></canvas></div>
                 </div>
 
                 <!-- Export buttons -->
@@ -568,108 +554,10 @@ export const StressTestModule = {
                 });
             }
 
-            // === Heatmap canvas ===
-            this._drawHeatmap(results, rateRange, durationRange, baseRate, baseDuration, basePayment);
-
             // === Export handlers ===
             document.getElementById('st-export-pdf')?.addEventListener('click', () => this._exportPdf());
             document.getElementById('st-export-xlsx')?.addEventListener('click', () => this._exportExcel());
         });
-    },
-
-    _drawHeatmap(results, rateRange, durationRange, baseRate, baseDuration, basePayment) {
-        const canvas = document.getElementById('chart-stress-heatmap');
-        if (!canvas) return;
-
-        const rows = results.length;
-        const cols = durationRange.length;
-        const cellW = 100, cellH = 44, headerW = 70, headerH = 30;
-        const w = headerW + cols * cellW;
-        const h = headerH + rows * cellH;
-        const dpr = window.devicePixelRatio || 1;
-
-        canvas.width = w * dpr;
-        canvas.height = h * dpr;
-        canvas.style.width = w + 'px';
-        canvas.style.height = h + 'px';
-
-        const ctx = canvas.getContext('2d');
-        ctx.scale(dpr, dpr);
-
-        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-        const textColor = isDark ? '#94a3b8' : '#374151';
-        const headerBg = isDark ? '#1a2736' : '#f0f4f7';
-
-        // Draw column headers
-        ctx.fillStyle = headerBg;
-        ctx.fillRect(0, 0, w, headerH);
-        ctx.fillRect(0, 0, headerW, h);
-        ctx.font = '600 11px system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = textColor;
-        for (let c = 0; c < cols; c++) {
-            ctx.fillText((baseDuration + durationRange[c]) + 'm', headerW + c * cellW + cellW / 2, headerH / 2);
-        }
-
-        // Draw row headers + cells
-        for (let r = 0; r < rows; r++) {
-            const y = headerH + r * cellH;
-            ctx.fillStyle = textColor;
-            ctx.font = '600 11px system-ui, sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText((baseRate + rateRange[r]).toFixed(2) + '%', headerW / 2, y + cellH / 2);
-
-            for (let c = 0; c < cols; c++) {
-                const cell = results[r][c];
-                const x = headerW + c * cellW;
-
-                if (!cell) {
-                    ctx.fillStyle = isDark ? '#1e293b' : '#f9fafb';
-                    ctx.fillRect(x, y, cellW, cellH);
-                    ctx.fillStyle = '#9ca3af';
-                    ctx.font = '11px system-ui, sans-serif';
-                    ctx.textAlign = 'center';
-                    ctx.fillText('\u2014', x + cellW / 2, y + cellH / 2);
-                    continue;
-                }
-
-                const pctDiff = ((cell.monthlyPayment - basePayment) / basePayment) * 100;
-                let bgColor;
-                if (pctDiff <= -10) bgColor = 'rgba(5,150,105,0.35)';
-                else if (pctDiff <= -5) bgColor = 'rgba(5,150,105,0.20)';
-                else if (pctDiff <= 5) bgColor = 'rgba(5,150,105,0.10)';
-                else if (pctDiff <= 15) bgColor = 'rgba(217,119,6,0.20)';
-                else bgColor = 'rgba(220,38,38,0.25)';
-
-                ctx.fillStyle = bgColor;
-                ctx.fillRect(x, y, cellW, cellH);
-
-                // Outline base case
-                if (rateRange[r] === 0 && cell.duration === baseDuration) {
-                    ctx.strokeStyle = '#1d5f7f';
-                    ctx.lineWidth = 2.5;
-                    ctx.strokeRect(x + 1, y + 1, cellW - 2, cellH - 2);
-                }
-
-                // Cell borders
-                ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
-                ctx.lineWidth = 0.5;
-                ctx.strokeRect(x, y, cellW, cellH);
-
-                // Value
-                ctx.fillStyle = textColor;
-                ctx.font = '600 12px system-ui, sans-serif';
-                ctx.textAlign = 'center';
-                ctx.fillText(Financial.formatCurrency(cell.monthlyPayment), x + cellW / 2, y + cellH / 2 - 6);
-
-                // Diff
-                const diff = cell.monthlyPayment - basePayment;
-                ctx.font = '10px system-ui, sans-serif';
-                ctx.fillStyle = diff > 0 ? '#dc2626' : diff < 0 ? '#059669' : '#6b7280';
-                ctx.fillText((diff >= 0 ? '+' : '') + Financial.formatCurrency(diff, 0), x + cellW / 2, y + cellH / 2 + 10);
-            }
-        }
     },
 
     _exportPdf() {
@@ -717,9 +605,8 @@ export const StressTestModule = {
             sections.push({ type: 'table', headers, rows });
         };
 
-        buildMatrixSection('Matrice \u2014 Mensualite', 'monthlyPayment');
+        buildMatrixSection('Matrice \u2014 Echeance', 'monthlyPayment');
         buildMatrixSection('Matrice \u2014 Cout Total', 'totalCost');
-        buildMatrixSection('Matrice \u2014 Interets Totaux', 'totalInterest');
 
         // Analyse textuelle
         sections.push({ type: 'separator' });
@@ -795,9 +682,8 @@ export const StressTestModule = {
         summaryWs['!cols'] = [{ wch: 25 }, { wch: 20 }];
         XLSX.utils.book_append_sheet(wb, summaryWs, 'R\u00e9sum\u00e9');
 
-        buildSheet('Mensualit\u00e9', 'monthlyPayment', true);
+        buildSheet('\u00c9ch\u00e9ance', 'monthlyPayment', true);
         buildSheet('Co\u00fbt Total', 'totalCost', false);
-        buildSheet('Int\u00e9r\u00eats', 'totalInterest', false);
 
         XLSX.writeFile(wb, `stress_test_${new Date().toISOString().slice(0, 10)}.xlsx`);
     }
