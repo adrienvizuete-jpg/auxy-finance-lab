@@ -377,7 +377,7 @@ export const StressTestModule = {
                                             const cls = Math.abs(pctDiff) < thresholds[0] ? 'heat-low' : Math.abs(pctDiff) < thresholds[1] ? 'heat-medium' : 'heat-high';
                                             const isBase = rateRange[ri] === 0 && cell.duration === baseDuration;
                                             return `<td class="heatmap-cell ${cls}" style="${isBase ? 'font-weight:800;outline:2px solid var(--primary-500)' : ''}">
-                                                ${Financial.formatCurrency(val, valueKey === 'monthlyPayment' ? undefined : 0)}
+                                                ${Financial.formatCurrency(val, valueKey === 'periodicPayment' ? undefined : 0)}
                                                 <div style="font-size:0.7rem;opacity:0.7">${diff >= 0 ? '+' : ''}${Financial.formatCurrency(diff, 0)}</div>
                                             </td>`;
                                         }).join('')}
@@ -417,13 +417,13 @@ export const StressTestModule = {
 
             // Base case
             const baseSim = Financial.amortissableConstant({ principal, annualRate: baseRate, durationMonths: baseDuration, insuranceMonthly: insurance, frequency });
-            const basePayment = baseSim.monthlyPayment;
+            const basePayment = baseSim.periodicPayment;
             const baseCost = baseSim.totalCost;
 
             // Flatten all valid cells for KPIs
             const allCells = results.flat().filter(c => c !== null);
-            const minPayment = Math.min(...allCells.map(c => c.monthlyPayment));
-            const maxPayment = Math.max(...allCells.map(c => c.monthlyPayment));
+            const minPayment = Math.min(...allCells.map(c => c.periodicPayment));
+            const maxPayment = Math.max(...allCells.map(c => c.periodicPayment));
             const maxInterest = Math.max(...allCells.map(c => c.totalInterest));
             const maxCost = Math.max(...allCells.map(c => c.totalCost));
             const worstCell = allCells.reduce((a, b) => a.totalCost > b.totalCost ? a : b);
@@ -462,7 +462,7 @@ export const StressTestModule = {
                     'Matrice de sensibilit\u00e9 \u2014 \u00c9ch\u00e9ance (' + freqLabel + ')',
                     'Base : ' + Financial.formatCurrency(basePayment),
                     results, rateRange, durationRange, baseRate, baseDuration,
-                    'monthlyPayment', basePayment, [5, 15]
+                    'periodicPayment', basePayment, [5, 15]
                 )}
 
                 ${this._buildHeatmapTable(
@@ -525,7 +525,7 @@ export const StressTestModule = {
             const lineLabels = validRates.map(rd => (baseRate + rd).toFixed(2) + '%');
             const lineData = validRates.map(rd => {
                 const sim = Financial.amortissableConstant({ principal, annualRate: baseRate + rd, durationMonths: baseDuration, insuranceMonthly: insurance, frequency });
-                return sim.monthlyPayment;
+                return sim.periodicPayment;
             });
 
             Charts.destroy('chart-stress-line');
@@ -620,12 +620,10 @@ export const StressTestModule = {
             { type: 'separator' },
             { type: 'title', text: 'Indicateurs Cles' },
             { type: 'keyvalue', items: [
-                { label: 'Mensualite de base', value: fmtCur2(baseSim.monthlyPayment) },
+                { label: 'Echeance de base (' + d.freqLabel + ')', value: fmtCur2(baseSim.periodicPayment) },
                 { label: 'Cout total de base', value: fmtCur(baseSim.totalCost) },
-                { label: 'Interets de base', value: fmtCur(baseSim.totalInterest) },
-                { label: 'Mensualite min', value: fmtCur2(Math.min(...d.allCells.map(c => c.monthlyPayment))) },
-                { label: 'Mensualite max', value: fmtCur2(Math.max(...d.allCells.map(c => c.monthlyPayment))) },
-                { label: 'Ecart max mensualite', value: fmtCur(Math.max(...d.allCells.map(c => c.monthlyPayment)) - Math.min(...d.allCells.map(c => c.monthlyPayment))) },
+                { label: 'Cout total min', value: fmtCur(Math.min(...d.allCells.map(c => c.totalCost))) },
+                { label: 'Cout total max', value: fmtCur(Math.max(...d.allCells.map(c => c.totalCost))) },
                 { label: 'Pire scenario', value: `${d.worstCell.rate.toFixed(2)}% / ${d.worstCell.duration} mois = ${fmtCur(d.worstCell.totalCost)}` }
             ]},
             { type: 'separator' }
@@ -636,22 +634,22 @@ export const StressTestModule = {
             const headers = ['Taux \\ Duree', ...d.durationRange.map(dd => (d.baseDuration + dd) + ' mois')];
             const rows = d.results.map((row, ri) => [
                 (d.baseRate + d.rateRange[ri]).toFixed(2) + '%',
-                ...row.map(cell => cell ? Financial.formatCurrency(cell[valueKey], valueKey === 'monthlyPayment' ? undefined : 0) : '\u2014')
+                ...row.map(cell => cell ? Financial.formatCurrency(cell[valueKey], valueKey === 'periodicPayment' ? undefined : 0) : '\u2014')
             ]);
             sections.push({ type: 'title', text: title });
             sections.push({ type: 'table', headers, rows });
         };
 
-        buildMatrixSection('Matrice \u2014 Echeance', 'monthlyPayment');
+        buildMatrixSection('Matrice \u2014 Echeance (' + d.freqLabel + ')', 'periodicPayment');
         buildMatrixSection('Matrice \u2014 Cout Total', 'totalCost');
 
         // Analyse textuelle
         sections.push({ type: 'separator' });
         sections.push({ type: 'title', text: 'Analyse' });
 
-        const baseP = baseSim.monthlyPayment;
-        const worstP = Math.max(...d.allCells.map(c => c.monthlyPayment));
-        const bestP = Math.min(...d.allCells.map(c => c.monthlyPayment));
+        const baseP = baseSim.periodicPayment;
+        const worstP = Math.max(...d.allCells.map(c => c.periodicPayment));
+        const bestP = Math.min(...d.allCells.map(c => c.periodicPayment));
         const surchargeMax = d.worstCell.totalCost - baseSim.totalCost;
 
         const analysisItems = [
@@ -666,19 +664,19 @@ export const StressTestModule = {
     },
 
     _sensibilityPerHalfPoint(d) {
-        const baseP = d.baseSim.monthlyPayment;
+        const baseP = d.baseSim.periodicPayment;
         const idx05 = d.rateRange.indexOf(0.5);
         if (idx05 >= 0) {
             const row = d.results[idx05];
             const colBase = d.durationRange.indexOf(0);
             if (colBase >= 0 && row[colBase]) {
-                return row[colBase].monthlyPayment - baseP;
+                return row[colBase].periodicPayment - baseP;
             }
         }
         // Fallback: estimate from min/max
         const range = d.rateRange[d.rateRange.length - 1] - d.rateRange[0];
-        const maxP = Math.max(...d.allCells.map(c => c.monthlyPayment));
-        const minP = Math.min(...d.allCells.map(c => c.monthlyPayment));
+        const maxP = Math.max(...d.allCells.map(c => c.periodicPayment));
+        const minP = Math.min(...d.allCells.map(c => c.periodicPayment));
         return (maxP - minP) / (range / 0.5);
     },
 
@@ -711,7 +709,7 @@ export const StressTestModule = {
             ['Assurance/mois', d.insurance],
             ['Date', new Date().toLocaleDateString('fr-FR')],
             [''],
-            ['Mensualit\u00e9 de base', Math.round(d.baseSim.monthlyPayment * 100) / 100],
+            ['\u00c9ch\u00e9ance de base (' + d.freqLabel + ')', Math.round(d.baseSim.periodicPayment * 100) / 100],
             ['Co\u00fbt total de base', Math.round(d.baseSim.totalCost)],
             ['Int\u00e9r\u00eats de base', Math.round(d.baseSim.totalInterest)]
         ];
@@ -719,7 +717,7 @@ export const StressTestModule = {
         summaryWs['!cols'] = [{ wch: 25 }, { wch: 20 }];
         XLSX.utils.book_append_sheet(wb, summaryWs, 'R\u00e9sum\u00e9');
 
-        buildSheet('\u00c9ch\u00e9ance', 'monthlyPayment', true);
+        buildSheet('\u00c9ch\u00e9ance', 'periodicPayment', true);
         buildSheet('Co\u00fbt Total', 'totalCost', false);
 
         XLSX.writeFile(wb, `stress_test_${new Date().toISOString().slice(0, 10)}.xlsx`);

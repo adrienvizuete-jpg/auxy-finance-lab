@@ -955,6 +955,7 @@ export const Financial = {
                     rate,
                     duration,
                     monthlyPayment: sim.monthlyPayment,
+                    periodicPayment: sim.periodicPayment,
                     totalCost: sim.totalCost,
                     totalInterest: sim.totalInterest
                 });
