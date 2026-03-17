@@ -343,41 +343,49 @@ export const StressTestModule = {
         return range;
     },
 
+    _collapsibleId: 0,
+
     _buildHeatmapTable(title, badge, results, rateRange, durationRange, baseRate, baseDuration, valueKey, baseValue, thresholds) {
+        const id = 'st-collapse-' + (this._collapsibleId++);
         return `
-            <div class="card section">
-                <div class="card-header">
-                    <div class="card-title">${title}</div>
-                    ${badge ? `<div class="badge badge-blue">${badge}</div>` : ''}
+            <div class="card section st-collapsible">
+                <div class="card-header st-collapse-toggle" data-target="${id}" style="cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between">
+                    <div style="display:flex;align-items:center;gap:12px">
+                        <div class="card-title" style="margin:0">${title}</div>
+                        ${badge ? `<div class="badge badge-blue">${badge}</div>` : ''}
+                    </div>
+                    <svg class="st-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" style="transition:transform 0.3s ease;flex-shrink:0"><polyline points="6 9 12 15 18 9"></polyline></svg>
                 </div>
-                <div class="table-container">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Taux \\ Dur\u00e9e</th>
-                                ${durationRange.map(d => `<th style="text-align:center">${baseDuration + d} mois</th>`).join('')}
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${results.map((row, ri) => `
+                <div id="${id}" class="st-collapse-body" style="overflow:hidden;transition:max-height 0.35s ease, opacity 0.25s ease;max-height:2000px;opacity:1">
+                    <div class="table-container" style="margin-top:16px">
+                        <table class="data-table">
+                            <thead>
                                 <tr>
-                                    <td style="font-weight:600">${(baseRate + rateRange[ri]).toFixed(2)}%</td>
-                                    ${row.map(cell => {
-                                        if (!cell) return '<td class="heatmap-cell">\u2014</td>';
-                                        const val = cell[valueKey];
-                                        const diff = val - baseValue;
-                                        const pctDiff = (diff / baseValue) * 100;
-                                        const cls = Math.abs(pctDiff) < thresholds[0] ? 'heat-low' : Math.abs(pctDiff) < thresholds[1] ? 'heat-medium' : 'heat-high';
-                                        const isBase = rateRange[ri] === 0 && cell.duration === baseDuration;
-                                        return `<td class="heatmap-cell ${cls}" style="${isBase ? 'font-weight:800;outline:2px solid var(--primary-500)' : ''}">
-                                            ${Financial.formatCurrency(val, valueKey === 'monthlyPayment' ? undefined : 0)}
-                                            <div style="font-size:0.7rem;opacity:0.7">${diff >= 0 ? '+' : ''}${Financial.formatCurrency(diff, 0)}</div>
-                                        </td>`;
-                                    }).join('')}
+                                    <th>Taux \\ Dur\u00e9e</th>
+                                    ${durationRange.map(d => `<th style="text-align:center">${baseDuration + d} mois</th>`).join('')}
                                 </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                ${results.map((row, ri) => `
+                                    <tr>
+                                        <td style="font-weight:600">${(baseRate + rateRange[ri]).toFixed(2)}%</td>
+                                        ${row.map(cell => {
+                                            if (!cell) return '<td class="heatmap-cell">\u2014</td>';
+                                            const val = cell[valueKey];
+                                            const diff = val - baseValue;
+                                            const pctDiff = (diff / baseValue) * 100;
+                                            const cls = Math.abs(pctDiff) < thresholds[0] ? 'heat-low' : Math.abs(pctDiff) < thresholds[1] ? 'heat-medium' : 'heat-high';
+                                            const isBase = rateRange[ri] === 0 && cell.duration === baseDuration;
+                                            return `<td class="heatmap-cell ${cls}" style="${isBase ? 'font-weight:800;outline:2px solid var(--primary-500)' : ''}">
+                                                ${Financial.formatCurrency(val, valueKey === 'monthlyPayment' ? undefined : 0)}
+                                                <div style="font-size:0.7rem;opacity:0.7">${diff >= 0 ? '+' : ''}${Financial.formatCurrency(diff, 0)}</div>
+                                            </td>`;
+                                        }).join('')}
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         `;
@@ -465,9 +473,14 @@ export const StressTestModule = {
                 )}
 
                 <!-- Line chart: rate impact -->
-                <div class="card section">
-                    <div class="card-title">Impact du taux sur l'\u00e9ch\u00e9ance ${freqLabel.toLowerCase()} (dur\u00e9e fixe : ${baseDuration} mois)</div>
-                    <div class="chart-container"><canvas id="chart-stress-line"></canvas></div>
+                <div class="card section st-collapsible">
+                    <div class="card-header st-collapse-toggle" data-target="st-collapse-chart" style="cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between">
+                        <div class="card-title" style="margin:0">Impact du taux sur l'\u00e9ch\u00e9ance ${freqLabel.toLowerCase()} (dur\u00e9e fixe : ${baseDuration} mois)</div>
+                        <svg class="st-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" style="transition:transform 0.3s ease;flex-shrink:0"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </div>
+                    <div id="st-collapse-chart" class="st-collapse-body" style="overflow:hidden;transition:max-height 0.35s ease, opacity 0.25s ease;max-height:2000px;opacity:1">
+                        <div class="chart-container" style="margin-top:16px"><canvas id="chart-stress-line"></canvas></div>
+                    </div>
                 </div>
 
                 <!-- Export buttons -->
@@ -482,6 +495,30 @@ export const StressTestModule = {
                     </button>
                 </div>
             `;
+
+            // === Collapsible sections ===
+            this._collapsibleId = 0; // reset for next run
+            container.querySelectorAll('.st-collapse-toggle').forEach(toggle => {
+                toggle.addEventListener('click', () => {
+                    const targetId = toggle.getAttribute('data-target');
+                    const body = document.getElementById(targetId);
+                    const chevron = toggle.querySelector('.st-chevron');
+                    if (!body) return;
+                    const isCollapsed = body.classList.toggle('st-collapsed');
+                    if (isCollapsed) {
+                        body.style.maxHeight = body.scrollHeight + 'px';
+                        body.offsetHeight; // force reflow
+                        body.style.maxHeight = '0';
+                        body.style.opacity = '0';
+                        chevron.style.transform = 'rotate(-90deg)';
+                    } else {
+                        body.style.maxHeight = body.scrollHeight + 'px';
+                        body.style.opacity = '1';
+                        chevron.style.transform = 'rotate(0deg)';
+                        setTimeout(() => { if (!body.classList.contains('st-collapsed')) body.style.maxHeight = '2000px'; }, 350);
+                    }
+                });
+            });
 
             // === Line chart: mensualit\u00e9 par taux (dur\u00e9e fixe) ===
             const validRates = rateRange.filter(rd => baseRate + rd > 0);
