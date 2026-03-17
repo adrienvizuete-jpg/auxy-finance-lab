@@ -310,11 +310,11 @@ export const StressTestModule = {
                 <div class="form-row" style="margin-top:8px">
                     <div class="form-group">
                         <label class="form-label">Variation min (pts)</label>
-                        <input type="number" class="form-input" id="st-rate-min" value="-2" step="0.5">
+                        <input type="number" class="form-input" id="st-rate-min" value="-0.5" step="0.1">
                     </div>
                     <div class="form-group">
                         <label class="form-label">Variation max (pts)</label>
-                        <input type="number" class="form-input" id="st-rate-max" value="2" step="0.5">
+                        <input type="number" class="form-input" id="st-rate-max" value="0.5" step="0.1">
                     </div>
                     <div class="form-group">
                         <label class="form-label">Pas (pts)</label>
