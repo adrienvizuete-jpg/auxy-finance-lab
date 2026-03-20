@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "auxy-veille"
+version = "0.1.0"
+description = "Veille quotidienne marchés & actualités — Auxy Partners"
+requires-python = ">=3.9"
+dependencies = [
+    "yfinance>=0.2.30",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+auxy-veille = "veille.main:cli"

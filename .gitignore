@@ -2,3 +2,15 @@
 .claude/
 node_modules/
 *.log
+
+# Python pipeline
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.venv/
+pipeline/.env
+pipeline/data/*.db
+pipeline/data/reports/
+veille/.env
