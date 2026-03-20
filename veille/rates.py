@@ -6,7 +6,6 @@ import asyncio
 import logging
 import math
 from dataclasses import dataclass
-from xml.etree import ElementTree
 
 import httpx
 import yfinance as yf
@@ -14,9 +13,6 @@ import yfinance as yf
 from veille.config import ECB_DATA_URL
 
 logger = logging.getLogger(__name__)
-
-# Namespace ECB SDMX
-NS = {"generic": "http://www.sdmx.org/resources/sdmxml/schemas/v2_1/data/generic"}
 
 
 @dataclass
@@ -27,85 +23,89 @@ class RateData:
     change_bps: float | None  # variation en points de base
 
 
-async def _fetch_ecb_rate(session: httpx.AsyncClient, flow: str, key: str, name: str) -> RateData:
-    """Récupère un taux depuis l'API ECB Statistical Data Warehouse."""
+# ---------------------------------------------------------------------------
+# ECB API (JSON) — pour Euribor
+# ---------------------------------------------------------------------------
+
+async def _fetch_ecb_json(session: httpx.AsyncClient, flow: str, key: str, name: str) -> RateData:
+    """Récupère un taux depuis l'API ECB en format JSON (plus fiable que XML)."""
     url = f"{ECB_DATA_URL}/{flow}/{key}"
     try:
         resp = await session.get(
             url,
-            params={"lastNObservations": "5", "detail": "dataonly"},
-            headers={"Accept": "application/vnd.sdmx.genericdata+xml;version=2.1"},
+            params={"lastNObservations": "5", "detail": "dataonly", "format": "jsondata"},
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "AuxyVeille/1.0",
+            },
             timeout=20.0,
         )
         resp.raise_for_status()
+        data = resp.json()
 
-        root = ElementTree.fromstring(resp.text)
-        obs = root.findall(".//generic:Obs", NS)
+        # Naviguer dans la structure JSON SDMX
+        datasets = data.get("dataSets", [])
+        if not datasets:
+            logger.warning("ECB %s : pas de dataset", name)
+            return RateData(name=name, value=None, change_bps=None)
 
-        if len(obs) >= 2:
-            last_val = float(obs[-1].find("generic:ObsValue", NS).get("value"))
-            prev_val = float(obs[-2].find("generic:ObsValue", NS).get("value"))
+        series = datasets[0].get("series", {})
+        if not series:
+            logger.warning("ECB %s : pas de séries", name)
+            return RateData(name=name, value=None, change_bps=None)
+
+        # Prendre la première série disponible
+        first_series = next(iter(series.values()))
+        observations = first_series.get("observations", {})
+        if not observations:
+            logger.warning("ECB %s : pas d'observations", name)
+            return RateData(name=name, value=None, change_bps=None)
+
+        # Les observations sont indexées par position temporelle
+        sorted_obs = sorted(observations.items(), key=lambda x: int(x[0]))
+        values = [float(v[0]) for _, v in sorted_obs if v]
+
+        if len(values) >= 2:
+            last_val = values[-1]
+            prev_val = values[-2]
             change_bps = round((last_val - prev_val) * 100, 1)
             return RateData(name=name, value=round(last_val, 3), change_bps=change_bps)
-        elif len(obs) == 1:
-            val = float(obs[0].find("generic:ObsValue", NS).get("value"))
-            return RateData(name=name, value=round(val, 3), change_bps=None)
+        elif len(values) == 1:
+            return RateData(name=name, value=round(values[0], 3), change_bps=None)
 
     except Exception:
-        logger.warning("Erreur récupération ECB %s (%s)", name, key)
+        logger.warning("Erreur récupération ECB JSON %s (%s)", name, key, exc_info=True)
 
     return RateData(name=name, value=None, change_bps=None)
 
 
-async def fetch_euribor() -> list[RateData]:
-    """Récupère les taux Euribor 3M et 12M depuis la BCE (fréquence daily)."""
-    async with httpx.AsyncClient() as session:
-        results = await asyncio.gather(
-            _fetch_ecb_rate(session, "FM", "D.U2.EUR.RT.MM.EURIBOR3MD_.HSTA", "Euribor 3M"),
-            _fetch_ecb_rate(session, "FM", "D.U2.EUR.RT.MM.EURIBOR1YD_.HSTA", "Euribor 12M"),
-        )
-    return list(results)
+# ---------------------------------------------------------------------------
+# yfinance — pour OAT, Bund, US Treasury
+# ---------------------------------------------------------------------------
 
-
-async def fetch_oat_france() -> RateData:
-    """Récupère le rendement OAT France 10 ans depuis la BCE (fréquence daily)."""
-    async with httpx.AsyncClient() as session:
-        return await _fetch_ecb_rate(
-            session, "FM", "D.FR.EUR.FR2.BB.BY.IREF", "OAT France 10Y"
-        )
-
-
-async def fetch_bund_germany() -> RateData:
-    """Récupère le rendement Bund Allemagne 10 ans depuis la BCE (fréquence daily)."""
-    async with httpx.AsyncClient() as session:
-        return await _fetch_ecb_rate(
-            session, "FM", "D.DE.EUR.FR2.BB.BY.IREF", "Bund Allemagne 10Y"
-        )
-
-
-async def fetch_us_treasury() -> RateData:
-    """Récupère le rendement US Treasury 10Y via yfinance (ticker individuel)."""
+async def _fetch_yf_rate(symbol: str, name: str) -> RateData:
+    """Récupère un taux via yfinance (ticker individuel)."""
 
     def _download():
         try:
-            ticker = yf.Ticker("^TNX")
+            ticker = yf.Ticker(symbol)
             hist = ticker.history(period="5d")
             return hist
         except Exception:
-            logger.exception("Erreur téléchargement US Treasury")
+            logger.exception("Erreur téléchargement %s", name)
             return None
 
     data = await asyncio.to_thread(_download)
     if data is None or data.empty:
-        return RateData(name="US Treasury 10Y", value=None, change_bps=None)
+        return RateData(name=name, value=None, change_bps=None)
 
     data = data.dropna(subset=["Close"])
     if len(data) < 1:
-        return RateData(name="US Treasury 10Y", value=None, change_bps=None)
+        return RateData(name=name, value=None, change_bps=None)
 
     last = float(data["Close"].iloc[-1])
     if math.isnan(last):
-        return RateData(name="US Treasury 10Y", value=None, change_bps=None)
+        return RateData(name=name, value=None, change_bps=None)
 
     change_bps = None
     if len(data) >= 2:
@@ -113,16 +113,82 @@ async def fetch_us_treasury() -> RateData:
         if not math.isnan(prev):
             change_bps = round((last - prev) * 100, 1)
 
-    return RateData(name="US Treasury 10Y", value=round(last, 3), change_bps=change_bps)
+    return RateData(name=name, value=round(last, 3), change_bps=change_bps)
+
+
+# ---------------------------------------------------------------------------
+# Orchestration
+# ---------------------------------------------------------------------------
+
+async def fetch_euribor() -> list[RateData]:
+    """Récupère les taux Euribor 3M et 12M depuis la BCE (JSON)."""
+    # Essayer plusieurs formats de clés SDMX (B=business daily, D=daily, M=monthly)
+    key_templates = [
+        ("B", "B.U2.EUR.RT.MM.EURIBOR3MD_.HSTA", "B.U2.EUR.RT.MM.EURIBOR1YD_.HSTA"),
+        ("D", "D.U2.EUR.RT.MM.EURIBOR3MD_.HSTA", "D.U2.EUR.RT.MM.EURIBOR1YD_.HSTA"),
+        ("M", "M.U2.EUR.RT.MM.EURIBOR3MD_.HSTA", "M.U2.EUR.RT.MM.EURIBOR1YD_.HSTA"),
+    ]
+
+    async with httpx.AsyncClient() as session:
+        for freq, key_3m, key_12m in key_templates:
+            e3m, e12m = await asyncio.gather(
+                _fetch_ecb_json(session, "FM", key_3m, "Euribor 3M"),
+                _fetch_ecb_json(session, "FM", key_12m, "Euribor 12M"),
+            )
+            if e3m.value is not None or e12m.value is not None:
+                logger.info("Euribor trouvé avec fréquence %s", freq)
+                return [e3m, e12m]
+
+    logger.warning("Aucune fréquence ECB n'a fonctionné pour Euribor")
+    return [
+        RateData(name="Euribor 3M", value=None, change_bps=None),
+        RateData(name="Euribor 12M", value=None, change_bps=None),
+    ]
+
+
+async def fetch_sovereign_yields() -> list[RateData]:
+    """Récupère OAT France 10Y, Bund Allemagne 10Y, US Treasury 10Y via yfinance."""
+    # Tickers Yahoo Finance pour les rendements souverains
+    oat, bund, ust = await asyncio.gather(
+        _fetch_yf_rate("^TNX", "US Treasury 10Y"),  # US 10Y — le plus fiable
+        _fetch_yf_rate("^FVX", "US Treasury 5Y"),   # backup si besoin
+        _fetch_yf_rate("^TYX", "US Treasury 30Y"),  # backup si besoin
+        return_exceptions=True,
+    )
+
+    # Pour OAT et Bund : utiliser l'API ECB en JSON (plus fiable)
+    async with httpx.AsyncClient() as session:
+        ecb_oat, ecb_bund = await asyncio.gather(
+            _fetch_ecb_json(session, "FM", "B.FR.EUR.FR2.BB.BY.IREF", "OAT France 10Y"),
+            _fetch_ecb_json(session, "FM", "B.DE.EUR.FR2.BB.BY.IREF", "Bund Allemagne 10Y"),
+        )
+        # Fallback avec D. si B. ne marche pas
+        if ecb_oat.value is None:
+            ecb_oat = await _fetch_ecb_json(session, "FM", "D.FR.EUR.FR2.BB.BY.IREF", "OAT France 10Y")
+        if ecb_oat.value is None:
+            ecb_oat = await _fetch_ecb_json(session, "FM", "M.FR.EUR.FR2.BB.BY.IREF", "OAT France 10Y")
+
+        if ecb_bund.value is None:
+            ecb_bund = await _fetch_ecb_json(session, "FM", "D.DE.EUR.FR2.BB.BY.IREF", "Bund Allemagne 10Y")
+        if ecb_bund.value is None:
+            ecb_bund = await _fetch_ecb_json(session, "FM", "M.DE.EUR.FR2.BB.BY.IREF", "Bund Allemagne 10Y")
+
+    results = [ecb_oat, ecb_bund]
+
+    # US Treasury
+    if isinstance(oat, RateData):
+        results.append(oat)
+    else:
+        results.append(RateData(name="US Treasury 10Y", value=None, change_bps=None))
+
+    return results
 
 
 async def fetch_all_rates() -> list[RateData]:
     """Récupère tous les taux."""
-    euribor, oat, bund, ust = await asyncio.gather(
+    euribor, sovereigns = await asyncio.gather(
         fetch_euribor(),
-        fetch_oat_france(),
-        fetch_bund_germany(),
-        fetch_us_treasury(),
+        fetch_sovereign_yields(),
         return_exceptions=True,
     )
 
@@ -137,22 +203,14 @@ async def fetch_all_rates() -> list[RateData]:
             RateData(name="Euribor 12M", value=None, change_bps=None),
         ])
 
-    if isinstance(oat, RateData):
-        results.append(oat)
+    if isinstance(sovereigns, list):
+        results.extend(sovereigns)
     else:
-        logger.error("Erreur OAT : %s", oat)
-        results.append(RateData(name="OAT France 10Y", value=None, change_bps=None))
-
-    if isinstance(bund, RateData):
-        results.append(bund)
-    else:
-        logger.error("Erreur Bund : %s", bund)
-        results.append(RateData(name="Bund Allemagne 10Y", value=None, change_bps=None))
-
-    if isinstance(ust, RateData):
-        results.append(ust)
-    else:
-        logger.error("Erreur US Treasury : %s", ust)
-        results.append(RateData(name="US Treasury 10Y", value=None, change_bps=None))
+        logger.error("Erreur obligations : %s", sovereigns)
+        results.extend([
+            RateData(name="OAT France 10Y", value=None, change_bps=None),
+            RateData(name="Bund Allemagne 10Y", value=None, change_bps=None),
+            RateData(name="US Treasury 10Y", value=None, change_bps=None),
+        ])
 
     return results

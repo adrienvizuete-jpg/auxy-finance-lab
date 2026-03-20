@@ -16,6 +16,33 @@ from veille.config import RSS_FEEDS_AURA, RSS_FEEDS_FRANCE
 
 logger = logging.getLogger(__name__)
 
+# User-Agent réaliste pour éviter les blocages RSS
+USER_AGENT = "Mozilla/5.0 (compatible; AuxyVeille/1.0; +https://auxy-partners.com)"
+
+# Mots-clés pour filtrer les articles business/économie (AURA)
+BUSINESS_KEYWORDS = {
+    "entreprise", "économie", "économique", "emploi", "investissement",
+    "fiscalité", "fiscal", "immobilier", "industrie", "commerce",
+    "startup", "chiffre d'affaires", "recrutement", "embauche",
+    "croissance", "bourse", "finance", "financement", "banque",
+    "innovation", "numérique", "digital", "tourisme d'affaires",
+    "export", "import", "logistique", "agroalimentaire", "biotech",
+    "PME", "ETI", "TPE", "restructuration", "acquisition",
+    "fusion", "levée de fonds", "business", "marché", "conjoncture",
+    "PIB", "inflation", "taux", "dette", "budget", "impôt",
+}
+
+# Mots-clés à exclure (hors-sujet)
+EXCLUDE_KEYWORDS = {
+    "élection", "électoral", "candidat", "vote", "scrutin",
+    "week-end", "sortir", "que faire", "bons plans", "loisir",
+    "météo", "sport", "match", "football", "rugby",
+    "concert", "festival", "spectacle", "cinéma", "théâtre",
+    "recette", "cuisine", "restaurant gastronomique",
+    "faits divers", "accident", "incendie", "agression",
+    "migration", "migratoire",
+}
+
 
 @dataclass
 class NewsItem:
@@ -39,7 +66,6 @@ def _truncate(text: str, max_chars: int = 200) -> str:
     """Tronque proprement un texte à max_chars caractères."""
     if len(text) <= max_chars:
         return text
-    # Couper au dernier espace avant max_chars
     truncated = text[:max_chars]
     last_space = truncated.rfind(" ")
     if last_space > max_chars // 2:
@@ -47,32 +73,50 @@ def _truncate(text: str, max_chars: int = 200) -> str:
     return truncated.rstrip(".,;:!? ") + "…"
 
 
+def _is_business_article(title: str, summary: str) -> bool:
+    """Vérifie si un article est pertinent business/économie."""
+    text = (title + " " + summary).lower()
+
+    # Exclure d'abord les hors-sujet
+    for kw in EXCLUDE_KEYWORDS:
+        if kw.lower() in text:
+            return False
+
+    # Vérifier la présence d'au moins un mot-clé business
+    for kw in BUSINESS_KEYWORDS:
+        if kw.lower() in text:
+            return True
+
+    return False
+
+
 async def _fetch_rss(session: httpx.AsyncClient, source_name: str, url: str) -> list[NewsItem]:
     """Récupère et parse un flux RSS."""
     try:
-        resp = await session.get(url, timeout=15.0, follow_redirects=True)
+        resp = await session.get(
+            url,
+            timeout=15.0,
+            follow_redirects=True,
+            headers={"User-Agent": USER_AGENT},
+        )
         resp.raise_for_status()
         content = resp.text
     except Exception:
         logger.warning("Erreur récupération RSS %s (%s)", source_name, url)
         return []
 
-    # Parser avec feedparser (sync, rapide)
     feed = feedparser.parse(content)
     items: list[NewsItem] = []
 
-    for entry in feed.entries[:10]:
+    for entry in feed.entries[:15]:
         title = entry.get("title", "").strip()
         if not title:
             continue
 
         link = entry.get("link", "")
-
-        # Extraire le résumé depuis description ou summary
         raw_summary = entry.get("summary", "") or entry.get("description", "")
         summary = _truncate(_clean_html(raw_summary))
 
-        # Date de publication
         pub_date = None
         if entry.get("published_parsed"):
             try:
@@ -93,7 +137,7 @@ async def _fetch_rss(session: httpx.AsyncClient, source_name: str, url: str) -> 
 
 
 def _deduplicate(items: list[NewsItem]) -> list[NewsItem]:
-    """Déduplique par titre normalisé (les URLs diffèrent parfois entre sources)."""
+    """Déduplique par titre normalisé."""
     seen: set[str] = set()
     unique: list[NewsItem] = []
     for item in items:
@@ -120,7 +164,6 @@ async def fetch_french_news() -> list[NewsItem]:
         else:
             logger.warning("Erreur flux RSS France : %s", result)
 
-    # Trier par date (les plus récents d'abord)
     all_items.sort(
         key=lambda x: x.published_at or datetime.min,
         reverse=True,
@@ -130,7 +173,7 @@ async def fetch_french_news() -> list[NewsItem]:
 
 
 async def fetch_regional_news() -> list[NewsItem]:
-    """Récupère les actualités Auvergne-Rhône-Alpes depuis les flux RSS."""
+    """Récupère les actualités business AURA depuis les flux RSS."""
     async with httpx.AsyncClient() as session:
         tasks = [
             _fetch_rss(session, name, url)
@@ -145,9 +188,25 @@ async def fetch_regional_news() -> list[NewsItem]:
         else:
             logger.warning("Erreur flux RSS AURA : %s", result)
 
-    all_items.sort(
+    # Filtrer pour ne garder que les articles business/économie
+    business_items = [
+        item for item in all_items
+        if _is_business_article(item.title, item.summary)
+    ]
+
+    # Si pas assez d'articles business, prendre les non-filtrés en complément
+    if len(business_items) < 3:
+        logger.info("Peu d'articles business AURA (%d), ajout d'articles généraux", len(business_items))
+        seen_titles = {item.title.lower() for item in business_items}
+        for item in all_items:
+            if item.title.lower() not in seen_titles:
+                business_items.append(item)
+            if len(business_items) >= 7:
+                break
+
+    business_items.sort(
         key=lambda x: x.published_at or datetime.min,
         reverse=True,
     )
 
-    return _deduplicate(all_items)[:10]
+    return _deduplicate(business_items)[:7]

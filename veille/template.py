@@ -95,12 +95,19 @@ def render_email(data: VeilleData) -> str:
 
 <!-- Header -->
 <tr><td style="background:#1B3A5C;padding:24px 32px;">
-  <h1 style="color:#ffffff;margin:0;font-size:22px;font-weight:700;">
-    Veille Marchés & Actualités
-  </h1>
-  <p style="color:#D4AF37;margin:6px 0 0;font-size:14px;font-weight:600;">
-    AUXY PARTNERS — {day_name} {date_str}
-  </p>
+  <table width="100%" cellpadding="0" cellspacing="0"><tr>
+    <td>
+      <h1 style="color:#ffffff;margin:0;font-size:22px;font-weight:700;">
+        Veille Marchés & Actualités
+      </h1>
+      <p style="color:#D4AF37;margin:6px 0 0;font-size:14px;font-weight:600;">
+        AUXY PARTNERS — {day_name} {date_str}
+      </p>
+    </td>
+    <td width="120" align="right" valign="middle">
+      <img src="cid:auxy-logo" alt="Auxy Partners" width="110" style="display:block;" />
+    </td>
+  </tr></table>
 </td></tr>
 """
 

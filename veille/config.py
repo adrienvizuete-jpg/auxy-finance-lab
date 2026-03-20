@@ -76,6 +76,7 @@ FX_PAIRS: dict[str, str] = {
     "EUR/JPY": "EURJPY=X",
     "EUR/CHF": "EURCHF=X",
     "USD/JPY": "USDJPY=X",
+    "EUR/CNY": "EURCNY=X",
 }
 
 # Matières premières
