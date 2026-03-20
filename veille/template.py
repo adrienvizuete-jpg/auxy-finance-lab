@@ -101,7 +101,7 @@ def render_email(data: VeilleData) -> str:
         Veille Marchés & Actualités
       </h1>
       <p style="color:#D4AF37;margin:6px 0 0;font-size:14px;font-weight:600;">
-        AUXY PARTNERS — {day_name} {date_str}
+        {day_name} {date_str}
       </p>
     </td>
     <td width="120" align="right" valign="middle">
