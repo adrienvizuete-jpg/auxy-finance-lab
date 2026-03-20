@@ -147,41 +147,19 @@ async def fetch_euribor() -> list[RateData]:
 
 
 async def fetch_sovereign_yields() -> list[RateData]:
-    """Récupère OAT France 10Y, Bund Allemagne 10Y, US Treasury 10Y via yfinance."""
-    # Tickers Yahoo Finance pour les rendements souverains
-    oat, bund, ust = await asyncio.gather(
-        _fetch_yf_rate("^TNX", "US Treasury 10Y"),  # US 10Y — le plus fiable
-        _fetch_yf_rate("^FVX", "US Treasury 5Y"),   # backup si besoin
-        _fetch_yf_rate("^TYX", "US Treasury 30Y"),  # backup si besoin
-        return_exceptions=True,
-    )
+    """Récupère OAT France 10Y, Bund Allemagne 10Y, US Treasury 10Y."""
+    # US Treasury via yfinance (journalier, fiable)
+    ust = await _fetch_yf_rate("^TNX", "US Treasury 10Y")
 
-    # Pour OAT et Bund : utiliser l'API ECB en JSON (plus fiable)
+    # OAT et Bund via ECB IRS (Interest Rate Statistics) — données mensuelles
+    # Clé : M.{pays}.L.L40.CI.0000.EUR.N.Z (taux de convergence Maastricht = rendement 10Y)
     async with httpx.AsyncClient() as session:
         ecb_oat, ecb_bund = await asyncio.gather(
-            _fetch_ecb_json(session, "FM", "B.FR.EUR.FR2.BB.BY.IREF", "OAT France 10Y"),
-            _fetch_ecb_json(session, "FM", "B.DE.EUR.FR2.BB.BY.IREF", "Bund Allemagne 10Y"),
+            _fetch_ecb_json(session, "IRS", "M.FR.L.L40.CI.0000.EUR.N.Z", "OAT France 10Y"),
+            _fetch_ecb_json(session, "IRS", "M.DE.L.L40.CI.0000.EUR.N.Z", "Bund Allemagne 10Y"),
         )
-        # Fallback avec D. si B. ne marche pas
-        if ecb_oat.value is None:
-            ecb_oat = await _fetch_ecb_json(session, "FM", "D.FR.EUR.FR2.BB.BY.IREF", "OAT France 10Y")
-        if ecb_oat.value is None:
-            ecb_oat = await _fetch_ecb_json(session, "FM", "M.FR.EUR.FR2.BB.BY.IREF", "OAT France 10Y")
 
-        if ecb_bund.value is None:
-            ecb_bund = await _fetch_ecb_json(session, "FM", "D.DE.EUR.FR2.BB.BY.IREF", "Bund Allemagne 10Y")
-        if ecb_bund.value is None:
-            ecb_bund = await _fetch_ecb_json(session, "FM", "M.DE.EUR.FR2.BB.BY.IREF", "Bund Allemagne 10Y")
-
-    results = [ecb_oat, ecb_bund]
-
-    # US Treasury
-    if isinstance(oat, RateData):
-        results.append(oat)
-    else:
-        results.append(RateData(name="US Treasury 10Y", value=None, change_bps=None))
-
-    return results
+    return [ecb_oat, ecb_bund, ust]
 
 
 async def fetch_all_rates() -> list[RateData]:

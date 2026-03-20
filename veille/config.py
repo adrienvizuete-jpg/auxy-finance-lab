@@ -104,13 +104,12 @@ RSS_FEEDS_FRANCE: dict[str, str] = {
     "BFM Business": "https://bfmbusiness.bfmtv.com/rss/info/flux-rss/flux-toutes-les-actualites/",
 }
 
-# Flux RSS — Sources AURA (par ordre de priorité)
+# Flux RSS — Sources AURA (sources business uniquement)
 RSS_FEEDS_AURA: dict[str, str] = {
     "Bref Eco": "https://www.bfreco.com/feed/",
     "Le Journal des Entreprises": "https://www.lejournaldesentreprises.com/rss",
-    "Lyon Capitale": "https://www.lyoncapitale.fr/feed/",
-    "Le Progrès": "https://www.leprogres.fr/rss",
-    "Tribune de Lyon": "https://tribunedelyon.fr/feed/",
+    "Lyon Capitale Économie": "https://www.lyoncapitale.fr/economie/feed/",
+    "Tribune de Lyon": "https://tribunedelyon.fr/category/economie/feed/",
 }
 
 # Destinataires

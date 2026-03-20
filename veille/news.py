@@ -34,13 +34,16 @@ BUSINESS_KEYWORDS = {
 
 # Mots-clés à exclure (hors-sujet)
 EXCLUDE_KEYWORDS = {
-    "élection", "électoral", "candidat", "vote", "scrutin",
-    "week-end", "sortir", "que faire", "bons plans", "loisir",
-    "météo", "sport", "match", "football", "rugby",
-    "concert", "festival", "spectacle", "cinéma", "théâtre",
-    "recette", "cuisine", "restaurant gastronomique",
-    "faits divers", "accident", "incendie", "agression",
-    "migration", "migratoire",
+    "élection", "électoral", "candidat", "vote", "scrutin", "municipale",
+    "week-end", "sortir", "que faire", "bons plans", "loisir", "balade",
+    "météo", "sport", "match", "football", "rugby", "handball", "basket",
+    "concert", "festival", "spectacle", "cinéma", "théâtre", "exposition",
+    "recette", "cuisine", "restaurant gastronomique", "gastronomie",
+    "faits divers", "accident", "incendie", "agression", "meurtre", "procès",
+    "migration", "migratoire", "réfugié",
+    "nécrologie", "décès", "hommage", "obsèques",
+    "manifestation", "grève", "blocage",
+    "série", "film", "livre", "album", "artiste",
 }
 
 
@@ -188,21 +191,25 @@ async def fetch_regional_news() -> list[NewsItem]:
         else:
             logger.warning("Erreur flux RSS AURA : %s", result)
 
-    # Filtrer pour ne garder que les articles business/économie
-    business_items = [
+    # Filtrer : exclure d'abord les hors-sujet, puis ne garder que les business
+    filtered_items = [
         item for item in all_items
         if _is_business_article(item.title, item.summary)
     ]
 
-    # Si pas assez d'articles business, prendre les non-filtrés en complément
-    if len(business_items) < 3:
-        logger.info("Peu d'articles business AURA (%d), ajout d'articles généraux", len(business_items))
-        seen_titles = {item.title.lower() for item in business_items}
-        for item in all_items:
-            if item.title.lower() not in seen_titles:
-                business_items.append(item)
-            if len(business_items) >= 7:
-                break
+    # Sources prio (Bref Eco, JDE) : on garde même sans mot-clé business,
+    # car elles sont déjà spécialisées économie/entreprises
+    PRIORITY_SOURCES = {"Bref Eco", "Le Journal des Entreprises"}
+    seen_titles = {item.title.lower() for item in filtered_items}
+    for item in all_items:
+        if item.source in PRIORITY_SOURCES and item.title.lower() not in seen_titles:
+            # Vérifier seulement qu'il n'y a pas de mot-clé exclu
+            text = (item.title + " " + item.summary).lower()
+            if not any(kw.lower() in text for kw in EXCLUDE_KEYWORDS):
+                filtered_items.append(item)
+                seen_titles.add(item.title.lower())
+
+    business_items = filtered_items
 
     business_items.sort(
         key=lambda x: x.published_at or datetime.min,
