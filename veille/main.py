@@ -9,7 +9,7 @@ import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from veille.config import JOURS_FERIES_2026, RECIPIENTS, VeilleConfig
+from veille.config import RECIPIENTS, VeilleConfig, jours_feries
 from veille.email_sender import send_email
 from veille.market_data import fetch_cac40_movers, fetch_commodities, fetch_fx, fetch_indices
 from veille.news import fetch_french_news, fetch_regional_news
@@ -26,7 +26,7 @@ def _is_business_day(dt: datetime) -> bool:
     if dt.weekday() >= 5:
         return False
     date_str = dt.strftime("%Y-%m-%d")
-    if date_str in JOURS_FERIES_2026:
+    if date_str in jours_feries(dt.year):
         return False
     return True
 

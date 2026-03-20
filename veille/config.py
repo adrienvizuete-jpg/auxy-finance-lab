@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -118,20 +119,38 @@ RECIPIENTS: list[str] = [
     "yannick.rousset@auxy-partners.com",
 ]
 
-# Jours fériés français 2026 (dates fixes + calculées)
-JOURS_FERIES_2026: list[str] = [
-    "2026-01-01",  # Nouvel An
-    "2026-04-06",  # Lundi de Pâques
-    "2026-05-01",  # Fête du Travail
-    "2026-05-08",  # Victoire 1945
-    "2026-05-14",  # Ascension
-    "2026-05-25",  # Lundi de Pentecôte
-    "2026-07-14",  # Fête nationale
-    "2026-08-15",  # Assomption
-    "2026-11-01",  # Toussaint
-    "2026-11-11",  # Armistice
-    "2026-12-25",  # Noël
-]
+def _easter(year: int) -> date:
+    """Calcul de la date de Pâques (algorithme de Butcher/Meeus)."""
+    a = year % 19
+    b, c = divmod(year, 100)
+    d, e = divmod(b, 4)
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = divmod(c, 4)
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month, day = divmod(h + l - 7 * m + 114, 31)
+    return date(year, month, day + 1)
+
+
+def jours_feries(year: int) -> set[str]:
+    """Retourne l'ensemble des jours fériés français pour une année donnée."""
+    paques = _easter(year)
+    feries = [
+        date(year, 1, 1),       # Nouvel An
+        paques + timedelta(days=1),   # Lundi de Pâques
+        date(year, 5, 1),       # Fête du Travail
+        date(year, 5, 8),       # Victoire 1945
+        paques + timedelta(days=39),  # Ascension
+        paques + timedelta(days=50),  # Lundi de Pentecôte
+        date(year, 7, 14),      # Fête nationale
+        date(year, 8, 15),      # Assomption
+        date(year, 11, 1),      # Toussaint
+        date(year, 11, 11),     # Armistice
+        date(year, 12, 25),     # Noël
+    ]
+    return {d.isoformat() for d in feries}
 
 
 # ---------------------------------------------------------------------------
