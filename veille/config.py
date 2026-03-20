@@ -92,19 +92,25 @@ BOND_TICKERS: dict[str, str] = {
 }
 
 # URLs
-GNEWS_BASE_URL = "https://gnews.io/api/v4"
 ECB_DATA_URL = "https://data-api.ecb.europa.eu/service/data"
 
-# Requêtes GNews
-GNEWS_QUERIES_FR: list[str] = [
-    "économie france",
-    "entreprises france fiscalité",
-]
+# Flux RSS — Sources France (économie / finance / entreprises)
+RSS_FEEDS_FRANCE: dict[str, str] = {
+    "Les Echos": "https://www.lesechos.fr/rss/rss_en_continu.xml",
+    "L'Agefi": "https://www.agefi.fr/rss",
+    "Boursorama": "https://www.boursorama.com/rss/actualites",
+    "Yahoo Finance": "https://fr.finance.yahoo.com/rss/topfinstories",
+    "BFM Business": "https://bfmbusiness.bfmtv.com/rss/info/flux-rss/flux-toutes-les-actualites/",
+}
 
-GNEWS_QUERIES_AURA: list[str] = [
-    "économie Auvergne-Rhône-Alpes",
-    "Lyon entreprises économie",
-]
+# Flux RSS — Sources AURA (par ordre de priorité)
+RSS_FEEDS_AURA: dict[str, str] = {
+    "Bref Eco": "https://www.bfreco.com/feed/",
+    "Le Journal des Entreprises": "https://www.lejournaldesentreprises.com/rss",
+    "Lyon Capitale": "https://www.lyoncapitale.fr/feed/",
+    "Le Progrès": "https://www.leprogres.fr/rss",
+    "Tribune de Lyon": "https://tribunedelyon.fr/feed/",
+}
 
 # Destinataires
 RECIPIENTS: list[str] = [
@@ -142,7 +148,6 @@ def _env(key: str, default: str | None = None, required: bool = True) -> str:
 
 @dataclass(frozen=True)
 class VeilleConfig:
-    gnews_api_key: str = field(default_factory=lambda: _env("GNEWS_API_KEY"))
     gmail_user: str = field(default_factory=lambda: _env("GMAIL_USER"))
     gmail_app_password: str = field(default_factory=lambda: _env("GMAIL_APP_PASSWORD"))
     log_level: str = field(default_factory=lambda: _env("LOG_LEVEL", default="INFO", required=False))

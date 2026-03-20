@@ -1,11 +1,11 @@
-"""Récupération des données de marché via yfinance."""
+"""Récupération des données de marché via yfinance (téléchargement individuel)."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from dataclasses import dataclass
-from datetime import datetime
 
 import yfinance as yf
 
@@ -32,50 +32,60 @@ class StockMove:
     change_pct: float
 
 
-def _compute_change(hist) -> tuple[float | None, float | None]:
-    """Calcule le dernier cours de clôture et la variation % à partir d'un historique yfinance."""
-    if hist is None or hist.empty or len(hist) < 2:
-        if hist is not None and not hist.empty and len(hist) == 1:
-            close_col = "Close"
-            return float(hist[close_col].iloc[-1]), None
+def _fetch_single(symbol: str) -> tuple[float | None, float | None]:
+    """Télécharge un ticker individuel et retourne (close, change_pct)."""
+    try:
+        ticker = yf.Ticker(symbol)
+        hist = ticker.history(period="5d")
+        if hist is None or hist.empty:
+            return None, None
+
+        # Filtrer les NaN
+        hist = hist.dropna(subset=["Close"])
+        if len(hist) < 1:
+            return None, None
+
+        last = float(hist["Close"].iloc[-1])
+        if math.isnan(last):
+            return None, None
+
+        if len(hist) >= 2:
+            prev = float(hist["Close"].iloc[-2])
+            if math.isnan(prev) or prev == 0:
+                return last, None
+            change = round(((last - prev) / prev) * 100, 2)
+            return last, change
+
+        return last, None
+    except Exception:
+        logger.warning("Erreur téléchargement %s", symbol)
         return None, None
 
-    close_col = "Close"
-    last = float(hist[close_col].iloc[-1])
-    prev = float(hist[close_col].iloc[-2])
-    if prev == 0:
-        return last, None
-    change = ((last - prev) / prev) * 100
-    return last, round(change, 2)
+
+async def _fetch_single_async(symbol: str) -> tuple[float | None, float | None]:
+    """Wrapper async pour le téléchargement individuel."""
+    return await asyncio.to_thread(_fetch_single, symbol)
 
 
 async def fetch_indices() -> list[QuoteData]:
     """Récupère les indices mondiaux."""
-    tickers = list(GLOBAL_INDICES.values())
-    names = list(GLOBAL_INDICES.keys())
-
-    def _download():
-        try:
-            data = yf.download(tickers, period="5d", progress=False, group_by="ticker")
-            return data
-        except Exception:
-            logger.exception("Erreur téléchargement indices")
-            return None
-
-    data = await asyncio.to_thread(_download)
     results: list[QuoteData] = []
+    tasks = []
+    names = list(GLOBAL_INDICES.keys())
+    symbols = list(GLOBAL_INDICES.values())
 
-    for ticker, name in zip(tickers, names):
-        try:
-            if len(tickers) == 1:
-                hist = data
-            else:
-                hist = data[ticker] if ticker in data.columns.get_level_values(0) else None
-            close, change = _compute_change(hist)
-            results.append(QuoteData(name=name, close=close, change_pct=change))
-        except Exception:
-            logger.warning("Impossible de récupérer %s (%s)", name, ticker)
+    for symbol in symbols:
+        tasks.append(_fetch_single_async(symbol))
+
+    fetched = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for name, result in zip(names, fetched):
+        if isinstance(result, BaseException):
+            logger.warning("Erreur indice %s : %s", name, result)
             results.append(QuoteData(name=name, close=None, change_pct=None))
+        else:
+            close, change = result
+            results.append(QuoteData(name=name, close=close, change_pct=change))
 
     return results
 
@@ -83,33 +93,21 @@ async def fetch_indices() -> list[QuoteData]:
 async def fetch_cac40_movers() -> tuple[list[StockMove], list[StockMove]]:
     """Récupère le Top 5 et Flop 5 du CAC 40."""
     tickers = list(CAC40_TICKERS.keys())
-
-    def _download():
-        try:
-            data = yf.download(tickers, period="5d", progress=False, group_by="ticker")
-            return data
-        except Exception:
-            logger.exception("Erreur téléchargement CAC 40")
-            return None
-
-    data = await asyncio.to_thread(_download)
-    if data is None or data.empty:
-        return [], []
+    tasks = [_fetch_single_async(t) for t in tickers]
+    fetched = await asyncio.gather(*tasks, return_exceptions=True)
 
     moves: list[StockMove] = []
-    for ticker in tickers:
-        try:
-            hist = data[ticker] if ticker in data.columns.get_level_values(0) else None
-            close, change = _compute_change(hist)
-            if change is not None:
-                moves.append(StockMove(
-                    ticker=ticker,
-                    name=CAC40_TICKERS[ticker],
-                    close=close,
-                    change_pct=change,
-                ))
-        except Exception:
-            logger.debug("Pas de données pour %s", ticker)
+    for ticker, result in zip(tickers, fetched):
+        if isinstance(result, BaseException):
+            continue
+        close, change = result
+        if change is not None and close is not None:
+            moves.append(StockMove(
+                ticker=ticker,
+                name=CAC40_TICKERS[ticker],
+                close=close,
+                change_pct=change,
+            ))
 
     moves.sort(key=lambda m: m.change_pct, reverse=True)
     top5 = moves[:5]
@@ -119,60 +117,35 @@ async def fetch_cac40_movers() -> tuple[list[StockMove], list[StockMove]]:
 
 async def fetch_fx() -> list[QuoteData]:
     """Récupère les principales paires de devises."""
-    tickers = list(FX_PAIRS.values())
-    names = list(FX_PAIRS.keys())
-
-    def _download():
-        try:
-            return yf.download(tickers, period="5d", progress=False, group_by="ticker")
-        except Exception:
-            logger.exception("Erreur téléchargement FX")
-            return None
-
-    data = await asyncio.to_thread(_download)
     results: list[QuoteData] = []
+    names = list(FX_PAIRS.keys())
+    symbols = list(FX_PAIRS.values())
+    tasks = [_fetch_single_async(s) for s in symbols]
+    fetched = await asyncio.gather(*tasks, return_exceptions=True)
 
-    for ticker, name in zip(tickers, names):
-        try:
-            if len(tickers) == 1:
-                hist = data
-            else:
-                hist = data[ticker] if ticker in data.columns.get_level_values(0) else None
-            close, change = _compute_change(hist)
-            results.append(QuoteData(name=name, close=close, change_pct=change))
-        except Exception:
-            logger.warning("Impossible de récupérer %s", name)
+    for name, result in zip(names, fetched):
+        if isinstance(result, BaseException):
             results.append(QuoteData(name=name, close=None, change_pct=None))
+        else:
+            close, change = result
+            results.append(QuoteData(name=name, close=close, change_pct=change))
 
     return results
 
 
 async def fetch_commodities() -> list[QuoteData]:
     """Récupère les matières premières."""
-    tickers = list(COMMODITIES.values())
-    names = list(COMMODITIES.keys())
-
-    def _download():
-        try:
-            return yf.download(tickers, period="5d", progress=False, group_by="ticker")
-        except Exception:
-            logger.exception("Erreur téléchargement commodities")
-            return None
-
-    data = await asyncio.to_thread(_download)
     results: list[QuoteData] = []
+    names = list(COMMODITIES.keys())
+    symbols = list(COMMODITIES.values())
+    tasks = [_fetch_single_async(s) for s in symbols]
+    fetched = await asyncio.gather(*tasks, return_exceptions=True)
 
-    for ticker, name in zip(tickers, names):
-        try:
-            if len(tickers) == 1:
-                hist = data
-            else:
-                hist = data[ticker] if ticker in data.columns.get_level_values(0) else None
-            close, change = _compute_change(hist)
-            currency = "USD"
-            results.append(QuoteData(name=name, close=close, change_pct=change, currency=currency))
-        except Exception:
-            logger.warning("Impossible de récupérer %s", name)
+    for name, result in zip(names, fetched):
+        if isinstance(result, BaseException):
             results.append(QuoteData(name=name, close=None, change_pct=None))
+        else:
+            close, change = result
+            results.append(QuoteData(name=name, close=close, change_pct=change, currency="USD"))
 
     return results

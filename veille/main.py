@@ -71,8 +71,8 @@ async def run_veille(config: VeilleConfig, force: bool = False) -> None:
         fetch_fx(),
         fetch_commodities(),
         fetch_all_rates(),
-        fetch_french_news(config.gnews_api_key),
-        fetch_regional_news(config.gnews_api_key),
+        fetch_french_news(),
+        fetch_regional_news(),
         return_exceptions=True,
     )
 

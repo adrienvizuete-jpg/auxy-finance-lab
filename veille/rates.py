@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from dataclasses import dataclass
 from xml.etree import ElementTree
 
 import httpx
 import yfinance as yf
 
-from veille.config import BOND_TICKERS, ECB_DATA_URL
+from veille.config import ECB_DATA_URL
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +33,9 @@ async def _fetch_ecb_rate(session: httpx.AsyncClient, flow: str, key: str, name:
     try:
         resp = await session.get(
             url,
-            params={"lastNObservations": "2", "detail": "dataonly"},
+            params={"lastNObservations": "5", "detail": "dataonly"},
             headers={"Accept": "application/vnd.sdmx.genericdata+xml;version=2.1"},
-            timeout=15.0,
+            timeout=20.0,
         )
         resp.raise_for_status()
 
@@ -57,54 +58,60 @@ async def _fetch_ecb_rate(session: httpx.AsyncClient, flow: str, key: str, name:
 
 
 async def fetch_euribor() -> list[RateData]:
-    """Récupère les taux Euribor 3M et 12M depuis la BCE."""
+    """Récupère les taux Euribor 3M et 12M depuis la BCE (fréquence daily)."""
     async with httpx.AsyncClient() as session:
         results = await asyncio.gather(
-            _fetch_ecb_rate(session, "FM", "M.U2.EUR.RT.MM.EURIBOR3MD_.HSTA", "Euribor 3M"),
-            _fetch_ecb_rate(session, "FM", "M.U2.EUR.RT.MM.EURIBOR1YD_.HSTA", "Euribor 12M"),
+            _fetch_ecb_rate(session, "FM", "D.U2.EUR.RT.MM.EURIBOR3MD_.HSTA", "Euribor 3M"),
+            _fetch_ecb_rate(session, "FM", "D.U2.EUR.RT.MM.EURIBOR1YD_.HSTA", "Euribor 12M"),
         )
     return list(results)
 
 
 async def fetch_oat_france() -> RateData:
-    """Récupère le rendement OAT France 10 ans depuis la BCE."""
+    """Récupère le rendement OAT France 10 ans depuis la BCE (fréquence daily)."""
     async with httpx.AsyncClient() as session:
         return await _fetch_ecb_rate(
-            session, "FM", "M.FR.EUR.FR2.BB.BY.IREF", "OAT France 10Y"
+            session, "FM", "D.FR.EUR.FR2.BB.BY.IREF", "OAT France 10Y"
         )
 
 
 async def fetch_bund_germany() -> RateData:
-    """Récupère le rendement Bund Allemagne 10 ans depuis la BCE."""
+    """Récupère le rendement Bund Allemagne 10 ans depuis la BCE (fréquence daily)."""
     async with httpx.AsyncClient() as session:
         return await _fetch_ecb_rate(
-            session, "FM", "M.DE.EUR.FR2.BB.BY.IREF", "Bund Allemagne 10Y"
+            session, "FM", "D.DE.EUR.FR2.BB.BY.IREF", "Bund Allemagne 10Y"
         )
 
 
 async def fetch_us_treasury() -> RateData:
-    """Récupère le rendement US Treasury 10Y via yfinance."""
-    ticker = BOND_TICKERS["US Treasury 10Y"]
+    """Récupère le rendement US Treasury 10Y via yfinance (ticker individuel)."""
 
     def _download():
         try:
-            data = yf.download(ticker, period="5d", progress=False)
-            return data
+            ticker = yf.Ticker("^TNX")
+            hist = ticker.history(period="5d")
+            return hist
         except Exception:
             logger.exception("Erreur téléchargement US Treasury")
             return None
 
     data = await asyncio.to_thread(_download)
-    if data is None or data.empty or len(data) < 1:
+    if data is None or data.empty:
         return RateData(name="US Treasury 10Y", value=None, change_bps=None)
 
-    close_col = "Close"
-    last = float(data[close_col].iloc[-1])
+    data = data.dropna(subset=["Close"])
+    if len(data) < 1:
+        return RateData(name="US Treasury 10Y", value=None, change_bps=None)
+
+    last = float(data["Close"].iloc[-1])
+    if math.isnan(last):
+        return RateData(name="US Treasury 10Y", value=None, change_bps=None)
 
     change_bps = None
     if len(data) >= 2:
-        prev = float(data[close_col].iloc[-2])
-        change_bps = round((last - prev) * 100, 1)
+        prev = float(data["Close"].iloc[-2])
+        if not math.isnan(prev):
+            change_bps = round((last - prev) * 100, 1)
 
     return RateData(name="US Treasury 10Y", value=round(last, 3), change_bps=change_bps)
 

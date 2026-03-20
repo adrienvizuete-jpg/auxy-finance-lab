@@ -56,6 +56,26 @@ def _table_row(cells: list[str], bg: str = "#ffffff") -> str:
     return f'<tr style="background:{bg};">{tds}</tr>'
 
 
+def _render_news_section(items: list[NewsItem]) -> str:
+    """Rend une section d'actualités avec titre + résumé 2 lignes."""
+    if not items:
+        return '<tr><td style="padding:8px 32px;font-size:13px;color:#888;">Aucune actualité disponible.</td></tr>'
+
+    html = '<tr><td style="padding:8px 32px;">'
+    for item in items:
+        source_tag = f' — <span style="color:#D4AF37;font-weight:600;">{item.source}</span>' if item.source else ""
+        html += f"""
+<div style="margin-bottom:14px;">
+  <a href="{item.url}" style="color:#1B3A5C;text-decoration:none;font-size:13px;font-weight:600;">{item.title}</a>
+  <span style="font-size:11px;color:#888;">{source_tag}</span>"""
+        if item.summary:
+            html += f"""
+  <p style="margin:3px 0 0;font-size:12px;color:#666;line-height:1.4;">{item.summary}</p>"""
+        html += "\n</div>"
+    html += "</td></tr>"
+    return html
+
+
 def render_email(data: VeilleData) -> str:
     """Génère le HTML complet de l'email de veille."""
     date_str = data.date.strftime("%d/%m/%Y")
@@ -239,14 +259,7 @@ def render_email(data: VeilleData) -> str:
   </h2>
 </td></tr>
 """
-    if data.news_france:
-        html += '<tr><td style="padding:8px 32px;"><ul style="margin:0;padding:0 0 0 18px;font-size:13px;line-height:1.8;">'
-        for item in data.news_france:
-            source_tag = f' <span style="color:#888;font-size:11px;">— {item.source}</span>' if item.source else ""
-            html += f'<li><a href="{item.url}" style="color:#1B3A5C;text-decoration:none;">{item.title}</a>{source_tag}</li>'
-        html += "</ul></td></tr>"
-    else:
-        html += '<tr><td style="padding:8px 32px;font-size:13px;color:#888;">Aucune actualité disponible.</td></tr>'
+    html += _render_news_section(data.news_france)
 
     # === SECTION III : NEWS AURA ===
     html += """
@@ -256,14 +269,7 @@ def render_email(data: VeilleData) -> str:
   </h2>
 </td></tr>
 """
-    if data.news_aura:
-        html += '<tr><td style="padding:8px 32px;"><ul style="margin:0;padding:0 0 0 18px;font-size:13px;line-height:1.8;">'
-        for item in data.news_aura:
-            source_tag = f' <span style="color:#888;font-size:11px;">— {item.source}</span>' if item.source else ""
-            html += f'<li><a href="{item.url}" style="color:#1B3A5C;text-decoration:none;">{item.title}</a>{source_tag}</li>'
-        html += "</ul></td></tr>"
-    else:
-        html += '<tr><td style="padding:8px 32px;font-size:13px;color:#888;">Aucune actualité disponible.</td></tr>'
+    html += _render_news_section(data.news_aura)
 
     # --- Footer ---
     html += f"""
@@ -271,7 +277,7 @@ def render_email(data: VeilleData) -> str:
   <p style="margin:0;font-size:11px;color:#999;text-align:center;">
     Cette veille est générée automatiquement par Auxy Partners.<br>
     Les données de marché proviennent de Yahoo Finance et de la BCE.<br>
-    Les actualités sont agrégées via GNews. Données au {date_str}.
+    Les actualités proviennent de Les Echos, L'Agefi, Boursorama, Bref Eco et autres sources RSS. Données au {date_str}.
   </p>
 </td></tr>
 
