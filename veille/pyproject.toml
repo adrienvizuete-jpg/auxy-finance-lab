@@ -15,3 +15,9 @@ dependencies = [
 
 [project.scripts]
 auxy-veille = "veille.main:cli"
+
+[tool.setuptools]
+packages = ["veille"]
+
+[tool.setuptools.package-dir]
+veille = "."

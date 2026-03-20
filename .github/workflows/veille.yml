@@ -29,13 +29,14 @@ jobs:
           cache-dependency-path: veille/pyproject.toml
 
       - name: Install dependencies
-        run: pip install -e "./veille"
+        run: pip install yfinance httpx python-dotenv
 
       - name: Run veille
         env:
           GNEWS_API_KEY: ${{ secrets.GNEWS_API_KEY_VEILLE }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           if [ "${{ inputs.force }}" = "true" ]; then
             python -m veille.main run --force
