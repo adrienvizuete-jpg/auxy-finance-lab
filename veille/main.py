@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -31,18 +32,51 @@ def _is_business_day(dt: datetime) -> bool:
     return True
 
 
-def _is_correct_cron_run(dt: datetime) -> bool:
+# Crons du workflow GitHub Actions
+_CRON_SUMMER = "30 4 * * 1-5"   # 4:30 UTC = 6:30 CEST (été)
+_CRON_WINTER = "30 5 * * 1-5"   # 5:30 UTC = 6:30 CET  (hiver)
+
+
+def _is_correct_cron_run() -> bool:
     """Vérifie que c'est la bonne exécution cron (gestion DST).
 
-    GitHub Actions déclenche deux crons :
-    - 4h30 UTC → 6h30 CEST (été) ou 5h30 CET (hiver)
-    - 5h30 UTC → 7h30 CEST (été) ou 6h30 CET (hiver)
+    Utilise la variable CRON_SCHEDULE (= github.event.schedule) plutôt que
+    l'heure réelle d'exécution, ce qui rend la vérification insensible aux
+    retards de GitHub Actions (qui peuvent atteindre plusieurs heures).
 
-    On ne doit exécuter que quand il est ~6h30 heure de Paris.
+    - CRON_SCHEDULE vide (workflow_dispatch) → toujours exécuter
+    - Paris en CEST (UTC+2, été) → accepter uniquement le cron 4:30 UTC
+    - Paris en CET  (UTC+1, hiver) → accepter uniquement le cron 5:30 UTC
     """
-    paris_hour = dt.astimezone(PARIS_TZ).hour
-    # Accepter entre 6h et 7h (marge pour le temps d'exécution du job)
-    return 6 <= paris_hour <= 7
+    schedule = os.environ.get("CRON_SCHEDULE", "").strip()
+
+    # Déclenchement manuel : toujours exécuter
+    if not schedule:
+        return True
+
+    now_paris = datetime.now(PARIS_TZ)
+    utc_offset_hours = now_paris.utcoffset().total_seconds() / 3600
+
+    if utc_offset_hours == 2:
+        # Heure d'été (CEST) → accepter le cron 4:30 UTC
+        is_correct = schedule == _CRON_SUMMER
+    elif utc_offset_hours == 1:
+        # Heure d'hiver (CET) → accepter le cron 5:30 UTC
+        is_correct = schedule == _CRON_WINTER
+    else:
+        # Offset inattendu → exécuter par précaution
+        logger.warning("Offset Paris inattendu : UTC+%s, exécution forcée.", utc_offset_hours)
+        return True
+
+    if not is_correct:
+        logger.info(
+            "Skip cron '%s' (Paris UTC+%d, attendu '%s').",
+            schedule,
+            int(utc_offset_hours),
+            _CRON_SUMMER if utc_offset_hours == 2 else _CRON_WINTER,
+        )
+
+    return is_correct
 
 
 async def run_veille(config: VeilleConfig, force: bool = False) -> None:
@@ -54,7 +88,7 @@ async def run_veille(config: VeilleConfig, force: bool = False) -> None:
             logger.info("Jour non ouvré (%s), skip.", now.strftime("%A %d/%m/%Y"))
             return
 
-        if not _is_correct_cron_run(datetime.now(tz=ZoneInfo("UTC"))):
+        if not _is_correct_cron_run():
             logger.info("Pas la bonne exécution cron (heure Paris : %s), skip.", now.strftime("%H:%M"))
             return
 
