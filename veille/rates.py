@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import os
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
 import httpx
@@ -80,7 +82,142 @@ async def _fetch_ecb_json(session: httpx.AsyncClient, flow: str, key: str, name:
 
 
 # ---------------------------------------------------------------------------
-# yfinance — pour OAT, Bund, US Treasury
+# Bundesbank API — pour Bund Allemagne 10Y (quotidien)
+# ---------------------------------------------------------------------------
+
+BUNDESBANK_BUND_URL = (
+    "https://api.statistiken.bundesbank.de/rest/data/BBSIS/"
+    "D.I.ZAR.ZI.EUR.S1311.B.A604.R10XX.R.A.A._Z._Z.A"
+)
+
+# Namespace SDMX-ML de la Bundesbank
+_BBK_NS = {
+    "mes": "http://www.sdmx.org/resources/sdmxml/schemas/v2_1/message",
+    "gen": "http://www.sdmx.org/resources/sdmxml/schemas/v2_1/data/generic",
+}
+
+
+async def _fetch_bundesbank_yield() -> RateData:
+    """Récupère le rendement Bund 10Y quotidien depuis l'API Bundesbank (XML)."""
+    name = "Bund Allemagne 10Y"
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                BUNDESBANK_BUND_URL,
+                params={"lastNObservations": "5", "detail": "dataonly"},
+                headers={
+                    "Accept": "application/xml",
+                    "User-Agent": "AuxyVeille/1.0",
+                },
+                timeout=20.0,
+            )
+            resp.raise_for_status()
+
+            root = ET.fromstring(resp.text)
+
+            # Extraire les observations du XML SDMX générique
+            obs_elements = root.findall(".//gen:Obs", _BBK_NS)
+            values: list[float] = []
+            for obs in obs_elements:
+                val_el = obs.find("gen:ObsValue", _BBK_NS)
+                if val_el is not None and val_el.get("value"):
+                    try:
+                        values.append(float(val_el.get("value")))
+                    except ValueError:
+                        continue
+
+            if len(values) >= 2:
+                last_val = values[-1]
+                prev_val = values[-2]
+                change_bps = round((last_val - prev_val) * 100, 1)
+                return RateData(name=name, value=round(last_val, 3), change_bps=change_bps)
+            elif len(values) == 1:
+                return RateData(name=name, value=round(values[0], 3), change_bps=None)
+
+    except Exception:
+        logger.warning("Erreur Bundesbank Bund 10Y", exc_info=True)
+
+    return RateData(name=name, value=None, change_bps=None)
+
+
+# ---------------------------------------------------------------------------
+# Banque de France Webstat API — pour OAT France 10Y (quotidien)
+# ---------------------------------------------------------------------------
+
+BDF_WEBSTAT_URL = "https://webstat.banque-france.fr/api/v2.1/data"
+BDF_OAT_SERIES = "FM/D.FR.EUR.FR2.BB.FR10YT_RR.YLD"
+
+
+async def _fetch_bdf_yield() -> RateData:
+    """Récupère le rendement OAT France 10Y quotidien depuis la BdF Webstat API."""
+    name = "OAT France 10Y"
+    api_key = os.environ.get("BDF_API_KEY", "").strip()
+
+    if not api_key:
+        logger.info("BDF_API_KEY absente, fallback ECB IRS mensuel pour OAT")
+        return await _fetch_oat_fallback()
+
+    url = f"{BDF_WEBSTAT_URL}/{BDF_OAT_SERIES}"
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                url,
+                params={"lastNObservations": "5", "detail": "dataonly", "format": "jsondata"},
+                headers={
+                    "Accept": "application/json",
+                    "User-Agent": "AuxyVeille/1.0",
+                    "Authorization": f"Bearer {api_key}",
+                },
+                timeout=20.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            # Structure JSON SDMX identique à l'ECB
+            datasets = data.get("dataSets", [])
+            if not datasets:
+                logger.warning("BdF OAT : pas de dataset, fallback ECB")
+                return await _fetch_oat_fallback()
+
+            series = datasets[0].get("series", {})
+            if not series:
+                logger.warning("BdF OAT : pas de séries, fallback ECB")
+                return await _fetch_oat_fallback()
+
+            first_series = next(iter(series.values()))
+            observations = first_series.get("observations", {})
+            if not observations:
+                logger.warning("BdF OAT : pas d'observations, fallback ECB")
+                return await _fetch_oat_fallback()
+
+            sorted_obs = sorted(observations.items(), key=lambda x: int(x[0]))
+            values = [float(v[0]) for _, v in sorted_obs if v]
+
+            if len(values) >= 2:
+                last_val = values[-1]
+                prev_val = values[-2]
+                change_bps = round((last_val - prev_val) * 100, 1)
+                logger.info("OAT France via BdF Webstat : %.3f%%", last_val)
+                return RateData(name=name, value=round(last_val, 3), change_bps=change_bps)
+            elif len(values) == 1:
+                return RateData(name=name, value=round(values[0], 3), change_bps=None)
+
+    except Exception:
+        logger.warning("Erreur BdF Webstat OAT, fallback ECB", exc_info=True)
+
+    return await _fetch_oat_fallback()
+
+
+async def _fetch_oat_fallback() -> RateData:
+    """Fallback : OAT via ECB IRS mensuel (convergence Maastricht)."""
+    async with httpx.AsyncClient() as session:
+        return await _fetch_ecb_json(
+            session, "IRS", "M.FR.L.L40.CI.0000.EUR.N.Z", "OAT France 10Y"
+        )
+
+
+# ---------------------------------------------------------------------------
+# yfinance — pour US Treasury
 # ---------------------------------------------------------------------------
 
 async def _fetch_yf_rate(symbol: str, name: str) -> RateData:
@@ -147,19 +284,33 @@ async def fetch_euribor() -> list[RateData]:
 
 
 async def fetch_sovereign_yields() -> list[RateData]:
-    """Récupère OAT France 10Y, Bund Allemagne 10Y, US Treasury 10Y."""
-    # US Treasury via yfinance (journalier, fiable)
-    ust = await _fetch_yf_rate("^TNX", "US Treasury 10Y")
+    """Récupère OAT France 10Y, Bund Allemagne 10Y, US Treasury 10Y.
 
-    # OAT et Bund via ECB IRS (Interest Rate Statistics) — données mensuelles
-    # Clé : M.{pays}.L.L40.CI.0000.EUR.N.Z (taux de convergence Maastricht = rendement 10Y)
-    async with httpx.AsyncClient() as session:
-        ecb_oat, ecb_bund = await asyncio.gather(
-            _fetch_ecb_json(session, "IRS", "M.FR.L.L40.CI.0000.EUR.N.Z", "OAT France 10Y"),
-            _fetch_ecb_json(session, "IRS", "M.DE.L.L40.CI.0000.EUR.N.Z", "Bund Allemagne 10Y"),
-        )
+    Sources quotidiennes :
+    - OAT : Banque de France Webstat (TEC 10), fallback ECB IRS mensuel
+    - Bund : Bundesbank BBSIS API (quotidien)
+    - US Treasury : yfinance ^TNX (quotidien)
+    """
+    oat, bund, ust = await asyncio.gather(
+        _fetch_bdf_yield(),
+        _fetch_bundesbank_yield(),
+        _fetch_yf_rate("^TNX", "US Treasury 10Y"),
+        return_exceptions=True,
+    )
 
-    return [ecb_oat, ecb_bund, ust]
+    results: list[RateData] = []
+    for r, fallback_name in [
+        (oat, "OAT France 10Y"),
+        (bund, "Bund Allemagne 10Y"),
+        (ust, "US Treasury 10Y"),
+    ]:
+        if isinstance(r, RateData):
+            results.append(r)
+        else:
+            logger.error("Erreur %s : %s", fallback_name, r)
+            results.append(RateData(name=fallback_name, value=None, change_bps=None))
+
+    return results
 
 
 async def fetch_all_rates() -> list[RateData]:
