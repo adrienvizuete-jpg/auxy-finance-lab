@@ -679,6 +679,82 @@ export const Financial = {
     },
 
     /**
+     * Crédit Relais de TVA (préfinancement de TVA)
+     * Avance la TVA décaissée sur une opération (foncier / travaux), récupérée in fine
+     * au remboursement du crédit de TVA par le Trésor (ou par imputation). Le capital
+     * est constant jusqu'à la récupération ; seuls les intérêts de portage sont servis.
+     * À distinguer de pretRelais (relais d'acquisition adossé à une revente).
+     *
+     * @param {number} tvaAmount      - TVA préfinancée (capital mobilisé)
+     * @param {number} annualRate     - Taux tout-compris du relais (Euribor + marge)
+     * @param {number} durationMonths - Délai jusqu'à récupération de la TVA
+     * @param {string} frequency      - Périodicité des intérêts (défaut : trimestriel)
+     * @param {string} interestMode   - 'periodic' (intérêts servis) | 'capitalized' (in fine)
+     * @param {number} fees           - Frais de dossier / commission d'engagement
+     */
+    creditRelaisTVA({ tvaAmount, annualRate, durationMonths, frequency = 'quarterly', interestMode = 'periodic', fees = 0 }) {
+        const ppy = this.getPeriodsPerYear(frequency);
+        const periodicRate = annualRate / 100 / ppy;
+        const totalPeriods = Math.max(1, Math.round(durationMonths / (12 / ppy)));
+        const capitalized = interestMode === 'capitalized';
+
+        const schedule = [];
+        let balance = tvaAmount;
+        let totalInterest = 0;
+
+        for (let i = 1; i <= totalPeriods; i++) {
+            const isLast = i === totalPeriods;
+            const interest = balance * periodicRate;
+            totalInterest += interest;
+
+            if (capitalized) {
+                balance += interest; // intérêts capitalisés jusqu'à la sortie
+                schedule.push({
+                    period: i,
+                    payment: isLast ? balance : 0,
+                    principal: isLast ? tvaAmount : 0,
+                    interest,
+                    capitalizedInterest: interest,
+                    balance: isLast ? 0 : balance,
+                    totalInterest
+                });
+            } else {
+                schedule.push({
+                    period: i,
+                    payment: interest + (isLast ? tvaAmount : 0),
+                    principal: isLast ? tvaAmount : 0,
+                    interest,
+                    capitalizedInterest: 0,
+                    balance: isLast ? 0 : tvaAmount,
+                    totalInterest
+                });
+            }
+        }
+
+        const carryingCost = totalInterest + fees;
+        const carryingCostPct = tvaAmount > 0 ? (carryingCost / tvaAmount) * 100 : 0;
+
+        // TAEG (même convention de signe que inFine / pretRelais)
+        const cashflows = [-tvaAmount + fees];
+        for (const row of schedule) cashflows.push(row.payment);
+        let taeg;
+        try { taeg = this.taeg(cashflows, ppy); } catch { taeg = null; }
+
+        return {
+            tvaAmount,
+            periodicInterest: tvaAmount * periodicRate,
+            totalInterest,
+            carryingCost,
+            carryingCostPct,
+            taeg,
+            frequency,
+            interestMode,
+            finalRecoveryMonth: durationMonths,
+            schedule
+        };
+    },
+
+    /**
      * Dette Mezzanine
      */
     detteMezzanine({ principal, cashRate, pikRate, durationMonths, equityKicker = 0, fees = 0 }) {

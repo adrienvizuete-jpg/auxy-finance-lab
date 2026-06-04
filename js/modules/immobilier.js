@@ -108,7 +108,20 @@ const state = {
     capRate: 6.0,
     capRateMin: 4.0,
     capRateMax: 8.0,
-    capRateStep: 0.5
+    capRateStep: 0.5,
+    // Crédit relais de TVA (préfinancement) — optionnel, natures à coûts
+    tvaEnabled: false,
+    tvaMode: 'auto',            // 'auto' (assiette × taux) | 'manual' (montant saisi)
+    tvaBaseAcquisition: false,
+    tvaBaseTravaux: true,
+    tvaBaseDivers: false,
+    tvaRate: 20,
+    tvaAmountManual: 0,
+    tvaRelaisRate: 4.5,
+    tvaRelaisDuration: 9,
+    tvaRelaisFrequency: 'quarterly',
+    tvaRelaisInterestMode: 'periodic',
+    tvaRelaisFees: 0
 };
 
 // =============================================
@@ -132,6 +145,17 @@ function computePropertyValue() {
 
 function computeTotalCost() {
     return state.acquisitionCost + state.travauxCost + state.fraisNotaire + state.fraisDivers;
+}
+
+// TVA préfinancée : assiette (postes HT cochés) × taux, ou montant saisi en mode manuel
+function computeTVAAmount() {
+    if (!state.tvaEnabled) return 0;
+    if (state.tvaMode === 'manual') return state.tvaAmountManual || 0;
+    let base = 0;
+    if (state.tvaBaseTravaux) base += state.travauxCost || 0;
+    if (state.tvaBaseAcquisition) base += state.acquisitionCost || 0;
+    if (state.tvaBaseDivers) base += state.fraisDivers || 0;
+    return base * (state.tvaRate / 100);
 }
 
 function computeLTV() {
@@ -236,6 +260,41 @@ function runCalculation() {
         totalInterest: sim.totalInterest || 0,
         totalPayment: sim.totalPayment || 0
     };
+
+    // Crédit relais de TVA (optionnel) — natures à coûts uniquement.
+    // Hors DSCR : remboursé par la récupération de TVA, pas par l'exploitation.
+    if (config.showCosts && state.tvaEnabled) {
+        const tvaAmount = computeTVAAmount();
+        const tvaSim = Financial.creditRelaisTVA({
+            tvaAmount,
+            annualRate: state.tvaRelaisRate,
+            durationMonths: state.tvaRelaisDuration,
+            frequency: state.tvaRelaisFrequency,
+            interestMode: state.tvaRelaisInterestMode,
+            fees: state.tvaRelaisFees
+        });
+        const coutHT = totalCost || 0;
+        lastResult.tva = {
+            amount: tvaAmount,
+            carryingCost: tvaSim.carryingCost,
+            carryingCostPct: tvaSim.carryingCostPct,
+            totalInterest: tvaSim.totalInterest,
+            taeg: tvaSim.taeg,
+            schedule: tvaSim.schedule,
+            interestMode: state.tvaRelaisInterestMode,
+            frequency: state.tvaRelaisFrequency,
+            duration: state.tvaRelaisDuration
+        };
+        lastResult.totalFinancing = state.loanAmount + tvaAmount;
+        lastResult.financingPlan = {
+            coutHT,
+            tva: tvaAmount,
+            coutTTC: coutHT + tvaAmount,
+            creditPrincipal: state.loanAmount,
+            relaisTVA: tvaAmount,
+            fondsPropres: coutHT - state.loanAmount  // FP couvrent le HT non financé ; le relais couvre la TVA
+        };
+    }
 
     hasCalculated = true;
     renderResults();
@@ -420,12 +479,146 @@ function getFormHTML() {
         </div>
     `;
 
+    // Crédit relais de TVA — natures à coûts uniquement
+    if (config.showCosts) {
+        html += getTVASectionHTML();
+    }
+
     return html;
+}
+
+function getTVASectionHTML() {
+    const on = state.tvaEnabled;
+    const tvaAmount = computeTVAAmount();
+    const checkStyle = 'display:inline-flex;align-items:center;gap:5px;font-size:0.8rem;color:var(--text-secondary);cursor:pointer';
+
+    let inner = '';
+    if (on) {
+        inner = `
+            <div class="form-row">
+                <div class="form-group" style="flex:0 0 auto">
+                    <label class="form-label">Assiette TVA</label>
+                    <div class="bench-toggle-group" id="tva-mode-toggle">
+                        <button class="toggle-btn-sm ${state.tvaMode === 'auto' ? 'active' : ''}" data-tvamode="auto">Auto</button>
+                        <button class="toggle-btn-sm ${state.tvaMode === 'manual' ? 'active' : ''}" data-tvamode="manual">Manuel</button>
+                    </div>
+                </div>
+                ${state.tvaMode === 'auto' ? `
+                <div class="form-group">
+                    <label class="form-label">Postes soumis à TVA</label>
+                    <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;padding-top:6px">
+                        <label style="${checkStyle}"><input type="checkbox" data-tvabase="tvaBaseTravaux" ${state.tvaBaseTravaux ? 'checked' : ''}> Travaux</label>
+                        <label style="${checkStyle}"><input type="checkbox" data-tvabase="tvaBaseAcquisition" ${state.tvaBaseAcquisition ? 'checked' : ''}> Acquisition</label>
+                        <label style="${checkStyle}"><input type="checkbox" data-tvabase="tvaBaseDivers" ${state.tvaBaseDivers ? 'checked' : ''}> Frais divers</label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Taux de TVA (%)</label>
+                    <input type="number" class="form-input" value="${state.tvaRate}" data-field="tvaRate" min="0" max="30" step="0.1">
+                </div>
+                ` : `
+                <div class="form-group">
+                    <label class="form-label">TVA préfinancée (€)</label>
+                    <input type="number" class="form-input" value="${state.tvaAmountManual}" data-field="tvaAmountManual" min="0" step="10000">
+                </div>
+                `}
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Taux du relais (%)</label>
+                    <input type="number" class="form-input" value="${state.tvaRelaisRate}" data-field="tvaRelaisRate" min="0" max="30" step="0.01">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Récupération TVA (mois)</label>
+                    <input type="number" class="form-input" value="${state.tvaRelaisDuration}" data-field="tvaRelaisDuration" min="1" max="60" step="1">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Périodicité intérêts</label>
+                    <select class="form-select" data-field="tvaRelaisFrequency">
+                        ${FREQ_OPTIONS.map(o => `<option value="${o.value}" ${state.tvaRelaisFrequency === o.value ? 'selected' : ''}>${o.label}</option>`).join('')}
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Intérêts</label>
+                    <select class="form-select" data-field="tvaRelaisInterestMode">
+                        <option value="periodic" ${state.tvaRelaisInterestMode === 'periodic' ? 'selected' : ''}>Payés périodiquement</option>
+                        <option value="capitalized" ${state.tvaRelaisInterestMode === 'capitalized' ? 'selected' : ''}>Capitalisés (in fine)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Frais de dossier (€)</label>
+                    <input type="number" class="form-input" value="${state.tvaRelaisFees}" data-field="tvaRelaisFees" min="0" step="100">
+                </div>
+            </div>
+        `;
+    }
+
+    return `
+        <div class="immo-form-section">
+            <div class="immo-section-label" style="display:flex;justify-content:space-between;align-items:center">
+                <span>Crédit relais de TVA ${on ? `<span class="immo-section-total">${Financial.formatCurrency(tvaAmount)}</span>` : ''}</span>
+                <div class="bench-toggle-group" id="tva-enabled-toggle">
+                    <button class="toggle-btn-sm ${!on ? 'active' : ''}" data-tvaenabled="off">Désactivé</button>
+                    <button class="toggle-btn-sm ${on ? 'active' : ''}" data-tvaenabled="on">Activé</button>
+                </div>
+            </div>
+            ${inner}
+        </div>
+    `;
 }
 
 // =============================================
 // RESULTS RENDERING
 // =============================================
+
+function renderFinancingPlanHTML(r) {
+    const p = r.financingPlan;
+    const totalRessources = p.creditPrincipal + p.relaisTVA + p.fondsPropres;
+    const sched = (r.tva && r.tva.schedule) ? r.tva.schedule : [];
+    return `
+        <div class="card section" style="margin-top:16px">
+            <div class="card-title">Plan de financement</div>
+            <div class="grid-2" style="margin-top:8px">
+                <table class="data-table">
+                    <thead><tr><th>Emplois</th><th class="number">Montant</th></tr></thead>
+                    <tbody>
+                        <tr><td>Coût du projet (hors TVA)</td><td class="number">${Financial.formatCurrency(p.coutHT)}</td></tr>
+                        <tr><td>TVA préfinancée</td><td class="number">${Financial.formatCurrency(p.tva)}</td></tr>
+                        <tr style="font-weight:700"><td>Total emplois (TTC)</td><td class="number">${Financial.formatCurrency(p.coutTTC)}</td></tr>
+                    </tbody>
+                </table>
+                <table class="data-table">
+                    <thead><tr><th>Ressources</th><th class="number">Montant</th></tr></thead>
+                    <tbody>
+                        <tr><td>Crédit principal</td><td class="number">${Financial.formatCurrency(p.creditPrincipal)}</td></tr>
+                        <tr><td>Crédit relais TVA</td><td class="number">${Financial.formatCurrency(p.relaisTVA)}</td></tr>
+                        <tr><td>Fonds propres</td><td class="number">${Financial.formatCurrency(p.fondsPropres)}</td></tr>
+                        <tr style="font-weight:700"><td>Total ressources</td><td class="number">${Financial.formatCurrency(totalRessources)}</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            ${sched.length ? `
+            <div style="margin-top:16px">
+                <div class="card-title" style="font-size:0.9rem">Échéancier du crédit relais de TVA</div>
+                <table class="data-table" style="margin-top:8px">
+                    <thead><tr><th>Période</th><th class="number">Échéance</th><th class="number">Intérêts</th><th class="number">Capital</th><th class="number">CRD</th></tr></thead>
+                    <tbody>
+                        ${sched.map((row, i) => `
+                        <tr>
+                            <td class="number">${i + 1}</td>
+                            <td class="number">${Financial.formatCurrency(row.payment)}</td>
+                            <td class="number">${Financial.formatCurrency(row.interest)}</td>
+                            <td class="number">${Financial.formatCurrency(row.principal)}</td>
+                            <td class="number">${Financial.formatCurrency(row.balance)}</td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>` : ''}
+        </div>
+    `;
+}
 
 function renderResults() {
     const container = document.getElementById('immo-results');
@@ -482,7 +675,24 @@ function renderResults() {
                 <div class="result-label">TAEG</div>
                 <div class="result-value">${r.taeg.toFixed(2)} %</div>
             </div>` : ''}
+            ${r.tva ? `
+            <div class="result-item">
+                <div class="result-label">TVA préfinancée</div>
+                <div class="result-value">${Financial.formatCurrency(r.tva.amount)}</div>
+                <div class="result-sub">relais ${r.tva.duration} mois</div>
+            </div>
+            <div class="result-item">
+                <div class="result-label">Coût de portage TVA</div>
+                <div class="result-value">${Financial.formatCurrency(r.tva.carryingCost)}</div>
+                <div class="result-sub">${r.tva.carryingCostPct.toFixed(2)} % de la TVA</div>
+            </div>
+            <div class="result-item">
+                <div class="result-label">Financement total</div>
+                <div class="result-value">${Financial.formatCurrency(r.totalFinancing)}</div>
+                <div class="result-sub">principal + relais TVA</div>
+            </div>` : ''}
         </div>
+        ${r.financingPlan ? renderFinancingPlanHTML(r) : ''}
     `;
 
     // Sensitivity table
@@ -604,6 +814,10 @@ function generateMemo() {
             <div class="memo-section">
                 <p><strong>Prêt :</strong> ${Financial.formatCurrency(state.loanAmount)} à ${state.annualRate}% sur ${state.durationMonths} mois | <strong>Mensualité :</strong> ${Financial.formatCurrency(r.monthlyPayment)} | <strong>TAEG :</strong> ${r.taeg != null ? r.taeg.toFixed(2) + '%' : 'N/A'}</p>
             </div>
+            ${r.tva ? `
+            <div class="memo-section">
+                <p><strong>Crédit relais de TVA :</strong> ${Financial.formatCurrency(r.tva.amount)} préfinancés sur ${r.tva.duration} mois ${r.tva.interestMode === 'capitalized' ? '(intérêts capitalisés in fine)' : '(intérêts servis périodiquement)'} | <strong>Coût de portage :</strong> ${Financial.formatCurrency(r.tva.carryingCost)} soit ${r.tva.carryingCostPct.toFixed(2)} % de la TVA. Remboursé à la récupération de la TVA, hors DSCR.</p>
+            </div>` : ''}
             <div class="memo-section">
                 <table class="data-table" style="max-width:400px;font-size:0.85rem">
                     <tbody>
@@ -671,6 +885,27 @@ function exportPdf() {
     ratioItems.push({ label: 'Service de dette annuel', value: Financial.formatCurrency(r.annualDebtService) });
     sections.push({ type: 'keyvalue', items: ratioItems });
 
+    if (r.tva) {
+        sections.push({ type: 'separator' });
+        sections.push({ type: 'keyvalue', items: [
+            { label: 'TVA prefinancee', value: Financial.formatCurrency(r.tva.amount) },
+            { label: 'Duree du relais', value: r.tva.duration + ' mois' },
+            { label: 'Cout de portage TVA', value: Financial.formatCurrency(r.tva.carryingCost) + ' (' + r.tva.carryingCostPct.toFixed(2) + ' %)' },
+            { label: 'Financement total', value: Financial.formatCurrency(r.totalFinancing) }
+        ]});
+        if (r.financingPlan) {
+            const p = r.financingPlan;
+            sections.push({ type: 'table', headers: ['Plan de financement', 'Montant'], rows: [
+                ['Cout du projet (hors TVA)', Financial.formatCurrency(p.coutHT)],
+                ['TVA prefinancee', Financial.formatCurrency(p.tva)],
+                ['Cout total (TTC)', Financial.formatCurrency(p.coutTTC)],
+                ['Credit principal', Financial.formatCurrency(p.creditPrincipal)],
+                ['Credit relais TVA', Financial.formatCurrency(p.relaisTVA)],
+                ['Fonds propres', Financial.formatCurrency(p.fondsPropres)]
+            ]});
+        }
+    }
+
     if (r.sensitivity.length > 0) {
         sections.push({ type: 'separator' });
         sections.push({ type: 'table', headers: ['Taux capi', 'Valorisation', 'LTV'], rows: r.sensitivity.map(s => [s.capRate.toFixed(1) + ' %', Financial.formatCurrency(s.valuation), s.ltv.toFixed(1) + ' %']) });
@@ -713,6 +948,26 @@ function exportExcel() {
         ...(r.valuation !== null ? [['Valorisation', Math.round(r.valuation)]] : []),
         ['Service dette annuel', Math.round(r.annualDebtService)]
     );
+    if (r.tva) {
+        summaryData.push([], ['CREDIT RELAIS TVA'],
+            ['TVA préfinancée', Math.round(r.tva.amount)],
+            ['Récupération (mois)', r.tva.duration],
+            ['Coût de portage', Math.round(r.tva.carryingCost)],
+            ['% de la TVA', r.tva.carryingCostPct.toFixed(2) + '%'],
+            ['Financement total', Math.round(r.totalFinancing)]
+        );
+        if (r.financingPlan) {
+            const p = r.financingPlan;
+            summaryData.push([], ['PLAN DE FINANCEMENT'],
+                ['Coût du projet (hors TVA)', Math.round(p.coutHT)],
+                ['TVA', Math.round(p.tva)],
+                ['Coût total (TTC)', Math.round(p.coutTTC)],
+                ['Crédit principal', Math.round(p.creditPrincipal)],
+                ['Crédit relais TVA', Math.round(p.relaisTVA)],
+                ['Fonds propres', Math.round(p.fondsPropres)]
+            );
+        }
+    }
     const ws1 = XLSX.utils.aoa_to_sheet(summaryData);
     ws1['!cols'] = [{ wch: 22 }, { wch: 20 }];
     XLSX.utils.book_append_sheet(wb, ws1, 'Résumé');
@@ -845,9 +1100,17 @@ export const ImmobilierModule = {
 
         // ── Delegated input/change ──
         const handleFieldUpdate = e => {
+            // Cases d'assiette TVA (booléens) — re-render pour rafraîchir le montant affiché
+            const tvaBase = e.target.dataset.tvabase;
+            if (tvaBase) {
+                state[tvaBase] = e.target.checked;
+                formContainer.innerHTML = getFormHTML();
+                if (hasCalculated) { clearTimeout(recalcTimer); recalcTimer = setTimeout(runCalculation, 300); }
+                return;
+            }
             const field = e.target.dataset.field;
             if (!field) return;
-            const isText = field === 'propertyName' || field === 'propertyAddress' || field === 'amortType' || field === 'frequency';
+            const isText = field === 'propertyName' || field === 'propertyAddress' || field === 'amortType' || field === 'frequency' || field === 'tvaRelaisFrequency' || field === 'tvaRelaisInterestMode';
             state[field] = isText ? e.target.value : (parseFloat(e.target.value) || 0);
 
             if (hasCalculated) {
@@ -882,6 +1145,24 @@ export const ImmobilierModule = {
             // Auto notaire
             if (e.target.closest('#immo-auto-notaire')) {
                 state.fraisNotaire = Math.round(state.acquisitionCost * 0.075);
+                formContainer.innerHTML = getFormHTML();
+                if (hasCalculated) { clearTimeout(recalcTimer); recalcTimer = setTimeout(runCalculation, 300); }
+                return;
+            }
+
+            // Crédit relais TVA : activation
+            const tvaEnBtn = e.target.closest('[data-tvaenabled]');
+            if (tvaEnBtn) {
+                state.tvaEnabled = tvaEnBtn.dataset.tvaenabled === 'on';
+                formContainer.innerHTML = getFormHTML();
+                if (hasCalculated) { clearTimeout(recalcTimer); recalcTimer = setTimeout(runCalculation, 300); }
+                return;
+            }
+
+            // Crédit relais TVA : mode d'assiette (auto / manuel)
+            const tvaModeBtn = e.target.closest('[data-tvamode]');
+            if (tvaModeBtn) {
+                state.tvaMode = tvaModeBtn.dataset.tvamode;
                 formContainer.innerHTML = getFormHTML();
                 if (hasCalculated) { clearTimeout(recalcTimer); recalcTimer = setTimeout(runCalculation, 300); }
                 return;
