@@ -7,6 +7,7 @@ import { Financial } from '../utils/financial.js';
 import { Charts } from '../utils/charts.js';
 import { Export } from '../utils/export.js';
 import { Storage } from '../utils/storage.js';
+import { escapeHtml } from '../utils/sanitize.js';
 
 const MAX_LOANS = 5;
 
@@ -147,7 +148,7 @@ function renderLoanCards() {
     return loans.map((loan, i) => `
         <div class="card comparison-slot filled" data-index="${i}">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-                <input type="text" class="form-input" value="${loan.name}" data-index="${i}" data-field="name" style="font-weight:700;max-width:200px;border:none;padding:4px 0;background:transparent;font-size:1rem;color:var(--text-primary)">
+                <input type="text" class="form-input" value="${escapeHtml(loan.name)}" data-index="${i}" data-field="name" style="font-weight:700;max-width:200px;border:none;padding:4px 0;background:transparent;font-size:1rem;color:var(--text-primary)">
                 <button class="btn btn-ghost btn-sm remove-loan" data-index="${i}" title="Supprimer">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                 </button>
@@ -333,7 +334,7 @@ function renderComparison() {
                     <thead>
                         <tr>
                             <th>Critère</th>
-                            ${results.map(r => `<th style="text-align:center">${r.name}</th>`).join('')}
+                            ${results.map(r => `<th style="text-align:center">${escapeHtml(r.name)}</th>`).join('')}
                         </tr>
                     </thead>
                     <tbody>
@@ -389,7 +390,7 @@ function renderComparison() {
                 </table>
             </div>
             ${winner ? `<div style="margin-top:16px;padding:12px 16px;background:var(--success-bg);border-radius:var(--radius-md);font-size:0.9rem">
-                <strong style="color:var(--success)">Recommandation :</strong> ${winner.name} offre le meilleur rapport global (score: ${winner.totalScore.toFixed(1)}/50)
+                <strong style="color:var(--success)">Recommandation :</strong> ${escapeHtml(winner.name)} offre le meilleur rapport global (score: ${winner.totalScore.toFixed(1)}/50)
             </div>` : ''}
         </div>
 

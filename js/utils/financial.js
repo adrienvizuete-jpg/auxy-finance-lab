@@ -18,6 +18,7 @@ export const Financial = {
      * @returns {number} Periodic payment (positive)
      */
     pmt(rate, nper, pv, fv = 0) {
+        if (!isFinite(nper) || nper <= 0) return 0; // garde-fou : durée invalide → pas de division par zéro
         if (rate === 0) return -(pv + fv) / nper;
         const q = Math.pow(1 + rate, nper);
         return -(pv * q * rate + fv * rate) / (q - 1);
@@ -137,6 +138,24 @@ export const Financial = {
         return this._periodLabels[frequency] || 'Mois';
     },
 
+    /**
+     * Garde-fou commun : true si les paramètres permettent un échéancier.
+     * Évite Infinity/NaN silencieux sur durée ou principal invalides.
+     */
+    _validLoanParams(principal, durationMonths) {
+        return isFinite(principal) && principal > 0 && isFinite(durationMonths) && durationMonths >= 1;
+    },
+
+    /** Résultat vide normalisé renvoyé quand les paramètres sont invalides */
+    _emptyScheduleResult(frequency = 'monthly') {
+        return {
+            periodicPayment: 0, monthlyPayment: 0, monthlyPaymentExInsurance: 0,
+            firstPayment: 0, lastPayment: 0, averagePayment: 0, finalPayment: 0,
+            totalInterest: 0, totalInsurance: 0, totalCost: 0, totalPayment: 0,
+            taeg: null, frequency, schedule: [], invalid: true
+        };
+    },
+
     // =============================================
     // AMORTIZATION SCHEDULES
     // =============================================
@@ -147,6 +166,7 @@ export const Financial = {
      * Supports deferral (partial: interest-only, total: capitalized interest)
      */
     amortissableConstant({ principal, annualRate, durationMonths, insuranceMonthly = 0, insuranceRate = 0, insuranceMode = 'ci', fees = 0, frequency = 'monthly', deferralMonths = 0, deferralType = 'partial' }) {
+        if (!this._validLoanParams(principal, durationMonths)) return this._emptyScheduleResult(frequency);
         const ppy = this.getPeriodsPerYear(frequency);
         const periodicRate = annualRate / 100 / ppy;
         const totalPeriods = Math.round(durationMonths / (12 / ppy));
@@ -238,6 +258,7 @@ export const Financial = {
      * Supports frequency + deferral
      */
     amortissableDegressif({ principal, annualRate, durationMonths, insuranceMonthly = 0, insuranceRate = 0, insuranceMode = 'ci', fees = 0, frequency = 'monthly', deferralMonths = 0, deferralType = 'partial' }) {
+        if (!this._validLoanParams(principal, durationMonths)) return this._emptyScheduleResult(frequency);
         const ppy = this.getPeriodsPerYear(frequency);
         const periodicRate = annualRate / 100 / ppy;
         const totalPeriods = Math.round(durationMonths / (12 / ppy));
@@ -330,6 +351,7 @@ export const Financial = {
      * Supports frequency
      */
     inFine({ principal, annualRate, durationMonths, insuranceMonthly = 0, insuranceRate = 0, insuranceMode = 'ci', fees = 0, frequency = 'monthly' }) {
+        if (!this._validLoanParams(principal, durationMonths)) return this._emptyScheduleResult(frequency);
         const ppy = this.getPeriodsPerYear(frequency);
         const periodicRate = annualRate / 100 / ppy;
         const totalPeriods = Math.round(durationMonths / (12 / ppy));

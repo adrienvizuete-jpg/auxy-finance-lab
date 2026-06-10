@@ -6,6 +6,7 @@ import { Financial } from '../utils/financial.js';
 import { Storage } from '../utils/storage.js';
 import { Export } from '../utils/export.js';
 import { PARAM_LABELS, RESULT_LABELS, TYPE_LABELS, t, formatValue } from '../utils/i18n.js';
+import { escapeHtml } from '../utils/sanitize.js';
 
 function renderHistory() {
     const history = Storage.getHistory();
@@ -46,8 +47,8 @@ function renderHistory() {
                             return `
                                 <tr>
                                     <td style="white-space:nowrap">${new Date(s.date).toLocaleDateString('fr-FR')} ${new Date(s.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</td>
-                                    <td><span class="badge badge-blue">${TYPE_LABELS[s.type] || s.type}</span></td>
-                                    <td style="font-weight:600">${s.name || '\u2014'}</td>
+                                    <td><span class="badge badge-blue">${TYPE_LABELS[s.type] || escapeHtml(s.type)}</span></td>
+                                    <td style="font-weight:600">${escapeHtml(s.name) || '\u2014'}</td>
                                     <td class="number">${Financial.formatCurrency(amount)}</td>
                                     <td>
                                         <div class="btn-group" style="justify-content:center">
@@ -66,7 +67,7 @@ function renderHistory() {
                                         </div>
                                     </td>
                                 </tr>
-                                ${s.notes ? `<tr><td colspan="5" style="padding:4px 16px 12px;font-size:0.82rem;color:var(--text-muted);border-bottom:1px solid var(--border-color)"><em>Note : ${s.notes}</em></td></tr>` : ''}
+                                ${s.notes ? `<tr><td colspan="5" style="padding:4px 16px 12px;font-size:0.82rem;color:var(--text-muted);border-bottom:1px solid var(--border-color)"><em>Note : ${escapeHtml(s.notes)}</em></td></tr>` : ''}
                             `;
                         }).join('')}
                     </tbody>
@@ -84,15 +85,15 @@ function showSimDetails(id) {
     const body = document.getElementById('modal-body');
 
     let html = `
-        <h2 style="margin-bottom:4px">${sim.name || 'Simulation'}</h2>
+        <h2 style="margin-bottom:4px">${escapeHtml(sim.name) || 'Simulation'}</h2>
         <p style="color:var(--text-muted);margin-bottom:24px;font-size:0.9rem">
-            ${TYPE_LABELS[sim.type] || sim.type} &bull; ${new Date(sim.date).toLocaleDateString('fr-FR')} \u00e0 ${new Date(sim.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+            ${TYPE_LABELS[sim.type] || escapeHtml(sim.type)} &bull; ${new Date(sim.date).toLocaleDateString('fr-FR')} \u00e0 ${new Date(sim.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
         </p>
     `;
 
     // Notes
     if (sim.notes) {
-        html += `<div style="background:var(--accent-100);padding:12px 16px;border-radius:var(--radius-md);margin-bottom:20px;font-size:0.9rem;color:var(--accent-600)"><strong>Note :</strong> ${sim.notes}</div>`;
+        html += `<div style="background:var(--accent-100);padding:12px 16px;border-radius:var(--radius-md);margin-bottom:20px;font-size:0.9rem;color:var(--accent-600)"><strong>Note :</strong> ${escapeHtml(sim.notes)}</div>`;
     }
 
     // Param\u00e8tres
@@ -157,7 +158,8 @@ function reloadSimulation(id) {
     if (!sim) return;
 
     // Navigate to the appropriate page
-    const page = sim.type === 'structured' ? 'structured' : 'credit';
+    const PAGE_BY_TYPE = { structured: 'structured', covenants: 'covenants', debtprofile: 'debtprofile', immobilier: 'immobilier' };
+    const page = PAGE_BY_TYPE[sim.type] || 'credit';
     window.navigateTo?.(page);
 
     // Store params to be loaded after navigation

@@ -28,6 +28,8 @@ export const Storage = {
     },
 
     // Simulation history
+    // Retourne l'id, ou null si l'écriture a échoué (quota localStorage plein) —
+    // dans ce cas une purge des entrées les plus anciennes est tentée une fois.
     saveSimulation(simulation) {
         const history = this.getHistory();
         simulation.id = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
@@ -35,7 +37,11 @@ export const Storage = {
         history.unshift(simulation);
         // Keep last 100 simulations
         if (history.length > 100) history.length = 100;
-        this.set('history', history);
+        if (!this.set('history', history)) {
+            // Quota plein : on retente avec un historique réduit de moitié
+            history.length = Math.max(1, Math.floor(history.length / 2));
+            if (!this.set('history', history)) return null;
+        }
         return simulation.id;
     },
 
@@ -56,14 +62,14 @@ export const Storage = {
         this.set('history', []);
     },
 
-    // Benchmark saves
+    // Benchmark saves — retourne null si l'écriture a échoué (quota plein)
     saveBenchmark(benchmark) {
         const benchmarks = this.get('benchmarks', []);
         benchmark.id = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
         benchmark.date = new Date().toISOString();
         benchmarks.unshift(benchmark);
         if (benchmarks.length > 50) benchmarks.length = 50;
-        this.set('benchmarks', benchmarks);
+        if (!this.set('benchmarks', benchmarks)) return null;
         return benchmark.id;
     },
 
