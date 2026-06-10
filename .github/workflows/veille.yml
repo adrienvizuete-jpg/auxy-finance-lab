@@ -22,6 +22,8 @@ jobs:
   veille:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write  # push de data/rates.json
 
     steps:
       - uses: actions/checkout@v4
@@ -48,6 +50,27 @@ jobs:
           else
             python -m veille.main run
           fi
+
+      # Le JSON est utile même si l'envoi du mail a échoué → always().
+      # Le script sort en code 1 si aucun taux n'est récupéré → continue-on-error
+      # pour ne pas faire échouer le job, et le commit est conditionné à l'outcome.
+      - name: Export rates.json
+        id: export_rates
+        if: always()
+        continue-on-error: true
+        env:
+          BDF_API_KEY: ${{ secrets.BDF_API_KEY }}
+          PYTHONPATH: ${{ github.workspace }}
+        run: python -m veille.export_rates
+
+      - name: Commit rates.json
+        if: always() && steps.export_rates.outcome == 'success'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/rates.json
+          git diff --staged --quiet || git commit -m "chore(data): rates.json $(date -u +%F) [skip ci]"
+          git push
 
       - name: Notify on failure
         if: failure()
