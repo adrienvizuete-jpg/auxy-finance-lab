@@ -8,6 +8,7 @@ import math
 import os
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from datetime import date, datetime, timezone
 
 import httpx
 import yfinance as yf
@@ -82,13 +83,27 @@ async def _fetch_ecb_json(session: httpx.AsyncClient, flow: str, key: str, name:
 
 
 # ---------------------------------------------------------------------------
-# Bundesbank API — pour Bund Allemagne 10Y (quotidien)
+# Bundesbank API — Bund Allemagne 10Y et Euribor (quotidien, sans clé)
 # ---------------------------------------------------------------------------
 
+BUNDESBANK_API_URL = "https://api.statistiken.bundesbank.de/rest/data"
+
 BUNDESBANK_BUND_URL = (
-    "https://api.statistiken.bundesbank.de/rest/data/BBSIS/"
+    f"{BUNDESBANK_API_URL}/BBSIS/"
     "D.I.ZAR.ZI.EUR.S1311.B.A604.R10XX.R.A.A._Z._Z.A"
 )
+
+# Fixings Euribor quotidiens publiés par la Bundesbank (dataset BBIG1).
+# Le portail ECB ne sert plus ces séries (restriction de licence EMMI) :
+# 404 en fréquence B/D et séries vides en M.
+BUNDESBANK_EURIBOR_SERIES: dict[str, str] = {
+    "Euribor 3M": "BBIG1/D.D0.EUR.MMKT.EURIBOR.M03.BID._Z",
+    "Euribor 12M": "BBIG1/D.D0.EUR.MMKT.EURIBOR.M12.BID._Z",
+}
+
+# Au-delà de ce délai sans nouvelle observation, la série Euribor est
+# considérée discontinuée (précédent : retrait ECB) et on passe au fallback.
+EURIBOR_MAX_AGE_DAYS = 15
 
 # Namespace SDMX-ML de la Bundesbank
 _BBK_NS = {
@@ -97,14 +112,47 @@ _BBK_NS = {
 }
 
 
-async def _fetch_bundesbank_yield() -> RateData:
-    """Récupère le rendement Bund 10Y quotidien depuis l'API Bundesbank (XML)."""
-    name = "Bund Allemagne 10Y"
+def _rate_from_observations(
+    obs: list[tuple[str, float]], name: str, max_age_days: int | None = None
+) -> RateData:
+    """Construit un RateData depuis des observations datées [(date ISO, valeur)].
+
+    Si max_age_days est fourni et que la dernière observation est plus
+    ancienne, la source est considérée discontinuée et value=None est renvoyé
+    pour laisser la main au fallback (plutôt que servir un taux figé).
+    """
+    if not obs:
+        logger.warning("%s : pas d'observations", name)
+        return RateData(name=name, value=None, change_bps=None)
+
+    last_date, last_val = obs[-1]
+    if max_age_days is not None:
+        try:
+            age_days = (datetime.now(timezone.utc).date() - date.fromisoformat(last_date[:10])).days
+        except ValueError:
+            age_days = None
+        if age_days is not None and age_days > max_age_days:
+            logger.warning(
+                "%s : dernière observation du %s trop ancienne (> %d j), source ignorée",
+                name, last_date, max_age_days,
+            )
+            return RateData(name=name, value=None, change_bps=None)
+
+    if len(obs) >= 2:
+        change_bps = round((last_val - obs[-2][1]) * 100, 1)
+        return RateData(name=name, value=round(last_val, 3), change_bps=change_bps)
+    return RateData(name=name, value=round(last_val, 3), change_bps=None)
+
+
+async def _fetch_bundesbank_series(
+    url: str, name: str, last_n: int = 5, max_age_days: int | None = None
+) -> RateData:
+    """Récupère une série quotidienne depuis l'API Bundesbank (XML SDMX)."""
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                BUNDESBANK_BUND_URL,
-                params={"lastNObservations": "5", "detail": "dataonly"},
+                url,
+                params={"lastNObservations": str(last_n), "detail": "dataonly"},
                 headers={
                     "Accept": "application/xml",
                     "User-Agent": "AuxyVeille/1.0",
@@ -113,29 +161,76 @@ async def _fetch_bundesbank_yield() -> RateData:
             )
             resp.raise_for_status()
 
-            root = ET.fromstring(resp.text)
+        root = ET.fromstring(resp.text)
 
-            # Extraire les observations du XML SDMX générique
-            obs_elements = root.findall(".//gen:Obs", _BBK_NS)
-            values: list[float] = []
-            for obs in obs_elements:
-                val_el = obs.find("gen:ObsValue", _BBK_NS)
-                if val_el is not None and val_el.get("value"):
-                    try:
-                        values.append(float(val_el.get("value")))
-                    except ValueError:
-                        continue
+        # Extraire les observations datées du XML SDMX générique.
+        # Week-ends et jours fériés : Obs sans ObsValue (OBS_STATUS="K").
+        obs: list[tuple[str, float]] = []
+        for obs_el in root.findall(".//gen:Obs", _BBK_NS):
+            val_el = obs_el.find("gen:ObsValue", _BBK_NS)
+            if val_el is None or not val_el.get("value"):
+                continue
+            try:
+                value = float(val_el.get("value"))
+            except ValueError:
+                continue
+            dim_el = obs_el.find("gen:ObsDimension", _BBK_NS)
+            period = dim_el.get("value", "") if dim_el is not None else ""
+            obs.append((period, value))
 
-            if len(values) >= 2:
-                last_val = values[-1]
-                prev_val = values[-2]
-                change_bps = round((last_val - prev_val) * 100, 1)
-                return RateData(name=name, value=round(last_val, 3), change_bps=change_bps)
-            elif len(values) == 1:
-                return RateData(name=name, value=round(values[0], 3), change_bps=None)
+        obs.sort(key=lambda o: o[0])
+        return _rate_from_observations(obs, name, max_age_days)
 
     except Exception:
-        logger.warning("Erreur Bundesbank Bund 10Y", exc_info=True)
+        logger.warning("Erreur Bundesbank %s", name, exc_info=True)
+
+    return RateData(name=name, value=None, change_bps=None)
+
+
+async def _fetch_bundesbank_yield() -> RateData:
+    """Récupère le rendement Bund 10Y quotidien depuis l'API Bundesbank (XML)."""
+    return await _fetch_bundesbank_series(BUNDESBANK_BUND_URL, "Bund Allemagne 10Y")
+
+
+# ---------------------------------------------------------------------------
+# DBnomics — miroir JSON sans clé des séries Bundesbank (fallback Euribor)
+# ---------------------------------------------------------------------------
+
+DBNOMICS_BUBA_URL = "https://api.db.nomics.world/v22/series/BUBA"
+
+
+async def _fetch_dbnomics_euribor(session: httpx.AsyncClient, series: str, name: str) -> RateData:
+    """Récupère un fixing Euribor via DBnomics (mêmes codes série que la Bundesbank)."""
+    url = f"{DBNOMICS_BUBA_URL}/{series}"
+    try:
+        resp = await session.get(
+            url,
+            params={"observations": "1"},
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "AuxyVeille/1.0",
+            },
+            timeout=20.0,
+        )
+        resp.raise_for_status()
+        docs = resp.json().get("series", {}).get("docs", [])
+        if not docs:
+            logger.warning("DBnomics %s : série introuvable (%s)", name, series)
+            return RateData(name=name, value=None, change_bps=None)
+
+        # period/value : listes alignées couvrant toute la profondeur de la
+        # série ; les jours non cotés valent "NA" (chaîne) → filtrés.
+        periods = docs[0].get("period") or []
+        values = docs[0].get("value") or []
+        obs = [
+            (str(p), float(v))
+            for p, v in zip(periods, values)
+            if isinstance(v, (int, float)) and not isinstance(v, bool)
+        ]
+        return _rate_from_observations(obs[-10:], name, EURIBOR_MAX_AGE_DAYS)
+
+    except Exception:
+        logger.warning("Erreur DBnomics %s (%s)", name, series, exc_info=True)
 
     return RateData(name=name, value=None, change_bps=None)
 
@@ -258,7 +353,52 @@ async def _fetch_yf_rate(symbol: str, name: str) -> RateData:
 # ---------------------------------------------------------------------------
 
 async def fetch_euribor() -> list[RateData]:
-    """Récupère les taux Euribor 3M et 12M depuis la BCE (JSON)."""
+    """Récupère les taux Euribor 3M et 12M.
+
+    Sources, dans l'ordre :
+    1. Bundesbank BBIG1 (fixings quotidiens, XML, sans clé) — le portail ECB
+       ne sert plus l'Euribor (restriction de licence EMMI) ;
+    2. DBnomics (miroir JSON des mêmes séries Bundesbank, sans clé), pour les
+       ténors encore manquants ;
+    3. API ECB historique, gardée en dernier recours.
+    """
+    # 1. Bundesbank — lastNObservations=10 pour couvrir week-ends et fériés
+    e3m, e12m = await asyncio.gather(
+        _fetch_bundesbank_series(
+            f"{BUNDESBANK_API_URL}/{BUNDESBANK_EURIBOR_SERIES['Euribor 3M']}",
+            "Euribor 3M", last_n=10, max_age_days=EURIBOR_MAX_AGE_DAYS,
+        ),
+        _fetch_bundesbank_series(
+            f"{BUNDESBANK_API_URL}/{BUNDESBANK_EURIBOR_SERIES['Euribor 12M']}",
+            "Euribor 12M", last_n=10, max_age_days=EURIBOR_MAX_AGE_DAYS,
+        ),
+    )
+    if e3m.value is not None and e12m.value is not None:
+        logger.info("Euribor via Bundesbank : 3M=%.3f%%, 12M=%.3f%%", e3m.value, e12m.value)
+        return [e3m, e12m]
+
+    # 2. DBnomics pour les ténors manquants
+    logger.info("Euribor incomplet via Bundesbank, tentative DBnomics")
+    async with httpx.AsyncClient() as session:
+        d3m, d12m = await asyncio.gather(
+            _fetch_dbnomics_euribor(session, BUNDESBANK_EURIBOR_SERIES["Euribor 3M"], "Euribor 3M"),
+            _fetch_dbnomics_euribor(session, BUNDESBANK_EURIBOR_SERIES["Euribor 12M"], "Euribor 12M"),
+        )
+    if e3m.value is None:
+        e3m = d3m
+    if e12m.value is None:
+        e12m = d12m
+    if e3m.value is not None or e12m.value is not None:
+        return [e3m, e12m]
+
+    # 3. Dernier recours : ancien chemin ECB
+    logger.warning("Euribor indisponible via Bundesbank et DBnomics, fallback ECB")
+    return await _fetch_euribor_ecb_legacy()
+
+
+async def _fetch_euribor_ecb_legacy() -> list[RateData]:
+    """Dernier recours : Euribor via l'API ECB (séries retirées du portail —
+    restriction de licence EMMI — mais conservées au cas où elles reviendraient)."""
     # Essayer plusieurs formats de clés SDMX (B=business daily, D=daily, M=monthly)
     key_templates = [
         ("B", "B.U2.EUR.RT.MM.EURIBOR3MD_.HSTA", "B.U2.EUR.RT.MM.EURIBOR1YD_.HSTA"),
