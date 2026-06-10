@@ -1,0 +1,28 @@
+# CI Auxy Finance Lab — tests du moteur financier (node:test natif, zéro dépendance)
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests-front:
+    name: Tests moteur financier
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Tests financial.js
+        run: node --test tests/*.test.mjs
+
+      - name: Compilation Python veille
+        run: python3 -m py_compile veille/*.py
