@@ -10,6 +10,8 @@ import { BenchmarkModule } from './modules/benchmark.js';
 import { CalculatorModule, StressTestModule } from './modules/tools.js';
 import { HistoryModule } from './modules/history.js';
 import { ImmobilierModule } from './modules/immobilier.js';
+import { CovenantsModule } from './modules/covenants.js';
+import { DebtProfileModule } from './modules/debtprofile.js';
 import { Storage } from './utils/storage.js';
 
 // =============================================
@@ -22,6 +24,8 @@ const modules = {
     structured: StructuredModule,
     benchmark: BenchmarkModule,
     immobilier: ImmobilierModule,
+    covenants: CovenantsModule,
+    debtprofile: DebtProfileModule,
     calculator: CalculatorModule,
     stress: StressTestModule,
     history: HistoryModule
@@ -185,9 +189,18 @@ function init() {
     initMobileNav();
 
     // Handle browser back/forward
+    // Le hash peut contenir un payload de partage (#credit?s=...) : la page est avant le '?'
     window.addEventListener('popstate', () => {
-        const hash = location.hash.slice(1) || 'dashboard';
+        const hash = (location.hash.slice(1) || 'dashboard').split('?')[0];
         navigateTo(hash);
+    });
+
+    // Lien de partage collé dans un onglet où l'app est déjà chargée :
+    // le changement de hash seul ne recharge pas le document → on re-render
+    // le module, dont l'init() lit le payload (?s=...).
+    window.addEventListener('hashchange', () => {
+        if (!location.hash.includes('?s=')) return;
+        navigateTo(location.hash.slice(1).split('?')[0]);
     });
 
     // Keyboard shortcut: Ctrl/Cmd + K for quick search (future feature)
@@ -198,9 +211,14 @@ function init() {
         }
     });
 
-    // Initial page from hash
-    const initialPage = location.hash.slice(1) || 'dashboard';
+    // Initial page from hash (la partie avant '?' — un payload de partage peut suivre)
+    const initialPage = (location.hash.slice(1) || 'dashboard').split('?')[0];
     navigateTo(initialPage);
+
+    // Service worker (PWA) — uniquement servi en http(s), ignoré en file://
+    if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+        navigator.serviceWorker.register('sw.js').catch(() => { /* PWA optionnelle */ });
+    }
 
     console.log('%c Auxy Partners Finance Lab %c v1.0.0 ', 'background:#1a3548;color:#e8973f;padding:4px 8px;border-radius:4px 0 0 4px;font-weight:bold', 'background:#e8973f;color:#1a3548;padding:4px 8px;border-radius:0 4px 4px 0;font-weight:bold');
 }

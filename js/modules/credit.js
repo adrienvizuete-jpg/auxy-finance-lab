@@ -8,6 +8,9 @@ import { Charts } from '../utils/charts.js';
 import { Export } from '../utils/export.js';
 import { Storage } from '../utils/storage.js';
 import { PARAM_LABELS, RESULT_LABELS, t, formatValue } from '../utils/i18n.js';
+import { escapeHtml } from '../utils/sanitize.js';
+import { Share } from '../utils/share.js';
+import { Market } from '../utils/market.js';
 
 const CREDIT_TYPES = [
     { id: 'constant', label: 'Amortissable Constant', desc: 'Mensualités fixes' },
@@ -110,7 +113,7 @@ function renderTranchingRows() {
     const freq = t => t.frequency || 'monthly';
     return tranchingTranches.map((t, i) => `
         <tr data-index="${i}">
-            <td><input type="text" class="form-input form-input-sm" value="${t.name}" data-field="name" style="min-width:100px"></td>
+            <td><input type="text" class="form-input form-input-sm" value="${escapeHtml(t.name)}" data-field="name" style="min-width:100px"></td>
             <td><input type="number" class="form-input form-input-sm" value="${t.amount}" data-field="amount" min="0" step="1"></td>
             <td><input type="number" class="form-input form-input-sm" value="${t.rate}" data-field="rate" min="0" max="50" step="0.25" style="width:80px"></td>
             <td><input type="number" class="form-input form-input-sm" value="${t.duration}" data-field="duration" min="1" max="720" step="1" style="width:80px"></td>
@@ -562,6 +565,14 @@ function getFormHTML(type) {
     }
 }
 
+// Affichage TAEG : valeur, ou « n.c. » expliqué quand l'IRR ne converge pas
+function taegItem(result) {
+    if (result.taeg != null) {
+        return `<div class="result-item"><div class="result-label">TAEG</div><div class="result-value">${result.taeg.toFixed(2)} %</div></div>`;
+    }
+    return `<div class="result-item"><div class="result-label">TAEG</div><div class="result-value" title="TAEG non calculable : les flux de cette simulation n'admettent pas de taux actuariel unique" style="color:var(--text-muted)">n.c.</div></div>`;
+}
+
 function getResultsHTML(type, result) {
     const f = Financial.formatCurrency;
     const p = Financial.formatPercent;
@@ -600,7 +611,7 @@ function getResultsHTML(type, result) {
                         <div class="result-value">${f(result.totalInsurance)}</div>
                     </div>
                     ${deferralInfo}
-                    ${result.taeg != null ? `<div class="result-item"><div class="result-label">TAEG</div><div class="result-value">${result.taeg.toFixed(2)} %</div></div>` : ''}
+                    ${taegItem(result)}
                 </div>`;
 
         case 'degressif': {
@@ -632,7 +643,7 @@ function getResultsHTML(type, result) {
                         <div class="result-value">${f(result.totalCost)}</div>
                     </div>
                     ${deferralInfo}
-                    ${result.taeg != null ? `<div class="result-item"><div class="result-label">TAEG</div><div class="result-value">${result.taeg.toFixed(2)} %</div></div>` : ''}
+                    ${taegItem(result)}
                 </div>`;
         }
 
@@ -659,7 +670,7 @@ function getResultsHTML(type, result) {
                         <div class="result-label">Coût total</div>
                         <div class="result-value">${f(result.totalCost)}</div>
                     </div>
-                    ${result.taeg != null ? `<div class="result-item"><div class="result-label">TAEG</div><div class="result-value">${result.taeg.toFixed(2)} %</div></div>` : ''}
+                    ${taegItem(result)}
                 </div>`;
 
         case 'creditbail':
@@ -685,7 +696,7 @@ function getResultsHTML(type, result) {
                         <div class="result-label">Coût total</div>
                         <div class="result-value">${f(result.totalCost)}</div>
                     </div>
-                    ${result.taeg != null ? `<div class="result-item"><div class="result-label">TAEG</div><div class="result-value">${result.taeg.toFixed(2)} %</div></div>` : ''}
+                    ${taegItem(result)}
                 </div>`;
 
         case 'revolving':
@@ -747,7 +758,7 @@ function getResultsHTML(type, result) {
                         <div class="result-label">LTV</div>
                         <div class="result-value">${p(result.ltv)}</div>
                     </div>
-                    ${result.taeg != null ? `<div class="result-item"><div class="result-label">TAEG</div><div class="result-value">${result.taeg.toFixed(2)} %</div></div>` : ''}
+                    ${taegItem(result)}
                 </div>`;
 
         case 'mezzanine':
@@ -782,7 +793,7 @@ function getResultsHTML(type, result) {
                         <div class="result-label">All-in cost</div>
                         <div class="result-value">${p(result.allInCost)}</div>
                     </div>
-                    ${result.taeg != null ? `<div class="result-item"><div class="result-label">TAEG</div><div class="result-value">${result.taeg.toFixed(2)} %</div></div>` : ''}
+                    ${taegItem(result)}
                 </div>`;
 
         case 'tranching': {
@@ -825,7 +836,7 @@ function getResultsHTML(type, result) {
                                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
                                     <span class="badge badge-blue">${tr.type === 'infine' ? 'In Fine' : 'Constant'}</span>
                                     <span class="badge" style="background:var(--bg-secondary);color:var(--text-secondary);font-size:0.7rem">${freqLabels[trFreq]}</span>
-                                    <strong>${tr.name}</strong>
+                                    <strong>${escapeHtml(tr.name)}</strong>
                                 </div>
                                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:0.85rem">
                                     <div><span style="color:var(--text-muted)">Montant:</span> ${f(tr.amount)}</div>
@@ -843,7 +854,7 @@ function getResultsHTML(type, result) {
     }
 }
 
-function runSimulation() {
+function runSimulation({ scroll = true } = {}) {
     // Validate first
     if (!validateForm()) {
         window.showToast?.('Veuillez corriger les champs en erreur', 'error');
@@ -964,7 +975,7 @@ function runSimulation() {
         Charts.balanceEvolution('chart-balance', result.schedule);
     }
 
-    // Cost breakdown
+    // Cost breakdown — masqué s'il n'y a qu'une seule composante (donut mono-segment sans information)
     const breakdown = [];
     if (result.totalInterest) breakdown.push({ label: 'Intérêts', value: result.totalInterest });
     if (result.totalInsurance) breakdown.push({ label: 'Assurance', value: result.totalInsurance });
@@ -973,8 +984,12 @@ function runSimulation() {
     if (result.equityKickerValue) breakdown.push({ label: 'Equity Kicker', value: result.equityKickerValue });
     if (params.fees) breakdown.push({ label: 'Frais', value: params.fees });
 
-    if (breakdown.length > 0) {
+    const costCard = document.getElementById('cost-breakdown-card');
+    if (breakdown.length >= 2) {
+        costCard?.classList.remove('hidden');
         Charts.costBreakdown('chart-cost', breakdown);
+    } else {
+        costCard?.classList.add('hidden');
     }
 
     // Show schedule table
@@ -982,6 +997,11 @@ function runSimulation() {
 
     // Show sections
     document.querySelectorAll('.credit-output').forEach(el => el.classList.remove('hidden'));
+
+    // Amène les résultats à l'écran (les KPI sont sous la ligne de flottaison)
+    if (scroll) {
+        document.getElementById('credit-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
 }
 
 function renderScheduleTable(schedule) {
@@ -1173,7 +1193,7 @@ function saveSimulation() {
         const name = document.getElementById('save-sim-name')?.value || defaultName;
         const notes = document.getElementById('save-sim-notes')?.value || '';
 
-        Storage.saveSimulation({
+        const id = Storage.saveSimulation({
             ...lastResult,
             name,
             notes,
@@ -1181,7 +1201,58 @@ function saveSimulation() {
         });
 
         modal.classList.add('hidden');
-        window.showToast?.('Simulation sauvegardée', 'success');
+        if (id) {
+            window.showToast?.('Simulation sauvegardée', 'success');
+        } else {
+            window.showToast?.('Échec de la sauvegarde : stockage local plein', 'error');
+        }
+    });
+}
+
+// ── Partage par URL ──
+function shareSimulation() {
+    if (!lastResult) {
+        window.showToast?.("Lancez d'abord une simulation", 'warning');
+        return;
+    }
+    Share.copyLink('credit', { type: currentType, params: lastResult.params, autorun: true });
+}
+
+// ── Taux de marché (hint cliquable sous le champ taux) ──
+async function setupRateHint() {
+    const rateInput = document.getElementById('cr-rate');
+    if (!rateInput) return;
+    const group = rateInput.closest('.form-group');
+    if (!group || group.querySelector('.rate-hint')) return;
+
+    const data = await Market.getRates();
+    if (!data) return;
+    // Le formulaire a pu être re-rendu pendant le fetch
+    if (!document.contains(rateInput)) return;
+
+    const entries = [
+        ['euribor_3m', data.rates?.euribor_3m],
+        ['oat_10y', data.rates?.oat_10y]
+    ].filter(([, r]) => r && typeof r.value === 'number');
+    if (entries.length === 0) return;
+
+    const updated = Market.formatUpdatedAt(data);
+    const hint = document.createElement('div');
+    hint.className = 'rate-hint';
+    // Arrondi à 2 décimales : l'input taux a step="0.01", une 3e décimale
+    // déclencherait la validation HTML native et bloquerait le submit
+    hint.innerHTML = `Marché${updated ? ` (${updated})` : ''} : ` + entries.map(([key, r]) => {
+        const v = (Math.round(r.value * 100) / 100).toFixed(2);
+        return `<button type="button" class="rate-hint-value" data-rate="${v}" title="Utiliser ${v} %">${escapeHtml(r.label)} ${Financial.formatNumber(r.value, 2)} %</button>`;
+    }).join(' · ');
+    group.appendChild(hint);
+
+    hint.addEventListener('click', e => {
+        const btn = e.target.closest('[data-rate]');
+        if (!btn) return;
+        rateInput.value = btn.dataset.rate;
+        rateInput.dispatchEvent(new Event('input', { bubbles: true }));
+        window.showToast?.(`Taux ${btn.dataset.rate} % appliqué`, 'info');
     });
 }
 
@@ -1274,6 +1345,12 @@ function exportPdf() {
         }
     }
 
+    // Graphiques affichés à l'écran (décomposition + CRD)
+    if (lastResult.results.schedule?.[0]?.principal !== undefined) {
+        sections.push({ type: 'chart', canvasId: 'chart-amort', title: 'Décomposition des échéances' });
+        sections.push({ type: 'chart', canvasId: 'chart-balance', title: 'Capital restant dû' });
+    }
+
     if (lastResult.results.schedule) {
         const sched = lastResult.results.schedule;
         const first = sched[0];
@@ -1292,7 +1369,20 @@ function exportPdf() {
         });
     }
 
-    Export.toPdf(`Simulation ${typeLabel}`, sections, `simulation_${currentType}`);
+    const p = lastResult.params;
+    const coverItems = [
+        p.principal != null && { label: 'Montant', value: Financial.formatCurrency(p.principal) },
+        p.assetValue != null && { label: 'Valeur du bien', value: Financial.formatCurrency(p.assetValue) },
+        p.creditLine != null && { label: 'Ligne de crédit', value: Financial.formatCurrency(p.creditLine) },
+        p.bridgeAmount != null && { label: 'Montant du relais', value: Financial.formatCurrency(p.bridgeAmount) },
+        p.annualRate != null && { label: 'Taux annuel', value: `${p.annualRate} %` },
+        p.cashRate != null && { label: 'Taux cash', value: `${p.cashRate} %` },
+        p.durationMonths != null && { label: 'Durée', value: `${p.durationMonths} mois` }
+    ].filter(Boolean);
+
+    Export.toPdf(`Simulation ${typeLabel}`, sections, `simulation_${currentType}`, {
+        cover: { subtitle: 'Simulation de financement', items: coverItems }
+    });
 }
 
 function exportExcel() {
@@ -1521,6 +1611,10 @@ export const CreditModule = {
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg>
                             Sauvegarder
                         </button>
+                        <button type="button" class="btn btn-outline" id="btn-share-sim">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                            Partager
+                        </button>
                         <button type="button" class="btn btn-ghost" id="btn-reset-sim">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
                             Réinitialiser
@@ -1544,7 +1638,7 @@ export const CreditModule = {
                         <div class="chart-container"><canvas id="chart-balance"></canvas></div>
                     </div>
                 </div>
-                <div class="card section" style="max-width:500px; margin:0 auto;">
+                <div class="card section" id="cost-breakdown-card" style="max-width:500px; margin:0 auto;">
                     <div class="card-title" style="text-align:center;">Répartition des coûts</div>
                     <div class="chart-container" style="max-height:300px;"><canvas id="chart-cost"></canvas></div>
                 </div>
@@ -1594,6 +1688,7 @@ export const CreditModule = {
             setupLiveFormatting();
             setupInsuranceToggle();
             setupDeferralToggle();
+            setupRateHint();
             if (currentType === 'tranching') setupTranchingListeners();
         });
 
@@ -1606,6 +1701,9 @@ export const CreditModule = {
         // Save
         document.getElementById('btn-save-sim')?.addEventListener('click', saveSimulation);
 
+        // Share
+        document.getElementById('btn-share-sim')?.addEventListener('click', shareSimulation);
+
         // Reset
         document.getElementById('btn-reset-sim')?.addEventListener('click', resetForm);
 
@@ -1617,9 +1715,19 @@ export const CreditModule = {
         setupLiveFormatting();
         setupInsuranceToggle();
         setupDeferralToggle();
+        setupRateHint();
         if (currentType === 'tranching') setupTranchingListeners();
 
-        // Handle pending reload from history
-        setTimeout(() => loadPendingReload(), 100);
+        // Lien de partage (#credit?s=...) : restaure les paramètres et relance le calcul
+        const shared = Share.getPayload();
+        if (shared?.type && shared?.params) {
+            window._pendingReload = { type: shared.type, params: shared.params };
+        }
+
+        // Handle pending reload from history (ou lien partagé)
+        setTimeout(() => {
+            loadPendingReload();
+            if (shared?.autorun) runSimulation({ scroll: false });
+        }, 100);
     }
 };

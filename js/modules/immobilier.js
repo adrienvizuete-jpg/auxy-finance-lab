@@ -8,6 +8,7 @@ import { Financial } from '../utils/financial.js';
 import { Charts } from '../utils/charts.js';
 import { Export } from '../utils/export.js';
 import { Storage } from '../utils/storage.js';
+import { Share } from '../utils/share.js';
 
 // =============================================
 // CONSTANTS
@@ -1028,6 +1029,10 @@ export const ImmobilierModule = {
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
                         Note d'investissement
                     </button>
+                    <button class="btn btn-outline" id="immo-share">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                        Partager
+                    </button>
                 </div>
             </div>
 
@@ -1174,5 +1179,43 @@ export const ImmobilierModule = {
             runCalculation();
             document.getElementById('immo-generate-memo').style.display = '';
         });
+
+        // ── Partage par URL ──
+        document.getElementById('immo-share')?.addEventListener('click', () => {
+            Share.copyLink('immobilier', {
+                type: 'immobilier',
+                params: { nature: currentNature, noiMode, ltvSource, state: { ...state } },
+                autorun: true
+            });
+        });
+
+        // ── Lien partagé (#immobilier?s=...) : restaure l'état et recalcule ──
+        const shared = Share.getPayload();
+        if (shared?.type === 'immobilier' && shared.params) {
+            const p = shared.params;
+            if (NATURE_CONFIG[p.nature]) currentNature = p.nature;
+            if (p.noiMode === 'detailed' || p.noiMode === 'simplified') noiMode = p.noiMode;
+            if (p.ltvSource === 'manual' || p.ltvSource === 'caprate') ltvSource = p.ltvSource;
+            if (p.state && typeof p.state === 'object') {
+                // Restauration typée, clé par clé, sur la base du state existant
+                Object.keys(state).forEach(k => {
+                    if (!(k in p.state)) return;
+                    const v = p.state[k];
+                    if (typeof state[k] === 'number') state[k] = parseFloat(v) || 0;
+                    else if (typeof state[k] === 'boolean') state[k] = !!v;
+                    else state[k] = String(v ?? '');
+                });
+            }
+            document.querySelectorAll('#immo-tabs .tab').forEach(t =>
+                t.classList.toggle('active', t.dataset.nature === currentNature));
+            const sub = document.getElementById('immo-nature-desc');
+            if (sub) sub.textContent = NATURE_CONFIG[currentNature].desc;
+            formContainer.innerHTML = getFormHTML();
+            if (shared.autorun) {
+                runCalculation();
+                const memoBtn = document.getElementById('immo-generate-memo');
+                if (memoBtn) memoBtn.style.display = '';
+            }
+        }
     }
 };

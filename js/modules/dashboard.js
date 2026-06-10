@@ -4,6 +4,8 @@
 
 import { Financial } from '../utils/financial.js';
 import { Storage } from '../utils/storage.js';
+import { Market } from '../utils/market.js';
+import { escapeHtml } from '../utils/sanitize.js';
 
 export const DashboardModule = {
     render() {
@@ -19,7 +21,11 @@ export const DashboardModule = {
             revolving: 'Revolving',
             relais: 'Pr\u00eat Relais',
             mezzanine: 'Mezzanine',
-            structured: 'Structur\u00e9'
+            structured: 'Structur\u00e9',
+            tranching: 'Tranching',
+            immobilier: 'Immobilier',
+            covenants: 'Covenants',
+            debtprofile: 'Profil de Dette'
         };
 
         return `
@@ -68,6 +74,15 @@ export const DashboardModule = {
                 </div>
             </div>
 
+            <!-- Taux de march\u00e9 (peupl\u00e9 en async par init si data/rates.json est disponible) -->
+            <div class="card section" id="market-card" style="display:none">
+                <div class="card-header">
+                    <div class="card-title">Taux du jour</div>
+                    <span class="market-updated" id="market-updated"></span>
+                </div>
+                <div class="market-grid" id="market-grid"></div>
+            </div>
+
             <!-- Quick Actions -->
             <div class="card section">
                 <div class="card-title">Acc\u00e8s rapide</div>
@@ -103,10 +118,10 @@ export const DashboardModule = {
                             ${recent.map(s => `
                                 <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border-color)">
                                     <div>
-                                        <div style="font-weight:600;font-size:0.9rem">${s.name || s.typeLabel || 'Simulation'}</div>
-                                        <div style="font-size:0.8rem;color:var(--text-muted)">${typeLabels[s.type] || s.type} \u2022 ${new Date(s.date).toLocaleDateString('fr-FR')}</div>
+                                        <div style="font-weight:600;font-size:0.9rem">${escapeHtml(s.name) || escapeHtml(s.typeLabel) || 'Simulation'}</div>
+                                        <div style="font-size:0.8rem;color:var(--text-muted)">${typeLabels[s.type] || escapeHtml(s.type)} \u2022 ${new Date(s.date).toLocaleDateString('fr-FR')}</div>
                                     </div>
-                                    <span class="badge badge-blue">${typeLabels[s.type] || s.type}</span>
+                                    <span class="badge badge-blue">${typeLabels[s.type] || escapeHtml(s.type)}</span>
                                 </div>
                             `).join('')}
                         </div>
@@ -156,5 +171,33 @@ export const DashboardModule = {
                 if (page) window.navigateTo?.(page);
             });
         });
+
+        // Taux du jour (data/rates.json publié par la veille quotidienne)
+        this._loadMarketRates();
+    },
+
+    async _loadMarketRates() {
+        const data = await Market.getRates();
+        const card = document.getElementById('market-card');
+        const grid = document.getElementById('market-grid');
+        if (!data?.rates || !card || !grid) return;
+
+        const ORDER = ['euribor_3m', 'euribor_12m', 'oat_10y', 'bund_10y', 'ust_10y'];
+        const keys = [...ORDER.filter(k => data.rates[k]), ...Object.keys(data.rates).filter(k => !ORDER.includes(k))];
+        const tiles = keys
+            .map(k => ({ key: k, r: data.rates[k] }))
+            .filter(({ r }) => r && typeof r.value === 'number' && isFinite(r.value))
+            .map(({ r }) => `
+                <div class="market-tile">
+                    <div class="market-tile-label">${escapeHtml(r.label)}</div>
+                    <div class="market-tile-value">${Financial.formatNumber(r.value, 2)} %</div>
+                </div>`);
+        if (tiles.length === 0) return;
+
+        grid.innerHTML = tiles.join('');
+        const updated = Market.formatUpdatedAt(data);
+        const updatedEl = document.getElementById('market-updated');
+        if (updatedEl && updated) updatedEl.textContent = `Mise à jour : ${updated}`;
+        card.style.display = '';
     }
 };

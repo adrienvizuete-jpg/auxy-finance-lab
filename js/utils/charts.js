@@ -394,6 +394,175 @@ export const Charts = {
     },
 
     /**
+     * Capture un graphique en image PNG (dataURL) pour insertion dans un PDF.
+     * Le canvas Chart.js est transparent : on le compose sur le fond du thème
+     * courant pour rester lisible (blanc en mode clair).
+     */
+    toImage(canvasId) {
+        const chart = chartInstances[canvasId];
+        const src = chart?.canvas || document.getElementById(canvasId);
+        if (!src || !src.width || !src.height) return null;
+        const theme = getThemeColors();
+        const out = document.createElement('canvas');
+        out.width = src.width;
+        out.height = src.height;
+        const ctx = out.getContext('2d');
+        ctx.fillStyle = theme.bg;
+        ctx.fillRect(0, 0, out.width, out.height);
+        ctx.drawImage(src, 0, 0);
+        return out.toDataURL('image/png');
+    },
+
+    /**
+     * Covenants : barres service de dette + ligne EBITDA (axe €) ;
+     * ligne DSCR + seuil covenant en pointillés (axe x, à droite).
+     */
+    covenantChart(canvasId, { labels, ebitda, debtService, dscr, covenantDscr }) {
+        this.destroy(canvasId);
+        const ctx = document.getElementById(canvasId);
+        if (!ctx) return;
+        const theme = getThemeColors();
+
+        chartInstances[canvasId] = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [
+                    {
+                        type: 'bar',
+                        label: 'Service de dette',
+                        data: debtService,
+                        backgroundColor: COLORS.primary + 'cc',
+                        borderRadius: 4,
+                        maxBarThickness: 56,
+                        yAxisID: 'y'
+                    },
+                    {
+                        type: 'line',
+                        label: 'EBITDA',
+                        data: ebitda,
+                        borderColor: COLORS.accent,
+                        backgroundColor: 'transparent',
+                        borderWidth: 2.5,
+                        tension: 0.2,
+                        pointRadius: 3,
+                        pointBackgroundColor: COLORS.accent,
+                        yAxisID: 'y'
+                    },
+                    {
+                        type: 'line',
+                        label: 'DSCR',
+                        data: dscr,
+                        borderColor: COLORS.success,
+                        backgroundColor: 'transparent',
+                        borderWidth: 2.5,
+                        tension: 0.2,
+                        pointRadius: 3,
+                        pointBackgroundColor: COLORS.success,
+                        yAxisID: 'y2'
+                    },
+                    {
+                        type: 'line',
+                        label: `Covenant DSCR (${covenantDscr.toFixed(2)}x)`,
+                        data: labels.map(() => covenantDscr),
+                        borderColor: COLORS.danger,
+                        borderDash: [6, 6],
+                        borderWidth: 1.5,
+                        pointRadius: 0,
+                        yAxisID: 'y2'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { intersect: false, mode: 'index' },
+                plugins: {
+                    legend: { position: 'top', labels: { color: theme.text, usePointStyle: true, padding: 16 } },
+                    tooltip: {
+                        backgroundColor: theme.bg,
+                        titleColor: theme.text,
+                        bodyColor: theme.text,
+                        borderColor: theme.grid,
+                        borderWidth: 1,
+                        padding: 12,
+                        callbacks: {
+                            label: c => c.dataset.yAxisID === 'y2'
+                                ? `${c.dataset.label}: ${c.raw.toFixed(2)}x`
+                                : `${c.dataset.label}: ${new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(c.raw)} k€`
+                        }
+                    }
+                },
+                scales: {
+                    x: { grid: { display: false }, ticks: { color: theme.text } },
+                    y: {
+                        grid: { color: theme.grid },
+                        ticks: { color: theme.text, callback: v => new Intl.NumberFormat('fr-FR', { notation: 'compact' }).format(v) + ' k€' }
+                    },
+                    y2: {
+                        position: 'right',
+                        grid: { display: false },
+                        ticks: { color: theme.text, callback: v => v.toFixed(1) + 'x' },
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+        return chartInstances[canvasId];
+    },
+
+    /**
+     * Mur de la dette : barres empilées (capital remboursé par an), une série par ligne de dette.
+     * series = [{ label, data }]
+     */
+    debtWall(canvasId, labels, series, { unit = '€' } = {}) {
+        this.destroy(canvasId);
+        const ctx = document.getElementById(canvasId);
+        if (!ctx) return;
+        const theme = getThemeColors();
+        const fmt = v => new Intl.NumberFormat('fr-FR', { notation: 'compact', compactDisplay: 'short' }).format(v) + ' ' + unit;
+
+        chartInstances[canvasId] = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: series.map((s, i) => ({
+                    label: s.label,
+                    data: s.data,
+                    backgroundColor: COLORS.series[i % COLORS.series.length] + 'cc',
+                    borderRadius: 3,
+                    maxBarThickness: 64
+                }))
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { intersect: false, mode: 'index' },
+                plugins: {
+                    legend: { position: 'top', labels: { color: theme.text, usePointStyle: true, padding: 16 } },
+                    tooltip: {
+                        backgroundColor: theme.bg,
+                        titleColor: theme.text,
+                        bodyColor: theme.text,
+                        borderColor: theme.grid,
+                        borderWidth: 1,
+                        padding: 12,
+                        callbacks: {
+                            label: c => `${c.dataset.label}: ${new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(c.raw)}`,
+                            footer: items => `Total : ${new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(items.reduce((s, it) => s + it.raw, 0))}`
+                        }
+                    }
+                },
+                scales: {
+                    x: { stacked: true, grid: { display: false }, ticks: { color: theme.text } },
+                    y: { stacked: true, grid: { color: theme.grid }, ticks: { color: theme.text, callback: fmt } }
+                }
+            }
+        });
+        return chartInstances[canvasId];
+    },
+
+    /**
      * Radar chart for loan scoring
      */
     radarChart(canvasId, loans) {

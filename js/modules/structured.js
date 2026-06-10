@@ -6,6 +6,8 @@
 import { Financial } from '../utils/financial.js';
 import { Export } from '../utils/export.js';
 import { Storage } from '../utils/storage.js';
+import { Share } from '../utils/share.js';
+import { escapeHtml } from '../utils/sanitize.js';
 
 // ── State ──
 let emplois = [
@@ -66,7 +68,7 @@ function compute() {
 function renderEmploisRows() {
     return emplois.map((e, i) => `
         <tr data-section="emplois" data-index="${i}">
-            <td><input class="er-input" type="text" value="${e.label}" data-field="label"></td>
+            <td><input class="er-input" type="text" value="${escapeHtml(e.label)}" data-field="label"></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${e.amount}" data-field="amount" step="50"></td>
             <td style="width:30px">${emplois.length > 1 ? `<button class="er-remove-btn" data-action="remove">${X_SVG}</button>` : ''}</td>
         </tr>
@@ -76,7 +78,7 @@ function renderEmploisRows() {
 function renderDetteNonRefRows() {
     return detteNonRef.map((d, i) => `
         <tr data-section="detteNonRef" data-index="${i}">
-            <td><input class="er-input" type="text" value="${d.label}" data-field="label"></td>
+            <td><input class="er-input" type="text" value="${escapeHtml(d.label)}" data-field="label"></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${d.amount}" data-field="amount" step="50"></td>
             <td style="width:30px">${detteNonRef.length > 1 ? `<button class="er-remove-btn" data-action="remove">${X_SVG}</button>` : ''}</td>
         </tr>
@@ -127,7 +129,7 @@ function renderTranchesRows(c) {
         const selFreq = (val) => Object.entries(FREQ_LABELS).map(([k, v]) => `<option value="${k}" ${k === (t.frequency || 'mensuel') ? 'selected' : ''}>${v}</option>`).join('');
         return `
         <tr data-section="tranches" data-index="${i}">
-            <td><input class="er-input" type="text" value="${t.label}" data-field="label" style="width:70px"></td>
+            <td><input class="er-input" type="text" value="${escapeHtml(t.label)}" data-field="label" style="width:70px"></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${t.pct}" data-field="pct" step="5" min="0" max="100"></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${t.duration}" data-field="duration" step="1" min="1"></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${t.taux || 0}" data-field="taux" step="0.1" min="0" max="50" style="width:70px"></td>
@@ -295,7 +297,7 @@ function saveSimulation() {
         const name = document.getElementById('save-sf-name')?.value || defaultName;
         const notes = document.getElementById('save-sf-notes')?.value || '';
 
-        Storage.saveSimulation({
+        const id = Storage.saveSimulation({
             ...lastResult,
             name,
             notes,
@@ -303,8 +305,18 @@ function saveSimulation() {
         });
 
         modal.classList.add('hidden');
-        window.showToast?.('Simulation sauvegardée', 'success');
+        if (id) {
+            window.showToast?.('Simulation sauvegardée', 'success');
+        } else {
+            window.showToast?.('Échec de la sauvegarde : stockage local plein', 'error');
+        }
     });
+}
+
+// ── Partage par URL ──
+function shareStructured() {
+    if (!lastResult) recalculate();
+    Share.copyLink('structured', { type: 'structured', params: lastResult.params });
 }
 
 // ── Export Excel ──
@@ -590,6 +602,10 @@ export const StructuredModule = {
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                     Exporter Excel
                 </button>
+                <button class="btn btn-outline" id="er-share">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                    Partager
+                </button>
             </div>
         `;
     },
@@ -644,8 +660,15 @@ export const StructuredModule = {
         document.getElementById('er-recalculate')?.addEventListener('click', recalculate);
         document.getElementById('er-save')?.addEventListener('click', saveSimulation);
         document.getElementById('er-export')?.addEventListener('click', exportExcel);
+        document.getElementById('er-share')?.addEventListener('click', shareStructured);
 
-        // ── Load from history ──
+        // ── Lien de partage (#structured?s=...) ──
+        const shared = Share.getPayload();
+        if (shared?.type === 'structured' && shared?.params) {
+            window._pendingReload = { type: 'structured', params: shared.params };
+        }
+
+        // ── Load from history (ou lien partagé) ──
         loadFromHistory();
 
         // ── Initial calculation ──

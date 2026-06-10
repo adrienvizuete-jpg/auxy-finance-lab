@@ -4,6 +4,7 @@
 
 import { PARAM_LABELS, RESULT_LABELS, t, formatValue } from './i18n.js';
 import { LOGO_BASE64 } from './logo-data.js';
+import { Charts } from './charts.js';
 
 export const Export = {
 
@@ -143,9 +144,84 @@ export const Export = {
     },
 
     /**
-     * Export to PDF using jsPDF
+     * Page de garde Auxy : bandeau logo, titre, sous-titre, hypothèses clés.
+     * opts.cover = { subtitle?, items?: [{label, value}] }
      */
-    toPdf(title, sections, filename = 'simulation') {
+    _drawCover(doc, title, cover) {
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const pageHeight = doc.internal.pageSize.getHeight();
+
+        // Bandeau supérieur
+        doc.setFillColor(26, 53, 72);
+        doc.rect(0, 0, pageWidth, 84, 'F');
+        doc.setFillColor(232, 151, 63); // liseré accent
+        doc.rect(0, 84, pageWidth, 1.8, 'F');
+
+        try {
+            doc.addImage(LOGO_BASE64, 'PNG', (pageWidth - 70) / 2, 26, 70, 24);
+        } catch (e) {
+            doc.setTextColor(255, 255, 255);
+            doc.setFontSize(24);
+            doc.setFont('helvetica', 'bold');
+            doc.text('AUXY PARTNERS', pageWidth / 2, 42, { align: 'center' });
+        }
+
+        // Titre
+        doc.setTextColor(26, 53, 72);
+        doc.setFontSize(22);
+        doc.setFont('helvetica', 'bold');
+        doc.text(this._sanitizePdf(title), pageWidth / 2, 112, { align: 'center' });
+
+        if (cover.subtitle) {
+            doc.setFontSize(12);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(107, 114, 128);
+            doc.text(this._sanitizePdf(cover.subtitle), pageWidth / 2, 122, { align: 'center' });
+        }
+
+        doc.setFontSize(10);
+        doc.setTextColor(107, 114, 128);
+        doc.text(new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }), pageWidth / 2, 132, { align: 'center' });
+
+        // Encadré hypothèses clés
+        if (cover.items?.length) {
+            const boxW = 130;
+            const boxX = (pageWidth - boxW) / 2;
+            const rowH = 9;
+            const boxH = cover.items.length * rowH + 18;
+            const boxY = 150;
+            doc.setDrawColor(26, 53, 72);
+            doc.setLineWidth(0.4);
+            doc.roundedRect(boxX, boxY, boxW, boxH, 2, 2);
+            doc.setFontSize(9);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(232, 151, 63);
+            doc.text('HYPOTHÈSES CLÉS', boxX + 8, boxY + 9);
+            let iy = boxY + 19;
+            doc.setFontSize(10);
+            cover.items.forEach(item => {
+                doc.setFont('helvetica', 'normal');
+                doc.setTextColor(107, 114, 128);
+                doc.text(this._sanitizePdf(String(item.label)), boxX + 8, iy);
+                doc.setFont('helvetica', 'bold');
+                doc.setTextColor(26, 53, 72);
+                doc.text(this._sanitizePdf(String(item.value)), boxX + boxW - 8, iy, { align: 'right' });
+                iy += rowH;
+            });
+        }
+
+        doc.setFontSize(8.5);
+        doc.setTextColor(150, 150, 150);
+        doc.text('Document de travail — ne constitue pas un engagement de financement', pageWidth / 2, pageHeight - 22, { align: 'center' });
+    },
+
+    /**
+     * Export to PDF using jsPDF
+     * @param {object} opts - { cover?: { subtitle?, items? } }
+     * Sections supportées : title, keyvalue, table, separator,
+     * chart ({ canvasId, title?, maxHeight? } — capture le graphique affiché).
+     */
+    toPdf(title, sections, filename = 'simulation', opts = {}) {
         if (typeof jspdf === 'undefined') {
             alert('Bibliothèque PDF non chargée');
             return;
@@ -155,6 +231,12 @@ export const Export = {
         const doc = new jsPDF('p', 'mm', 'a4');
         const pageWidth = doc.internal.pageSize.getWidth();
         let y = 20;
+
+        // Page de garde optionnelle
+        if (opts.cover) {
+            this._drawCover(doc, title, opts.cover);
+            doc.addPage();
+        }
 
         // Header with logo
         doc.setFillColor(26, 53, 72); // primary-800
@@ -238,6 +320,33 @@ export const Export = {
                 doc.setDrawColor(200, 200, 200);
                 doc.line(15, y, pageWidth - 15, y);
                 y += 8;
+            }
+
+            if (section.type === 'chart') {
+                const dataUrl = Charts.toImage(section.canvasId);
+                if (dataUrl) {
+                    const canvas = document.getElementById(section.canvasId);
+                    const ratio = canvas && canvas.width > 0 ? canvas.height / canvas.width : 0.5;
+                    const imgW = pageWidth - 30;
+                    const imgH = Math.min(imgW * ratio, section.maxHeight || 110);
+                    if (y + imgH + (section.title ? 10 : 0) > 270) {
+                        doc.addPage();
+                        y = 20;
+                    }
+                    if (section.title) {
+                        doc.setFontSize(13);
+                        doc.setFont('helvetica', 'bold');
+                        doc.setTextColor(26, 53, 72);
+                        doc.text(this._sanitizePdf(section.title), 15, y);
+                        y += 8;
+                    }
+                    try {
+                        doc.addImage(dataUrl, 'PNG', 15, y, imgW, imgH);
+                        y += imgH + 12;
+                    } catch (e) {
+                        // canvas inexploitable : on continue sans le graphique
+                    }
+                }
             }
         }
 

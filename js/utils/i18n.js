@@ -93,7 +93,9 @@ export const TYPE_LABELS = {
     mezzanine: 'Dette Mezzanine',
     structured: 'Financement Structur\u00e9',
     tranching: 'Tranching (LBO)',
-    immobilier: 'Immobilier'
+    immobilier: 'Immobilier',
+    covenants: 'Covenants & DSCR',
+    debtprofile: 'Profil de Dette'
 };
 
 /**
