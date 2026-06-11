@@ -418,6 +418,133 @@ function shareProfile() {
     Share.copyLink('debtprofile', { type: 'debtprofile', params: lastResult.params });
 }
 
+/**
+ * Pont inter-modules (dossier unifié v0) : transfère les crédits actifs vers
+ * le module Covenants & DSCR — CRD à la date d'analyse, durée résiduelle,
+ * taux et profil d'amortissement conservés. Pour un amortissable constant,
+ * l'annuité recalculée sur (CRD, taux, durée restante) est mathématiquement
+ * égale à l'annuité contractuelle.
+ */
+function sendToCovenants() {
+    const agg = computeAll();
+    const aIdx = analysisIdx();
+    const debts = agg.schedules
+        .filter(s => s.crdAtAnalysis > 0 || s.sched.drawIdx > aIdx) // vivants ou à venir
+        .map(s => ({
+            label: s.loan.label,
+            amount: Math.round((s.crdAtAnalysis > 0 ? s.crdAtAnalysis : s.loan.amount) / 1000), // k€
+            rate: s.loan.rate,
+            durationYears: Math.max(1, Math.round((s.sched.lastIdx - Math.max(aIdx, s.sched.firstIdx - 1)) / 12)),
+            amortType: s.loan.amortType,
+            frequency: s.loan.frequency
+        }))
+        .filter(d => d.amount > 0);
+
+    if (!debts.length) {
+        window.showToast?.('Aucun crédit actif à transférer', 'warning');
+        return;
+    }
+    window._pendingReload = { type: 'covenants', params: { debts } };
+    window.navigateTo?.('covenants');
+    window.showToast?.(`${debts.length} crédit${debts.length > 1 ? 's' : ''} transféré${debts.length > 1 ? 's' : ''} (CRD et durées résiduelles, arrondies à l'année) — renseignez l'EBITDA prévisionnel`, 'success');
+}
+
+// ── Audit trail : justification des KPIs (« tout chiffre vérifiable ») ──
+
+const AUDIT_SPECS = {
+    exposure: {
+        title: 'Encours de dette — justification',
+        formula: 'Encours = Σ CRD des crédits à la date d\'analyse',
+        convention: 'Le CRD de chaque crédit est le solde après la dernière échéance antérieure ou égale à la date d\'analyse (montant initial si le crédit est tiré mais sans échéance passée ; 0 s\'il n\'est pas encore tiré ou s\'il est éteint).'
+    },
+    rate: {
+        title: 'Taux moyen pondéré — justification',
+        formula: 'TMP = Σ (CRDᵢ × tauxᵢ) ÷ Σ CRDᵢ',
+        convention: 'Pondération par l\'encours à la date d\'analyse. Les crédits non encore tirés (encours nul) n\'entrent pas dans la pondération.'
+    },
+    wal: {
+        title: 'Durée de vie moyenne (WAL) — justification',
+        formula: 'WAL = Σ (capitalᵢ × tᵢ) ÷ Σ capitalᵢ, sur les flux de capital futurs',
+        convention: 'tᵢ = délai en années entre la date d\'analyse et chaque échéance future de capital. Les nouveaux financements inclus dans la projection sont pris en compte.'
+    }
+};
+
+function showAudit(kind) {
+    const spec = AUDIT_SPECS[kind];
+    if (!spec) return;
+    const agg = computeAll();
+    if (!agg.schedules.length) return;
+    const aIdx = analysisIdx();
+
+    let headers = [];
+    let rows = [];
+    let totalLine = '';
+
+    if (kind === 'exposure') {
+        headers = ['Crédit', `CRD au ${analysisLabel()}`];
+        rows = agg.schedules.map(s => [escapeHtml(s.loan.label), f0(s.crdAtAnalysis)]);
+        const total = agg.schedules.reduce((sum, s) => sum + s.crdAtAnalysis, 0);
+        totalLine = `Encours total = ${f0(total)}`;
+    }
+
+    if (kind === 'rate') {
+        const withCrd = agg.schedules.filter(s => s.crdAtAnalysis > 0);
+        headers = ['Crédit', 'CRD (pondération)', 'Taux', 'CRD × taux'];
+        rows = withCrd.map(s => [
+            escapeHtml(s.loan.label),
+            f0(s.crdAtAnalysis),
+            `${Financial.formatNumber(s.loan.rate, 2)} %`,
+            f0(s.crdAtAnalysis * s.loan.rate / 100)
+        ]);
+        const sumCrd = withCrd.reduce((sum, s) => sum + s.crdAtAnalysis, 0);
+        const sumProd = withCrd.reduce((sum, s) => sum + s.crdAtAnalysis * s.loan.rate, 0);
+        totalLine = sumCrd > 0
+            ? `TMP = ${f0(sumProd / 100)} ÷ ${f0(sumCrd)} = ${Financial.formatNumber(sumProd / sumCrd, 2)} %`
+            : 'Aucun encours à la date d\'analyse.';
+    }
+
+    if (kind === 'wal') {
+        headers = ['Crédit', 'Capital futur', 'WAL du crédit'];
+        let gNum = 0, gDen = 0;
+        rows = agg.schedules.map(s => {
+            let num = 0, den = 0;
+            for (const r of s.sched.rows) {
+                if (r.mIdx <= aIdx || r.principal <= 0) continue;
+                num += r.principal * (r.mIdx - aIdx) / 12;
+                den += r.principal;
+            }
+            gNum += num; gDen += den;
+            return [
+                escapeHtml(s.loan.label),
+                f0(den),
+                den > 0 ? `${Financial.formatNumber(num / den, 2)} ans` : '—'
+            ];
+        });
+        totalLine = gDen > 0
+            ? `WAL = ${Financial.formatNumber(gNum, 0)} ÷ ${Financial.formatNumber(gDen, 0)} = ${Financial.formatNumber(gNum / gDen, 2)} ans`
+            : 'Aucun flux de capital futur.';
+    }
+
+    const modal = document.getElementById('modal-overlay');
+    const body = document.getElementById('modal-body');
+    body.innerHTML = `
+        <h2 style="margin-bottom:4px">${spec.title}</h2>
+        <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:16px">Règle Auxy : tout chiffre présenté est vérifiable.</p>
+        <div class="dp-audit-formula">${spec.formula}</div>
+        <div class="table-container" style="margin:16px 0">
+            <table class="data-table">
+                <thead><tr>${headers.map((h, i) => `<th ${i > 0 ? 'style="text-align:right"' : ''}>${h}</th>`).join('')}</tr></thead>
+                <tbody>
+                    ${rows.map(r => `<tr>${r.map((c, i) => `<td class="${i > 0 ? 'number' : ''}">${c}</td>`).join('')}</tr>`).join('')}
+                </tbody>
+            </table>
+        </div>
+        <div class="dp-audit-total">${totalLine}</div>
+        <p style="color:var(--text-muted);font-size:0.8rem;margin-top:14px">${spec.convention}</p>
+    `;
+    modal.classList.remove('hidden');
+}
+
 // ── Restauration (partage / historique), avec rétrocompatibilité v1 ──
 
 function loadParams(p) {
@@ -535,9 +662,9 @@ export const DebtProfileModule = {
                 </div>
             </div>
 
-            <!-- KPIs -->
-            <div class="er-kpi-grid section" style="grid-template-columns:repeat(auto-fit, minmax(160px, 1fr))">
-                <div class="er-kpi-card">
+            <!-- KPIs (cartes cliquables = justification du calcul) -->
+            <div class="er-kpi-grid section" id="dp-kpi-grid" style="grid-template-columns:repeat(auto-fit, minmax(160px, 1fr))">
+                <div class="er-kpi-card dp-auditable" data-audit="exposure" title="Cliquez pour la justification du calcul">
                     <div class="kpi-label">Encours au ${analysisLabel()}</div>
                     <div class="kpi-value highlight" id="dp-kpi-expo">—</div>
                     <div style="font-size:0.7rem;color:var(--text-muted);margin-top:4px" id="dp-new-info"></div>
@@ -550,11 +677,11 @@ export const DebtProfileModule = {
                     <div class="kpi-label">Pic de service</div>
                     <div class="kpi-value highlight" id="dp-kpi-peak">—</div>
                 </div>
-                <div class="er-kpi-card">
+                <div class="er-kpi-card dp-auditable" data-audit="rate" title="Cliquez pour la justification du calcul">
                     <div class="kpi-label">Taux moyen pondéré</div>
                     <div class="kpi-value" id="dp-kpi-rate">—</div>
                 </div>
-                <div class="er-kpi-card">
+                <div class="er-kpi-card dp-auditable" data-audit="wal" title="Cliquez pour la justification du calcul">
                     <div class="kpi-label">Durée de vie moy. (WAL)</div>
                     <div class="kpi-value" id="dp-kpi-wal">—</div>
                 </div>
@@ -592,6 +719,10 @@ export const DebtProfileModule = {
                 <button class="btn btn-outline" id="dp-export-excel">Exporter Excel</button>
                 <button class="btn btn-accent" id="dp-export-pdf">Exporter PDF</button>
                 <button class="btn btn-outline" id="dp-share">Partager</button>
+                <button class="btn btn-outline" id="dp-to-covenants" title="Transfère les crédits actifs (CRD, durée résiduelle, taux) vers l'analyse de covenants">
+                    Analyser vs covenants
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                </button>
             </div>
         `;
     },
@@ -683,6 +814,13 @@ export const DebtProfileModule = {
         document.getElementById('dp-export-excel')?.addEventListener('click', exportExcel);
         document.getElementById('dp-export-pdf')?.addEventListener('click', exportPdf);
         document.getElementById('dp-share')?.addEventListener('click', shareProfile);
+        document.getElementById('dp-to-covenants')?.addEventListener('click', sendToCovenants);
+
+        // Audit trail : clic sur une carte KPI auditable → justification
+        document.getElementById('dp-kpi-grid')?.addEventListener('click', e => {
+            const card = e.target.closest('.dp-auditable');
+            if (card?.dataset.audit) showAudit(card.dataset.audit);
+        });
 
         // ── Lien partagé ou rechargement historique (rétrocompatible v1) ──
         const shared = Share.getPayload();

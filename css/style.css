@@ -1857,3 +1857,45 @@ input[type="month"].er-input,
 input[type="month"].form-input {
     font-variant-numeric: tabular-nums;
 }
+
+/* ── Audit trail des KPIs (justification du calcul) ── */
+.dp-auditable {
+    cursor: pointer;
+    position: relative;
+    transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.dp-auditable::after {
+    content: "ⓘ";
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    opacity: 0.55;
+}
+
+.dp-auditable:hover {
+    border-color: var(--primary-500, #2e86ab);
+    transform: translateY(-1px);
+}
+
+.dp-audit-formula {
+    background: var(--bg-tertiary);
+    border-left: 3px solid var(--accent-500, #d39557);
+    padding: 10px 14px;
+    border-radius: var(--radius-md);
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.dp-audit-total {
+    background: var(--success-bg);
+    color: var(--success);
+    padding: 10px 14px;
+    border-radius: var(--radius-md);
+    font-weight: 700;
+    font-size: 0.95rem;
+    font-variant-numeric: tabular-nums;
+}
