@@ -1828,3 +1828,32 @@ body {
 .dp-peak-row td {
     background: rgba(217, 119, 6, 0.12);
 }
+
+/* ── Profil de Dette v2 ── */
+.dp-row-new td {
+    background: rgba(211, 149, 87, 0.07);
+}
+
+.dp-row-new td:first-child {
+    box-shadow: inset 3px 0 0 var(--accent-500, #d39557);
+}
+
+.dp-past-row td {
+    opacity: 0.62;
+}
+
+.dp-current-row td {
+    background: rgba(217, 119, 6, 0.10);
+    font-weight: 500;
+}
+
+.dp-crd-gap {
+    margin-top: 2px;
+    text-align: right;
+    line-height: 1;
+}
+
+input[type="month"].er-input,
+input[type="month"].form-input {
+    font-variant-numeric: tabular-nums;
+}

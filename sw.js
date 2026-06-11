@@ -6,7 +6,7 @@
  * Incrémenter CACHE_VERSION à chaque évolution notable du front.
  */
 
-const CACHE_VERSION = 'auxy-finance-lab-v1';
+const CACHE_VERSION = 'auxy-finance-lab-v2';
 
 const PRECACHE = [
     './',
@@ -24,6 +24,7 @@ const PRECACHE = [
     './js/modules/tools.js',
     './js/modules/history.js',
     './js/utils/financial.js',
+    './js/utils/debtengine.js',
     './js/utils/charts.js',
     './js/utils/export.js',
     './js/utils/storage.js',
