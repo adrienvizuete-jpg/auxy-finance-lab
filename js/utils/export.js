@@ -3,7 +3,7 @@
  */
 
 import { PARAM_LABELS, RESULT_LABELS, t, formatValue } from './i18n.js';
-import { LOGO_BASE64 } from './logo-data.js';
+import { LOGO_JPEG_BANNER } from './logo-data.js';
 import { Charts } from './charts.js';
 
 export const Export = {
@@ -152,13 +152,13 @@ export const Export = {
         const pageHeight = doc.internal.pageSize.getHeight();
 
         // Bandeau supérieur
-        doc.setFillColor(26, 53, 72);
+        doc.setFillColor(27, 73, 97);
         doc.rect(0, 0, pageWidth, 84, 'F');
-        doc.setFillColor(232, 151, 63); // liseré accent
+        doc.setFillColor(211, 149, 87); // liseré accent
         doc.rect(0, 84, pageWidth, 1.8, 'F');
 
         try {
-            doc.addImage(LOGO_BASE64, 'PNG', (pageWidth - 70) / 2, 26, 70, 24);
+            doc.addImage(LOGO_JPEG_BANNER, 'JPEG', (pageWidth - 70) / 2, 26, 70, 24.7);
         } catch (e) {
             doc.setTextColor(255, 255, 255);
             doc.setFontSize(24);
@@ -167,7 +167,7 @@ export const Export = {
         }
 
         // Titre
-        doc.setTextColor(26, 53, 72);
+        doc.setTextColor(27, 73, 97);
         doc.setFontSize(22);
         doc.setFont('helvetica', 'bold');
         doc.text(this._sanitizePdf(title), pageWidth / 2, 112, { align: 'center' });
@@ -190,12 +190,12 @@ export const Export = {
             const rowH = 9;
             const boxH = cover.items.length * rowH + 18;
             const boxY = 150;
-            doc.setDrawColor(26, 53, 72);
+            doc.setDrawColor(27, 73, 97);
             doc.setLineWidth(0.4);
             doc.roundedRect(boxX, boxY, boxW, boxH, 2, 2);
             doc.setFontSize(9);
             doc.setFont('helvetica', 'bold');
-            doc.setTextColor(232, 151, 63);
+            doc.setTextColor(211, 149, 87);
             doc.text('HYPOTHÈSES CLÉS', boxX + 8, boxY + 9);
             let iy = boxY + 19;
             doc.setFontSize(10);
@@ -204,7 +204,7 @@ export const Export = {
                 doc.setTextColor(107, 114, 128);
                 doc.text(this._sanitizePdf(String(item.label)), boxX + 8, iy);
                 doc.setFont('helvetica', 'bold');
-                doc.setTextColor(26, 53, 72);
+                doc.setTextColor(27, 73, 97);
                 doc.text(this._sanitizePdf(String(item.value)), boxX + boxW - 8, iy, { align: 'right' });
                 iy += rowH;
             });
@@ -239,12 +239,12 @@ export const Export = {
         }
 
         // Header with logo
-        doc.setFillColor(26, 53, 72); // primary-800
+        doc.setFillColor(27, 73, 97); // primary-800
         doc.rect(0, 0, pageWidth, 38, 'F');
 
         // Add logo (white on dark blue background)
         try {
-            doc.addImage(LOGO_BASE64, 'PNG', 15, 4, 52, 18);
+            doc.addImage(LOGO_JPEG_BANNER, 'JPEG', 15, 4, 52, 18.4);
         } catch (e) {
             // Fallback text if logo fails
             doc.setTextColor(255, 255, 255);
@@ -261,7 +261,7 @@ export const Export = {
         doc.text(`Généré le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}`, pageWidth - 15, 28, { align: 'right' });
 
         y = 48;
-        doc.setTextColor(26, 53, 72);
+        doc.setTextColor(27, 73, 97);
 
         for (const section of sections) {
             if (y > 250) {
@@ -284,7 +284,7 @@ export const Export = {
                     doc.setTextColor(107, 114, 128);
                     doc.text(this._sanitizePdf(String(item.label)), 15, y);
                     doc.setFont('helvetica', 'bold');
-                    doc.setTextColor(26, 53, 72);
+                    doc.setTextColor(27, 73, 97);
                     doc.text(this._sanitizePdf(String(item.value)), 95, y);
                     y += 7;
                 });
@@ -294,26 +294,101 @@ export const Export = {
             if (section.type === 'table') {
                 const sanitizedHeaders = section.headers.map(h => this._sanitizePdf(String(h)));
                 const sanitizedRows = section.rows.map(row => row.map(cell => this._sanitizePdf(String(cell))));
+                // 1ère colonne (libellés) à gauche, le reste (numérique) à droite
+                const columnStyles = { 0: { halign: 'left' } };
+                for (let c = 1; c < sanitizedHeaders.length; c++) columnStyles[c] = { halign: 'right' };
                 doc.autoTable({
                     startY: y,
                     head: [sanitizedHeaders],
                     body: sanitizedRows,
                     theme: 'grid',
                     headStyles: {
-                        fillColor: [26, 53, 72],
+                        fillColor: [27, 73, 97],
                         textColor: [255, 255, 255],
                         fontSize: 9,
-                        fontStyle: 'bold'
+                        fontStyle: 'bold',
+                        halign: 'right'
                     },
                     bodyStyles: {
                         fontSize: 9,
                         textColor: [55, 65, 81]
                     },
+                    columnStyles,
                     alternateRowStyles: { fillColor: [240, 244, 247] },
-                    margin: { left: 15, right: 15 },
-                    styles: { cellPadding: 4 }
+                    margin: { left: 15, right: 15, top: 18 },
+                    styles: { cellPadding: 3.2, lineColor: [222, 228, 233], lineWidth: 0.15 },
+                    didParseCell: data => {
+                        if (data.section === 'head' && data.column.index === 0) data.cell.styles.halign = 'left';
+                        // lignes de mise en relief optionnelles (ex. exercice courant)
+                        if (section.highlightRows?.includes(data.row.index) && data.section === 'body') {
+                            data.cell.styles.fillColor = [248, 238, 224];
+                            data.cell.styles.fontStyle = 'bold';
+                        }
+                    }
                 });
                 y = doc.lastAutoTable.finalY + 14;
+            }
+
+            if (section.type === 'kpicards') {
+                const items = section.items || [];
+                const perRow = Math.min(3, Math.max(1, items.length));
+                const gap = 6;
+                const cardW = (pageWidth - 30 - gap * (perRow - 1)) / perRow;
+                const cardH = 24;
+                const rows = Math.ceil(items.length / perRow);
+                const blockH = rows * (cardH + gap);
+                if (y + blockH > 265) { doc.addPage(); y = 20; }
+
+                items.forEach((item, idx) => {
+                    const col = idx % perRow;
+                    const row = Math.floor(idx / perRow);
+                    const cx = 15 + col * (cardW + gap);
+                    const cy = y + row * (cardH + gap);
+                    doc.setFillColor(244, 247, 249);
+                    doc.setDrawColor(27, 73, 97);
+                    doc.setLineWidth(0.2);
+                    doc.roundedRect(cx, cy, cardW, cardH, 1.5, 1.5, 'FD');
+                    doc.setFillColor(211, 149, 87);
+                    doc.rect(cx, cy, 1.4, cardH, 'F');
+
+                    doc.setFontSize(6.5);
+                    doc.setFont('helvetica', 'bold');
+                    doc.setTextColor(107, 114, 128);
+                    doc.text(this._sanitizePdf(String(item.label).toUpperCase()), cx + 5, cy + 6.5);
+                    doc.setFontSize(13);
+                    doc.setTextColor(27, 73, 97);
+                    doc.text(this._sanitizePdf(String(item.value)), cx + 5, cy + 14.5);
+                    if (item.sub) {
+                        doc.setFontSize(7);
+                        doc.setFont('helvetica', 'normal');
+                        doc.setTextColor(107, 114, 128);
+                        doc.text(this._sanitizePdf(String(item.sub)), cx + 5, cy + 20);
+                    }
+                });
+                y += blockH + 6;
+            }
+
+            if (section.type === 'note') {
+                const textLines = doc.splitTextToSize(this._sanitizePdf(String(section.text)), pageWidth - 42);
+                const noteH = textLines.length * 4 + (section.title ? 14 : 8);
+                if (y + noteH > 270) { doc.addPage(); y = 20; }
+                doc.setFillColor(244, 247, 249);
+                doc.rect(15, y, pageWidth - 30, noteH, 'F');
+                doc.setFillColor(211, 149, 87);
+                doc.rect(15, y, 1.4, noteH, 'F');
+                let ny = y + 7;
+                if (section.title) {
+                    doc.setFontSize(8);
+                    doc.setFont('helvetica', 'bold');
+                    doc.setTextColor(27, 73, 97);
+                    doc.text(this._sanitizePdf(section.title.toUpperCase()), 20, ny);
+                    ny += 6;
+                }
+                doc.setFontSize(8);
+                doc.setFont('helvetica', 'normal');
+                doc.setTextColor(90, 99, 110);
+                doc.text(textLines, 20, ny);
+                y += noteH + 10;
             }
 
             if (section.type === 'separator') {
@@ -336,12 +411,12 @@ export const Export = {
                     if (section.title) {
                         doc.setFontSize(13);
                         doc.setFont('helvetica', 'bold');
-                        doc.setTextColor(26, 53, 72);
+                        doc.setTextColor(27, 73, 97);
                         doc.text(this._sanitizePdf(section.title), 15, y);
                         y += 8;
                     }
                     try {
-                        doc.addImage(dataUrl, 'PNG', 15, y, imgW, imgH);
+                        doc.addImage(dataUrl, 'JPEG', 15, y, imgW, imgH);
                         y += imgH + 12;
                     } catch (e) {
                         // canvas inexploitable : on continue sans le graphique
@@ -350,10 +425,25 @@ export const Export = {
             }
         }
 
-        // Footer on each page
+        // Footer (chaque page) + bande d'en-tête rappelée sur les pages
+        // intermédiaires (la couverture et la 1ère page de contenu ont déjà
+        // leur propre en-tête)
         const totalPages = doc.internal.getNumberOfPages();
+        const firstContentPage = opts.cover ? 2 : 1;
         for (let i = 1; i <= totalPages; i++) {
             doc.setPage(i);
+            if (i > firstContentPage) {
+                doc.setFillColor(27, 73, 97);
+                doc.rect(0, 0, pageWidth, 9, 'F');
+                doc.setFillColor(211, 149, 87);
+                doc.rect(0, 9, pageWidth, 0.8, 'F');
+                doc.setFontSize(7.5);
+                doc.setFont('helvetica', 'bold');
+                doc.setTextColor(255, 255, 255);
+                doc.text('AUXY PARTNERS', 15, 6);
+                doc.setFont('helvetica', 'normal');
+                doc.text(this._sanitizePdf(title), pageWidth - 15, 6, { align: 'right' });
+            }
             doc.setFontSize(8);
             doc.setTextColor(150, 150, 150);
             doc.text(`Confidentiel — Auxy Partners | Page ${i}/${totalPages}`, pageWidth / 2, 290, { align: 'center' });

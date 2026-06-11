@@ -289,6 +289,8 @@ function exportExcel() {
 
 function exportPdf() {
     if (!lastResult) recalculate();
+    // Le graphique est créé avec animation:false (paint synchrone) :
+    // la capture Charts.toImage est fiable même juste après un recalcul.
     const c = lastResult.results;
     const sections = [
         { type: 'title', text: 'Synthèse' },
