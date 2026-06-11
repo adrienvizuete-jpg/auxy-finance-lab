@@ -72,6 +72,25 @@ jobs:
           git diff --staged --quiet || git commit -m "chore(data): rates.json $(date -u +%F) [skip ci]"
           git push
 
+      # Supabase (free tier) met le projet en pause après 7 jours sans
+      # requête : ce ping quotidien le maintient actif. No-op tant que les
+      # secrets SUPABASE_URL / SUPABASE_ANON_KEY ne sont pas configurés.
+      - name: Ping Supabase (anti-pause)
+        if: always()
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "Supabase non configuré — ping ignoré."
+            exit 0
+          fi
+          curl -sf -o /dev/null \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            "$SUPABASE_URL/rest/v1/dossiers?select=id&limit=1" \
+            && echo "Ping Supabase OK" || echo "Ping Supabase en échec (non bloquant)"
+
       - name: Notify on failure
         if: failure()
         env:

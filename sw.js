@@ -6,7 +6,7 @@
  * Incrémenter CACHE_VERSION à chaque évolution notable du front.
  */
 
-const CACHE_VERSION = 'auxy-finance-lab-v2';
+const CACHE_VERSION = 'auxy-finance-lab-v3';
 
 const PRECACHE = [
     './',
@@ -33,6 +33,8 @@ const PRECACHE = [
     './js/utils/sanitize.js',
     './js/utils/share.js',
     './js/utils/market.js',
+    './js/utils/debtengine.js',
+    './js/utils/cloud.js',
     './assets/logo.png',
     './assets/favicon.svg',
     './assets/icon-192.png',
@@ -89,9 +91,14 @@ self.addEventListener('fetch', event => {
     const url = new URL(request.url);
     const sameOrigin = url.origin === self.location.origin;
 
-    // Données de marché et page d'entrée : toujours tenter le réseau d'abord
-    if (sameOrigin && (url.pathname.endsWith('/data/rates.json') || url.pathname.endsWith('/index.html') || url.pathname.endsWith('/'))) {
+    // Données de marché, config cloud et page d'entrée : réseau d'abord
+    if (sameOrigin && (url.pathname.endsWith('/data/rates.json') || url.pathname.endsWith('/data/cloud-config.json') || url.pathname.endsWith('/index.html') || url.pathname.endsWith('/'))) {
         event.respondWith(networkFirst(request));
+        return;
+    }
+
+    // API Supabase : jamais mise en cache (données vivantes + auth)
+    if (/(^|\.)supabase\.(co|in)$/.test(url.hostname)) {
         return;
     }
 

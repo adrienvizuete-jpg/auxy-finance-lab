@@ -7,6 +7,7 @@ import { Storage } from '../utils/storage.js';
 import { Export } from '../utils/export.js';
 import { PARAM_LABELS, RESULT_LABELS, TYPE_LABELS, t, formatValue } from '../utils/i18n.js';
 import { escapeHtml } from '../utils/sanitize.js';
+import { Cloud } from '../utils/cloud.js';
 
 function renderHistory() {
     const history = Storage.getHistory();
@@ -167,12 +168,136 @@ function reloadSimulation(id) {
     window.showToast?.('Simulation recharg\u00e9e \u2014 les param\u00e8tres ont \u00e9t\u00e9 restaur\u00e9s', 'success');
 }
 
+// \u2500\u2500 Synchronisation cabinet (cloud) \u2500\u2500
+
+async function renderCloudCard() {
+    const body = document.getElementById('cloud-body');
+    const badge = document.getElementById('cloud-status-badge');
+    if (!body) return;
+
+    const status = await Cloud.status();
+
+    if (status.state === 'unconfigured') {
+        if (badge) badge.innerHTML = '<span class="cov-badge warning">non configur\u00e9</span>';
+        body.innerHTML = `
+            <p style="font-size:0.88rem;color:var(--text-muted);margin:0">
+                Le backend de synchronisation n'est pas encore branch\u00e9. Proc\u00e9dure (\u2248 10 min) :
+                <strong>docs/CLOUD-SETUP.md</strong> du d\u00e9p\u00f4t \u2014 cr\u00e9ation du projet Supabase (r\u00e9gion UE),
+                un script SQL \u00e0 coller, puis renseigner <code>data/cloud-config.json</code>.
+                En attendant, les simulations restent enregistr\u00e9es dans ce navigateur.
+            </p>`;
+        return;
+    }
+
+    if (status.state === 'disconnected') {
+        if (badge) badge.innerHTML = '<span class="cov-badge warning">d\u00e9connect\u00e9</span>';
+        body.innerHTML = `
+            <div class="form-row" style="align-items:flex-end">
+                <div class="form-group" style="max-width:300px">
+                    <label class="form-label">E-mail cabinet</label>
+                    <input type="email" class="form-input" id="cloud-email" placeholder="prenom.nom@auxy-partners.com" autocomplete="email">
+                </div>
+                <div class="form-group">
+                    <button class="btn btn-primary" id="cloud-send-code">Recevoir un code</button>
+                </div>
+            </div>
+            <div class="form-row hidden" id="cloud-code-row" style="align-items:flex-end">
+                <div class="form-group" style="max-width:200px">
+                    <label class="form-label">Code re\u00e7u par e-mail</label>
+                    <input type="text" class="form-input" id="cloud-code" inputmode="numeric" maxlength="6" placeholder="123456" style="letter-spacing:4px;font-variant-numeric:tabular-nums">
+                </div>
+                <div class="form-group">
+                    <button class="btn btn-primary" id="cloud-verify">Se connecter</button>
+                </div>
+            </div>`;
+
+        document.getElementById('cloud-send-code')?.addEventListener('click', async () => {
+            const email = document.getElementById('cloud-email')?.value.trim();
+            if (!email || !email.includes('@')) { window.showToast?.('Saisissez votre e-mail', 'warning'); return; }
+            try {
+                await Cloud.requestCode(email);
+                document.getElementById('cloud-code-row')?.classList.remove('hidden');
+                document.getElementById('cloud-code')?.focus();
+                window.showToast?.('Code envoy\u00e9 \u2014 v\u00e9rifiez votre bo\u00eete mail', 'success');
+            } catch (e) {
+                window.showToast?.(e.message, 'error');
+            }
+        });
+        document.getElementById('cloud-verify')?.addEventListener('click', async () => {
+            const email = document.getElementById('cloud-email')?.value.trim();
+            const code = document.getElementById('cloud-code')?.value.trim();
+            if (!code) { window.showToast?.('Saisissez le code re\u00e7u', 'warning'); return; }
+            try {
+                const who = await Cloud.verifyCode(email, code);
+                window.showToast?.(`Connect\u00e9 : ${who}`, 'success');
+                renderCloudCard();
+            } catch (e) {
+                window.showToast?.(e.message, 'error');
+            }
+        });
+        return;
+    }
+
+    // connected
+    if (badge) badge.innerHTML = `<span class="cov-badge ok">connect\u00e9 \u2014 ${escapeHtml(status.email)}</span>`;
+    body.innerHTML = `
+        <div class="btn-group" style="justify-content:flex-start">
+            <button class="btn btn-primary" id="cloud-push">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                Envoyer vers le cloud
+            </button>
+            <button class="btn btn-outline" id="cloud-pull">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                R\u00e9cup\u00e9rer du cloud
+            </button>
+            <button class="btn btn-ghost" id="cloud-signout">Se d\u00e9connecter</button>
+        </div>
+        <p style="font-size:0.8rem;color:var(--text-muted);margin:10px 0 0">
+            Push : envoie les simulations de ce navigateur (mise \u00e0 jour par identifiant, rien n'est effac\u00e9 c\u00f4t\u00e9 serveur).
+            Pull : r\u00e9cup\u00e8re celles du cabinet et fusionne (la plus r\u00e9cente gagne).
+        </p>`;
+
+    document.getElementById('cloud-push')?.addEventListener('click', async () => {
+        try {
+            const { sent } = await Cloud.pushSimulations();
+            window.showToast?.(sent ? `${sent} simulation${sent > 1 ? 's' : ''} envoy\u00e9e${sent > 1 ? 's' : ''} au cloud` : 'Aucune simulation locale \u00e0 envoyer', sent ? 'success' : 'info');
+        } catch (e) {
+            window.showToast?.(`\u00c9chec de l'envoi : ${e.message}`, 'error');
+        }
+    });
+    document.getElementById('cloud-pull')?.addEventListener('click', async () => {
+        try {
+            const { fetched, added } = await Cloud.pullSimulations();
+            window.showToast?.(`${fetched} simulation${fetched > 1 ? 's' : ''} au cabinet \u2014 ${added} nouvelle${added > 1 ? 's' : ''} ajout\u00e9e${added > 1 ? 's' : ''} ici`, 'success');
+            const content = document.getElementById('history-content');
+            if (content && added > 0) content.innerHTML = renderHistory();
+        } catch (e) {
+            window.showToast?.(`\u00c9chec de la r\u00e9cup\u00e9ration : ${e.message}`, 'error');
+        }
+    });
+    document.getElementById('cloud-signout')?.addEventListener('click', () => {
+        Cloud.signOut();
+        window.showToast?.('D\u00e9connect\u00e9', 'info');
+        renderCloudCard();
+    });
+}
+
 export const HistoryModule = {
     render() {
         return `
             <div class="page-header">
                 <h1>Historique</h1>
                 <p>Retrouvez toutes vos simulations sauvegard\u00e9es</p>
+            </div>
+            <div class="card section" id="cloud-card">
+                <div class="card-header">
+                    <div>
+                        <div class="card-title">Synchronisation cabinet</div>
+                        <div class="card-subtitle">Sauvegarde et partage des simulations entre associ\u00e9s \u2014 donn\u00e9es h\u00e9berg\u00e9es en UE</div>
+                    </div>
+                    <span id="cloud-status-badge"></span>
+                </div>
+                <div id="cloud-body" style="margin-top:12px"></div>
             </div>
             <div id="history-content">
                 ${renderHistory()}
@@ -181,6 +306,8 @@ export const HistoryModule = {
     },
 
     init() {
+        renderCloudCard();
+
         const content = document.getElementById('history-content');
         if (!content) return;
 
