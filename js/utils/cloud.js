@@ -113,11 +113,16 @@ export const Cloud = {
             : { state: 'disconnected' };
     },
 
-    /** Envoie un code à 6 chiffres par e-mail (compte créé par invitation uniquement) */
-    async requestCode(email) {
+    /**
+     * Envoie le lien de connexion par e-mail (compte créé par invitation
+     * uniquement). Le lien ramène sur l'app, qui capte la session via
+     * captureSessionFromHash().
+     */
+    async requestLink(email) {
         await loadCloudConfig();
         if (!isConfigured()) throw new Error('Cloud non configuré');
-        const resp = await fetch(`${config.url}/auth/v1/otp`, {
+        const redirect = encodeURIComponent(window.location.origin + window.location.pathname);
+        const resp = await fetch(`${config.url}/auth/v1/otp?redirect_to=${redirect}`, {
             method: 'POST',
             headers: { apikey: config.anonKey, 'Content-Type': 'application/json' },
             body: JSON.stringify({ email, create_user: false })
@@ -127,8 +132,38 @@ export const Cloud = {
             if (resp.status === 422 || /signup/i.test(body?.msg || body?.error_description || '')) {
                 throw new Error('Adresse non autorisée — les comptes sont créés par invitation.');
             }
+            if (resp.status === 429) {
+                throw new Error('Trop de demandes — réessayez dans une minute.');
+            }
             throw new Error(body?.msg || body?.error_description || `Erreur ${resp.status}`);
         }
+    },
+
+    /**
+     * Capte la session au retour d'un lien magique / d'invitation
+     * (#access_token=...&refresh_token=...). Retourne { email } en cas de
+     * succès, { error } si le lien est expiré/invalide, null sinon.
+     */
+    captureSessionFromHash() {
+        const hash = window.location.hash.replace(/^#/, '');
+        if (!hash.includes('access_token=') && !hash.includes('error_description=')) return null;
+        const params = new URLSearchParams(hash);
+        const errorDesc = params.get('error_description');
+        if (errorDesc) return { error: errorDesc.replace(/\+/g, ' ') };
+        const access_token = params.get('access_token');
+        if (!access_token) return null;
+        let email = null;
+        try {
+            const payload = JSON.parse(atob(access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+            email = payload.email || null;
+        } catch { /* JWT illisible : la session reste valide, e-mail inconnu */ }
+        setSession({
+            access_token,
+            refresh_token: params.get('refresh_token'),
+            expires_at: Math.floor(Date.now() / 1000) + parseInt(params.get('expires_in') || '3600', 10),
+            email
+        });
+        return { email };
     },
 
     /** Vérifie le code reçu par e-mail et ouvre la session */

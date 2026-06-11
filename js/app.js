@@ -13,6 +13,7 @@ import { ImmobilierModule } from './modules/immobilier.js';
 import { CovenantsModule } from './modules/covenants.js';
 import { DebtProfileModule } from './modules/debtprofile.js';
 import { Storage } from './utils/storage.js';
+import { Cloud } from './utils/cloud.js';
 
 // =============================================
 // MODULE REGISTRY
@@ -210,6 +211,18 @@ function init() {
             // Could open a command palette in the future
         }
     });
+
+    // Retour d'un lien de connexion cloud (#access_token=...) : capte la
+    // session AVANT le routeur, nettoie l'URL et atterrit sur l'Historique.
+    if (location.hash.includes('access_token=') || location.hash.includes('error_description=')) {
+        const result = Cloud.captureSessionFromHash();
+        history.replaceState(null, '', location.pathname + '#history');
+        if (result?.email) {
+            setTimeout(() => showToast(`Connecté : ${result.email}`, 'success'), 400);
+        } else if (result?.error) {
+            setTimeout(() => showToast(`Connexion impossible : ${result.error}`, 'error'), 400);
+        }
+    }
 
     // Initial page from hash (la partie avant '?' — un payload de partage peut suivre)
     const initialPage = (location.hash.slice(1) || 'dashboard').split('?')[0];

@@ -1,9 +1,21 @@
 # Synchronisation cabinet — mise en place du backend (Supabase)
 
 Objectif : sauvegarder les simulations hors du navigateur et les partager
-entre les associés. Connexion par **code à 6 chiffres reçu par e-mail**
-(aucun mot de passe), données hébergées en **Union européenne**, comptes
-créés **par invitation uniquement**.
+entre les associés. Connexion par **lien magique reçu par e-mail**
+(aucun mot de passe), données hébergées en **Union européenne (Paris)**,
+comptes créés **par invitation uniquement**.
+
+> ✅ **Configuration réalisée le 11/06/2026** — projet `auxy-finance-lab`
+> (région eu-west-3), table + RLS créées, signups désactivés, Site URL
+> pointée sur l'app GitHub Pages, config branchée dans
+> `data/cloud-config.json`. Ce document reste la référence si le projet
+> doit être recréé un jour.
+
+Note : l'édition des templates d'e-mail (pour afficher un code à 6
+chiffres) nécessite un SMTP personnalisé — le flux retenu est donc le
+**lien magique** par défaut : cliquer le lien reçu rouvre l'application
+connectée. La fonction `verifyCode()` de `js/utils/cloud.js` reste
+disponible si un SMTP custom est configuré plus tard.
 
 Durée : ~10 minutes, une seule fois. Tout est gratuit (free tier).
 

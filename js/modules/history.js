@@ -198,39 +198,20 @@ async function renderCloudCard() {
                     <input type="email" class="form-input" id="cloud-email" placeholder="prenom.nom@auxy-partners.com" autocomplete="email">
                 </div>
                 <div class="form-group">
-                    <button class="btn btn-primary" id="cloud-send-code">Recevoir un code</button>
+                    <button class="btn btn-primary" id="cloud-send-link">Recevoir le lien de connexion</button>
                 </div>
             </div>
-            <div class="form-row hidden" id="cloud-code-row" style="align-items:flex-end">
-                <div class="form-group" style="max-width:200px">
-                    <label class="form-label">Code re\u00e7u par e-mail</label>
-                    <input type="text" class="form-input" id="cloud-code" inputmode="numeric" maxlength="6" placeholder="123456" style="letter-spacing:4px;font-variant-numeric:tabular-nums">
-                </div>
-                <div class="form-group">
-                    <button class="btn btn-primary" id="cloud-verify">Se connecter</button>
-                </div>
-            </div>`;
+            <p class="hidden" id="cloud-link-sent" style="font-size:0.85rem;color:var(--success);margin:8px 0 0">
+                E-mail envoy\u00e9 \u2713 \u2014 cliquez le lien re\u00e7u : l'application se rouvrira connect\u00e9e.
+            </p>`;
 
-        document.getElementById('cloud-send-code')?.addEventListener('click', async () => {
+        document.getElementById('cloud-send-link')?.addEventListener('click', async () => {
             const email = document.getElementById('cloud-email')?.value.trim();
             if (!email || !email.includes('@')) { window.showToast?.('Saisissez votre e-mail', 'warning'); return; }
             try {
-                await Cloud.requestCode(email);
-                document.getElementById('cloud-code-row')?.classList.remove('hidden');
-                document.getElementById('cloud-code')?.focus();
-                window.showToast?.('Code envoy\u00e9 \u2014 v\u00e9rifiez votre bo\u00eete mail', 'success');
-            } catch (e) {
-                window.showToast?.(e.message, 'error');
-            }
-        });
-        document.getElementById('cloud-verify')?.addEventListener('click', async () => {
-            const email = document.getElementById('cloud-email')?.value.trim();
-            const code = document.getElementById('cloud-code')?.value.trim();
-            if (!code) { window.showToast?.('Saisissez le code re\u00e7u', 'warning'); return; }
-            try {
-                const who = await Cloud.verifyCode(email, code);
-                window.showToast?.(`Connect\u00e9 : ${who}`, 'success');
-                renderCloudCard();
+                await Cloud.requestLink(email);
+                document.getElementById('cloud-link-sent')?.classList.remove('hidden');
+                window.showToast?.('Lien de connexion envoy\u00e9 \u2014 v\u00e9rifiez votre bo\u00eete mail', 'success');
             } catch (e) {
                 window.showToast?.(e.message, 'error');
             }
