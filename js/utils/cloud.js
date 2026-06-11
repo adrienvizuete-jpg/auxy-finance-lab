@@ -133,7 +133,7 @@ export const Cloud = {
                 throw new Error('Adresse non autorisée — les comptes sont créés par invitation.');
             }
             if (resp.status === 429) {
-                throw new Error('Trop de demandes — réessayez dans une minute.');
+                throw new Error('Limite d\'envoi d\'e-mails atteinte (2/heure sur le service intégré) — réessayez dans une heure, ou utilisez le dernier lien déjà reçu par e-mail s\'il n\'a pas servi.');
             }
             throw new Error(body?.msg || body?.error_description || `Erreur ${resp.status}`);
         }
