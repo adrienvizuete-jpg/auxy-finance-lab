@@ -6,7 +6,6 @@
 import { Financial } from '../utils/financial.js';
 import { Charts } from '../utils/charts.js';
 import { Export } from '../utils/export.js';
-import { Storage } from '../utils/storage.js';
 import { escapeHtml } from '../utils/sanitize.js';
 
 const MAX_LOANS = 5;
@@ -25,7 +24,7 @@ function defaultLoan(name) {
     };
 }
 
-let loans = [defaultLoan('Prêt A'), defaultLoan('Prêt B')];
+const loans = [defaultLoan('Prêt A'), defaultLoan('Prêt B')];
 loans[1].rate = 4.0;
 loans[1].duration = 120;
 
@@ -45,16 +44,6 @@ function setNestedField(loan, fieldPath, value) {
         }
         obj[parts[parts.length - 1]] = value;
     }
-}
-
-function getNestedField(loan, fieldPath) {
-    const parts = fieldPath.split('.');
-    let obj = loan;
-    for (const p of parts) {
-        if (obj == null) return undefined;
-        obj = obj[p];
-    }
-    return obj;
 }
 
 function computePersonInsurance(person, principal, balance, periodsPerYear) {

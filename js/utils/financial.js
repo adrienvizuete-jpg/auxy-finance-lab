@@ -3,6 +3,70 @@
  * All core financial formulas for credit simulation, structured finance, etc.
  */
 
+/**
+ * Ligne d'échéancier d'un crédit amortissable (constant / dégressif / in fine /
+ * crédit-bail). `totalInsurance` et `deferred` n'existent que sur certains produits.
+ * @typedef {Object} AmortRow
+ * @property {number} period Numéro de période (1..n)
+ * @property {number} payment Échéance totale (assurance incluse)
+ * @property {number} principal Part de capital amorti
+ * @property {number} interest Part d'intérêts
+ * @property {number} insurance Part d'assurance
+ * @property {number} balance Capital restant dû après l'échéance
+ * @property {number} totalInterest Intérêts cumulés
+ * @property {number} [totalInsurance] Assurance cumulée
+ * @property {boolean} [deferred] true pendant la phase de différé
+ */
+
+/**
+ * Paramètres communs des crédits amortissables.
+ * @typedef {Object} LoanParams
+ * @property {number} principal Capital emprunté
+ * @property {number} annualRate Taux nominal annuel (%)
+ * @property {number} durationMonths Durée totale (mois)
+ * @property {number} [insuranceMonthly] Assurance forfaitaire mensuelle (€)
+ * @property {number} [insuranceRate] Taux d'assurance annuel (%) — prioritaire sur le forfait
+ * @property {string} [insuranceMode] 'ci' (capital initial) | 'crd' (capital restant dû)
+ * @property {number} [fees] Frais de dossier (€)
+ * @property {string} [frequency] 'monthly' | 'quarterly' | 'semiannual' | 'annual'
+ * @property {number} [deferralMonths] Différé (mois)
+ * @property {string} [deferralType] 'partial' (franchise de capital) | 'total' (intérêts capitalisés)
+ */
+
+/**
+ * Résultat d'une simulation de crédit — les champs varient selon le produit
+ * (amortissable constant / dégressif / in fine), d'où les propriétés optionnelles.
+ * @typedef {Object} LoanResult
+ * @property {number} [periodicPayment] Échéance courante (hors différé)
+ * @property {number} [monthlyPayment] Équivalent mensuel de l'échéance
+ * @property {number} [monthlyPaymentExInsurance] Équivalent mensuel hors assurance
+ * @property {number} [firstPayment] Première échéance (dégressif)
+ * @property {number} [lastPayment] Dernière échéance (dégressif)
+ * @property {number} [averagePayment] Échéance moyenne (dégressif)
+ * @property {number} [finalPayment] Échéance finale (in fine)
+ * @property {number} totalInterest Total des intérêts
+ * @property {number} [totalInsurance] Total assurance
+ * @property {number} totalCost Coût total du crédit
+ * @property {number} totalPayment Total remboursé (frais inclus)
+ * @property {number | null} taeg TAEG (%) ou null si non calculable
+ * @property {string} frequency Périodicité des échéances
+ * @property {number} [deferralMonths]
+ * @property {string} [deferralType]
+ * @property {AmortRow[]} schedule Échéancier détaillé
+ * @property {boolean} [invalid] true si les paramètres étaient invalides
+ */
+
+/**
+ * Tranche d'un financement multi-tranches (LBO).
+ * @typedef {Object} TrancheInput
+ * @property {string} [name] Libellé de la tranche
+ * @property {number} amount Montant (€)
+ * @property {number} rate Taux annuel (%)
+ * @property {number} duration Durée (mois)
+ * @property {string} [type] 'infine' | amortissable par défaut
+ * @property {string} [frequency] Périodicité des échéances
+ */
+
 export const Financial = {
 
     // =============================================
@@ -26,6 +90,12 @@ export const Financial = {
 
     /**
      * Interest portion of payment (IPMT)
+     * @param {number} rate Taux périodique
+     * @param {number} per Période visée (1..nper)
+     * @param {number} nper Nombre total de périodes
+     * @param {number} pv Valeur actuelle (capital)
+     * @param {number} [fv] Valeur future
+     * @returns {number}
      */
     ipmt(rate, per, nper, pv, fv = 0) {
         const payment = this.pmt(rate, nper, pv, fv);
@@ -35,6 +105,12 @@ export const Financial = {
 
     /**
      * Principal portion of payment (PPMT)
+     * @param {number} rate Taux périodique
+     * @param {number} per Période visée (1..nper)
+     * @param {number} nper Nombre total de périodes
+     * @param {number} pv Valeur actuelle (capital)
+     * @param {number} [fv] Valeur future
+     * @returns {number}
      */
     ppmt(rate, per, nper, pv, fv = 0) {
         return this.pmt(rate, nper, pv, fv) - this.ipmt(rate, per, nper, pv, fv);
@@ -42,6 +118,11 @@ export const Financial = {
 
     /**
      * Future Value (FV)
+     * @param {number} rate Taux périodique
+     * @param {number} nper Nombre de périodes
+     * @param {number} pmt Paiement périodique
+     * @param {number} pv Valeur actuelle
+     * @returns {number}
      */
     fv(rate, nper, pmt, pv) {
         if (rate === 0) return -(pv + pmt * nper);
@@ -51,6 +132,11 @@ export const Financial = {
 
     /**
      * Present Value (PV)
+     * @param {number} rate Taux périodique
+     * @param {number} nper Nombre de périodes
+     * @param {number} pmt Paiement périodique
+     * @param {number} [fv] Valeur future
+     * @returns {number}
      */
     pv(rate, nper, pmt, fv = 0) {
         if (rate === 0) return -(fv + pmt * nper);
@@ -60,6 +146,9 @@ export const Financial = {
 
     /**
      * Net Present Value (NPV)
+     * @param {number} rate Taux d'actualisation périodique
+     * @param {number[]} cashflows Flux (le premier est actualisé d'une période)
+     * @returns {number}
      */
     npv(rate, cashflows) {
         return cashflows.reduce((acc, cf, i) => acc + cf / Math.pow(1 + rate, i + 1), 0);
@@ -67,11 +156,19 @@ export const Financial = {
 
     /**
      * Internal Rate of Return (IRR) - Newton's method with multiple guesses
+     * @param {number[]} cashflows Flux périodiques (le premier en période 0)
+     * @param {number} [guess] Estimation initiale
+     * @returns {number} Taux périodique
+     * @throws {Error} si aucune estimation ne converge
      */
     irr(cashflows, guess = 0.1) {
         const maxIter = 1000;
         const tolerance = 1e-10;
 
+        /**
+         * @param {number} initialGuess
+         * @returns {number | null}
+         */
         const tryGuess = (initialGuess) => {
             let rate = initialGuess;
             for (let i = 0; i < maxIter; i++) {
@@ -102,6 +199,9 @@ export const Financial = {
 
     /**
      * Effective Annual Rate from nominal rate
+     * @param {number} nominalRate Taux nominal annuel (décimal)
+     * @param {number} periodsPerYear Nombre de périodes par an
+     * @returns {number}
      */
     effectiveRate(nominalRate, periodsPerYear) {
         return Math.pow(1 + nominalRate / periodsPerYear, periodsPerYear) - 1;
@@ -110,6 +210,9 @@ export const Financial = {
     /**
      * TAEG (Taux Annuel Effectif Global) - EU directive 2008/48/CE
      * Actuarial annualization: (1 + periodic_irr)^ppy - 1
+     * @param {number[]} cashflows Flux périodiques (décaissement initial négatif)
+     * @param {number} [periodsPerYear] Périodes par an
+     * @returns {number} TAEG en %
      */
     taeg(cashflows, periodsPerYear = 12) {
         const periodicRate = this.irr(cashflows);
@@ -120,20 +223,35 @@ export const Financial = {
     // HELPERS
     // =============================================
 
+    /** @type {Record<string, number>} */
     _frequencyMap: { monthly: 12, quarterly: 4, semiannual: 2, annual: 1 },
 
+    /** @type {Record<string, string>} */
     _frequencyLabels: { monthly: 'Mensualité', quarterly: 'Échéance trim.', semiannual: 'Échéance sem.', annual: 'Annuité' },
 
+    /** @type {Record<string, string>} */
     _periodLabels: { monthly: 'Mois', quarterly: 'Trim.', semiannual: 'Sem.', annual: 'Année' },
 
+    /**
+     * @param {string} [frequency]
+     * @returns {number} Périodes par an (12 par défaut)
+     */
     getPeriodsPerYear(frequency = 'monthly') {
         return this._frequencyMap[frequency] || 12;
     },
 
+    /**
+     * @param {string} [frequency]
+     * @returns {string} Libellé de l'échéance
+     */
     getPaymentLabel(frequency = 'monthly') {
         return this._frequencyLabels[frequency] || 'Mensualité';
     },
 
+    /**
+     * @param {string} [frequency]
+     * @returns {string} Libellé de la période
+     */
     getPeriodLabel(frequency = 'monthly') {
         return this._periodLabels[frequency] || 'Mois';
     },
@@ -141,12 +259,17 @@ export const Financial = {
     /**
      * Garde-fou commun : true si les paramètres permettent un échéancier.
      * Évite Infinity/NaN silencieux sur durée ou principal invalides.
+     * @param {number} principal
+     * @param {number} durationMonths
+     * @returns {boolean}
      */
     _validLoanParams(principal, durationMonths) {
         return isFinite(principal) && principal > 0 && isFinite(durationMonths) && durationMonths >= 1;
     },
 
-    /** Résultat vide normalisé renvoyé quand les paramètres sont invalides */
+    /** Résultat vide normalisé renvoyé quand les paramètres sont invalides
+     *  @param {string} [frequency]
+     *  @returns {LoanResult} */
     _emptyScheduleResult(frequency = 'monthly') {
         return {
             periodicPayment: 0, monthlyPayment: 0, monthlyPaymentExInsurance: 0,
@@ -164,6 +287,8 @@ export const Financial = {
      * Crédit Amortissable - Échéances Constantes
      * Supports frequency (monthly/quarterly/semiannual/annual)
      * Supports deferral (partial: interest-only, total: capitalized interest)
+     * @param {LoanParams} params
+     * @returns {LoanResult}
      */
     amortissableConstant({ principal, annualRate, durationMonths, insuranceMonthly = 0, insuranceRate = 0, insuranceMode = 'ci', fees = 0, frequency = 'monthly', deferralMonths = 0, deferralType = 'partial' }) {
         if (!this._validLoanParams(principal, durationMonths)) return this._emptyScheduleResult(frequency);
@@ -173,6 +298,7 @@ export const Financial = {
         const deferralPeriods = Math.min(Math.round(deferralMonths / (12 / ppy)), totalPeriods - 1);
         const amortPeriods = totalPeriods - deferralPeriods;
 
+        /** @param {number} bal Capital restant dû courant */
         const getInsurance = (bal) => {
             if (insuranceRate > 0) {
                 const base = insuranceMode === 'crd' ? bal : principal;
@@ -181,6 +307,7 @@ export const Financial = {
             return insuranceMonthly * (12 / ppy);
         };
 
+        /** @type {AmortRow[]} */
         const schedule = [];
         let balance = principal;
         let totalInterest = 0;
@@ -228,7 +355,6 @@ export const Financial = {
 
         const totalPayment = schedule.reduce((s, r) => s + r.payment, 0) + fees;
         const totalCost = totalPayment - principal;
-        const firstInsurance = schedule[0]?.insurance || 0;
         const firstAmortRow = schedule.find(r => !r.deferred) || schedule[0];
 
         // TAEG (actuarial annualization per EU directive)
@@ -256,6 +382,8 @@ export const Financial = {
     /**
      * Crédit Amortissable - Amortissement Constant (échéances dégressives)
      * Supports frequency + deferral
+     * @param {LoanParams} params
+     * @returns {LoanResult}
      */
     amortissableDegressif({ principal, annualRate, durationMonths, insuranceMonthly = 0, insuranceRate = 0, insuranceMode = 'ci', fees = 0, frequency = 'monthly', deferralMonths = 0, deferralType = 'partial' }) {
         if (!this._validLoanParams(principal, durationMonths)) return this._emptyScheduleResult(frequency);
@@ -265,6 +393,7 @@ export const Financial = {
         const deferralPeriods = Math.min(Math.round(deferralMonths / (12 / ppy)), totalPeriods - 1);
         const amortPeriods = totalPeriods - deferralPeriods;
 
+        /** @param {number} bal Capital restant dû courant */
         const getInsurance = (bal) => {
             if (insuranceRate > 0) {
                 const base = insuranceMode === 'crd' ? bal : principal;
@@ -273,6 +402,7 @@ export const Financial = {
             return insuranceMonthly * (12 / ppy);
         };
 
+        /** @type {AmortRow[]} */
         const schedule = [];
         let balance = principal;
         let totalInterest = 0;
@@ -349,8 +479,12 @@ export const Financial = {
     /**
      * Crédit In Fine - Intérêts seuls puis remboursement capital
      * Supports frequency
+     * @param {LoanParams} params
+     * @returns {LoanResult}
      */
-    inFine({ principal, annualRate, durationMonths, insuranceMonthly = 0, insuranceRate = 0, insuranceMode = 'ci', fees = 0, frequency = 'monthly' }) {
+    // insuranceMode (LoanParams) est sans effet en in fine : le CRD reste égal
+    // au capital initial, les assiettes 'ci' et 'crd' sont donc équivalentes.
+    inFine({ principal, annualRate, durationMonths, insuranceMonthly = 0, insuranceRate = 0, fees = 0, frequency = 'monthly' }) {
         if (!this._validLoanParams(principal, durationMonths)) return this._emptyScheduleResult(frequency);
         const ppy = this.getPeriodsPerYear(frequency);
         const periodicRate = annualRate / 100 / ppy;
@@ -363,6 +497,7 @@ export const Financial = {
             }
             return insuranceMonthly * (12 / ppy);
         };
+        /** @type {AmortRow[]} */
         const schedule = [];
         let totalInterest = 0;
         let totalInsurance = 0;
@@ -418,10 +553,21 @@ export const Financial = {
 
     /**
      * Analyse de remboursement anticipé avec calcul des IRA
-     * @param {object} params - { schedule, principal, annualRate, frequency, prepaymentPeriod, prepaymentAmount, strategy }
      * strategy: 'reduceDuration' | 'reducePayment'
+     * @param {{
+     *   schedule: AmortRow[],
+     *   principal: number,
+     *   annualRate: number,
+     *   frequency?: string,
+     *   prepaymentPeriod: number,
+     *   prepaymentAmount: number,
+     *   strategy?: string,
+     *   insuranceMonthly?: number,
+     *   insuranceRate?: number,
+     *   insuranceMode?: string
+     * }} params
      */
-    prepaymentAnalysis({ schedule, principal, annualRate, frequency = 'monthly', prepaymentPeriod, prepaymentAmount, strategy = 'reduceDuration', insuranceMonthly = 0, insuranceRate = 0, insuranceMode = 'ci', type = 'constant', deferralMonths = 0, deferralType = 'partial' }) {
+    prepaymentAnalysis({ schedule, principal, annualRate, frequency = 'monthly', prepaymentPeriod, prepaymentAmount, strategy = 'reduceDuration', insuranceMonthly = 0, insuranceRate = 0, insuranceMode = 'ci' }) {
         const ppy = this.getPeriodsPerYear(frequency);
         const periodicRate = annualRate / 100 / ppy;
 
@@ -558,11 +704,13 @@ export const Financial = {
 
     /**
      * Crédit-Bail (Leasing)
+     * @param {{ assetValue: number, deposit: number, annualRate: number, durationMonths: number, residualValue: number, fees?: number }} params
      */
     creditBail({ assetValue, deposit, annualRate, durationMonths, residualValue, fees = 0 }) {
         const financed = assetValue - deposit;
         const monthlyRate = annualRate / 100 / 12;
         const payment = Math.abs(this.pmt(monthlyRate, durationMonths, financed, -residualValue));
+        /** @type {AmortRow[]} */
         const schedule = [];
         let balance = financed;
         let totalRent = 0;
@@ -611,6 +759,7 @@ export const Financial = {
 
     /**
      * Ligne de Crédit Revolving
+     * @param {{ creditLine: number, utilization: number, annualRate: number, commitmentFee: number, durationMonths: number }} params
      */
     revolving({ creditLine, utilization, annualRate, commitmentFee, durationMonths }) {
         const monthlyRate = annualRate / 100 / 12;
@@ -653,6 +802,7 @@ export const Financial = {
 
     /**
      * Prêt Relais
+     * @param {{ bridgeAmount: number, annualRate: number, durationMonths: number, expectedSalePrice: number, capitalizedInterest?: boolean, fees?: number }} params
      */
     pretRelais({ bridgeAmount, annualRate, durationMonths, expectedSalePrice, capitalizedInterest = false, fees = 0 }) {
         const monthlyRate = annualRate / 100 / 12;
@@ -707,12 +857,20 @@ export const Financial = {
      * est constant jusqu'à la récupération ; seuls les intérêts de portage sont servis.
      * À distinguer de pretRelais (relais d'acquisition adossé à une revente).
      *
-     * @param {number} tvaAmount      - TVA préfinancée (capital mobilisé)
-     * @param {number} annualRate     - Taux tout-compris du relais (Euribor + marge)
-     * @param {number} durationMonths - Délai jusqu'à récupération de la TVA
-     * @param {string} frequency      - Périodicité des intérêts (défaut : trimestriel)
-     * @param {string} interestMode   - 'periodic' (intérêts servis) | 'capitalized' (in fine)
-     * @param {number} fees           - Frais de dossier / commission d'engagement
+     * @param {{
+     *   tvaAmount: number,
+     *   annualRate: number,
+     *   durationMonths: number,
+     *   frequency?: string,
+     *   interestMode?: string,
+     *   fees?: number
+     * }} params
+     *   - tvaAmount      : TVA préfinancée (capital mobilisé)
+     *   - annualRate     : Taux tout-compris du relais (Euribor + marge)
+     *   - durationMonths : Délai jusqu'à récupération de la TVA
+     *   - frequency      : Périodicité des intérêts (défaut : trimestriel)
+     *   - interestMode   : 'periodic' (intérêts servis) | 'capitalized' (in fine)
+     *   - fees           : Frais de dossier / commission d'engagement
      */
     creditRelaisTVA({ tvaAmount, annualRate, durationMonths, frequency = 'quarterly', interestMode = 'periodic', fees = 0 }) {
         const ppy = this.getPeriodsPerYear(frequency);
@@ -778,6 +936,7 @@ export const Financial = {
 
     /**
      * Dette Mezzanine
+     * @param {{ principal: number, cashRate: number, pikRate: number, durationMonths: number, equityKicker?: number, fees?: number }} params
      */
     detteMezzanine({ principal, cashRate, pikRate, durationMonths, equityKicker = 0, fees = 0 }) {
         const monthlyCashRate = cashRate / 100 / 12;
@@ -836,6 +995,7 @@ export const Financial = {
     /**
      * Tranching - Multi-tranche leveraged loan simulation
      * Runs each tranche independently and builds a consolidated schedule
+     * @param {TrancheInput[]} tranches
      */
     tranching(tranches) {
         const trancheResults = tranches.map(t => {
@@ -921,8 +1081,13 @@ export const Financial = {
 
     /**
      * Structured Finance - Multi-tranche waterfall
+     * @param {{
+     *   tranches: Array<{ name: string, amount: number, rate: number, type?: string, priority: number }>,
+     *   projectCashflows: number[],
+     *   durationMonths: number
+     * }} params tranches : type 'senior' | 'mezzanine' | 'equity'
      */
-    structuredFinance({ totalDebt, tranches, projectCashflows, durationMonths }) {
+    structuredFinance({ tranches, projectCashflows, durationMonths }) {
         // tranches: [{ name, amount, rate, type: 'senior'|'mezzanine'|'equity', priority }]
         const sortedTranches = [...tranches].sort((a, b) => a.priority - b.priority);
         const results = sortedTranches.map(t => ({
@@ -930,8 +1095,8 @@ export const Financial = {
             balance: t.amount,
             totalInterest: 0,
             totalPrincipal: 0,
-            payments: [],
-            irr: null
+            payments: /** @type {number[]} */ ([]),
+            irr: /** @type {number | null} */ (null)
         }));
 
         const waterfall = [];
@@ -939,6 +1104,7 @@ export const Financial = {
         for (let month = 1; month <= durationMonths; month++) {
             const cashflow = projectCashflows[month - 1] || 0;
             let remaining = cashflow;
+            /** @type {{ period: number, cashflow: number, allocations: Array<{ name: string, interest: number, principal: number }>, excess?: number }} */
             const monthData = { period: month, cashflow, allocations: [] };
 
             // Pay interest first (by priority)
@@ -987,6 +1153,9 @@ export const Financial = {
 
     /**
      * Debt Service Coverage Ratio
+     * @param {number} netOperatingIncome
+     * @param {number} totalDebtService
+     * @returns {number}
      */
     dscr(netOperatingIncome, totalDebtService) {
         return totalDebtService === 0 ? Infinity : netOperatingIncome / totalDebtService;
@@ -994,6 +1163,9 @@ export const Financial = {
 
     /**
      * Loan-to-Value Ratio
+     * @param {number} loanAmount
+     * @param {number} assetValue
+     * @returns {number} LTV en %
      */
     ltv(loanAmount, assetValue) {
         return assetValue === 0 ? 0 : (loanAmount / assetValue) * 100;
@@ -1001,6 +1173,9 @@ export const Financial = {
 
     /**
      * Interest Coverage Ratio
+     * @param {number} ebit
+     * @param {number} interestExpense
+     * @returns {number}
      */
     icr(ebit, interestExpense) {
         return interestExpense === 0 ? Infinity : ebit / interestExpense;
@@ -1008,6 +1183,9 @@ export const Financial = {
 
     /**
      * Debt-to-Equity Ratio
+     * @param {number} totalDebt
+     * @param {number} totalEquity
+     * @returns {number}
      */
     debtToEquity(totalDebt, totalEquity) {
         return totalEquity === 0 ? Infinity : totalDebt / totalEquity;
@@ -1015,6 +1193,8 @@ export const Financial = {
 
     /**
      * Weighted Average Cost of Capital
+     * @param {{ debtAmount: number, equityAmount: number, costOfDebt: number, costOfEquity: number, taxRate: number }} params
+     * @returns {number}
      */
     wacc({ debtAmount, equityAmount, costOfDebt, costOfEquity, taxRate }) {
         const total = debtAmount + equityAmount;
@@ -1030,6 +1210,7 @@ export const Financial = {
 
     /**
      * Sensitivity analysis - varies rate and duration
+     * @param {{ principal: number, baseRate: number, baseDuration: number, rateRange: number[], durationRange: number[], insuranceMonthly?: number, frequency?: string }} params
      */
     sensitivityAnalysis({ principal, baseRate, baseDuration, rateRange, durationRange, insuranceMonthly = 0, frequency = 'monthly' }) {
         const results = [];
@@ -1067,6 +1248,11 @@ export const Financial = {
     // FORMATTING
     // =============================================
 
+    /**
+     * @param {number | null | undefined} value
+     * @param {number} [decimals]
+     * @returns {string}
+     */
     formatCurrency(value, decimals = 0) {
         if (value == null || isNaN(value)) return '—';
         return new Intl.NumberFormat('fr-FR', {
@@ -1077,6 +1263,11 @@ export const Financial = {
         }).format(value);
     },
 
+    /**
+     * @param {number | null | undefined} value Valeur en % (ex: 3,25 pour 3,25 %)
+     * @param {number} [decimals]
+     * @returns {string}
+     */
     formatPercent(value, decimals = 2) {
         if (value == null || isNaN(value)) return '—';
         return new Intl.NumberFormat('fr-FR', {
@@ -1086,6 +1277,11 @@ export const Financial = {
         }).format(value / 100);
     },
 
+    /**
+     * @param {number | null | undefined} value
+     * @param {number} [decimals]
+     * @returns {string}
+     */
     formatNumber(value, decimals = 0) {
         if (value == null || isNaN(value)) return '—';
         return new Intl.NumberFormat('fr-FR', {

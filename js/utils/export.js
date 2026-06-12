@@ -455,12 +455,11 @@ export const Export = {
     /**
      * Export benchmark comparison to PDF
      */
-    benchmarkPdf(loans, comparisonData) {
+    benchmarkPdf(loans) {
         const fmtCur = v => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(v);
         const fmtCur2 = v => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(v);
 
         const typeLabels = { constant: 'Amortissable', degressif: 'Dégressif', infine: 'In Fine' };
-        const modeLabels = { amount: 'Montant fixe', rate: 'Taux' };
         const natureLabels = { ci: 'Capital Emprunte', crd: 'Capital Restant Du' };
 
         const sections = [

@@ -20,31 +20,135 @@
 
 import { Financial } from './financial.js';
 
+/** @typedef {import('./financial.js').LoanResult} LoanResult */
+
+/**
+ * Ligne de saisie d'un crédit (conditions d'origine).
+ * @typedef {Object} Loan
+ * @property {string} label Libellé du crédit
+ * @property {number} amount Montant initial (€)
+ * @property {number} rate Taux annuel (%)
+ * @property {number} durationMonths Durée totale (mois)
+ * @property {number} startYear Année de la 1ère échéance
+ * @property {number} startMonth Mois de la 1ère échéance (1-12)
+ * @property {string} amortType 'constant' | 'degressif' | 'infine'
+ * @property {string} frequency 'monthly' | 'quarterly' | 'semiannual' | 'annual'
+ * @property {number} [deferralMonths] Différé (mois)
+ * @property {boolean} [isNew] Nouveau financement (scénario projectif)
+ * @property {number} [crdCheck] CRD constaté pour contrôle (€)
+ */
+
+/**
+ * Ligne d'échéancier daté (index mensuel absolu).
+ * @typedef {Object} ScheduleRow
+ * @property {number} mIdx Index mensuel absolu (year × 12 + month − 1)
+ * @property {number} payment
+ * @property {number} principal
+ * @property {number} interest
+ * @property {number} balance
+ */
+
+/**
+ * Échéancier daté d'un crédit, reconstruit depuis ses conditions d'origine.
+ * @typedef {Object} Schedule
+ * @property {ScheduleRow[]} rows
+ * @property {number} drawIdx Mois du tirage (mois précédant la 1ère échéance)
+ * @property {number} firstIdx Index de la 1ère échéance
+ * @property {number} lastIdx Index de la dernière échéance
+ * @property {LoanResult} result Résultat brut du moteur Financial
+ */
+
+/**
+ * Crédit + son échéancier daté + CRD à la date d'analyse.
+ * @typedef {Object} LoanSchedule
+ * @property {Loan} loan
+ * @property {Schedule} sched
+ * @property {number} crdAtAnalysis
+ */
+
+/**
+ * Agrégat d'un exercice fiscal.
+ * @typedef {Object} AggregateYear
+ * @property {number} closingYear
+ * @property {string} label
+ * @property {number} endIdx
+ * @property {number} opening Encours d'ouverture
+ * @property {number} drawdowns Tirages de l'exercice
+ * @property {number} principal Capital amorti
+ * @property {number} interest Intérêts payés
+ * @property {number} service Service de la dette (capital + intérêts)
+ * @property {number} closing Encours de clôture
+ * @property {boolean} isPast Exercice entièrement passé
+ * @property {boolean} isCurrent Exercice de la date d'analyse
+ */
+
+/**
+ * Résultat de aggregate().
+ * @typedef {Object} Aggregate
+ * @property {LoanSchedule[]} schedules
+ * @property {AggregateYear[]} years
+ * @property {Array<{ label: string, isNew: boolean, data: number[] }>} perLoanCapital
+ */
+
+/**
+ * KPIs du profil de dette.
+ * @typedef {Object} Kpis
+ * @property {number} exposure CRD total à la date d'analyse
+ * @property {number} currentService Service de l'exercice courant
+ * @property {string} currentLabel Libellé de l'exercice courant
+ * @property {{ label: string, service: number } | null} peak Pic de service futur
+ * @property {number} weightedRate Taux moyen pondéré (%)
+ * @property {number} wal Durée de vie moyenne pondérée (années)
+ * @property {number} amortized3yPct Capital amorti à 3 ans (% de la base future)
+ * @property {number} newCount Nombre de nouveaux financements
+ * @property {number} newAmount Montant des nouveaux financements
+ */
+
 export const DebtEngine = {
 
     // ── Dates mensuelles ──
+    /**
+     * @param {number} year
+     * @param {number} month Mois (1-12)
+     * @returns {number} Index mensuel absolu
+     */
     monthIndex(year, month) {
         return year * 12 + (month - 1);
     },
 
+    /**
+     * @param {number} mIdx
+     * @returns {string} Libellé « MM/YYYY »
+     */
     indexToLabel(mIdx) {
         const year = Math.floor(mIdx / 12);
         const month = (mIdx % 12) + 1;
         return `${String(month).padStart(2, '0')}/${year}`;
     },
 
-    /** Année de clôture de l'exercice fiscal contenant le mois mIdx */
+    /** Année de clôture de l'exercice fiscal contenant le mois mIdx
+     *  @param {number} mIdx
+     *  @param {number} [closingMonth]
+     *  @returns {number} */
     fiscalYearOf(mIdx, closingMonth = 12) {
         const year = Math.floor(mIdx / 12);
         const month = (mIdx % 12) + 1;
         return month <= closingMonth ? year : year + 1;
     },
 
-    /** Dernier mois (index) de l'exercice clos en closingYear */
+    /** Dernier mois (index) de l'exercice clos en closingYear
+     *  @param {number} closingYear
+     *  @param {number} [closingMonth]
+     *  @returns {number} */
     fiscalYearEnd(closingYear, closingMonth = 12) {
         return this.monthIndex(closingYear, closingMonth);
     },
 
+    /**
+     * @param {number} closingYear
+     * @param {number} [closingMonth]
+     * @returns {string} « YYYY » (clôture décembre) ou « MM/YYYY »
+     */
     fiscalYearLabel(closingYear, closingMonth = 12) {
         return closingMonth === 12
             ? String(closingYear)
@@ -58,6 +162,8 @@ export const DebtEngine = {
      *          amortType: 'constant'|'degressif'|'infine', frequency, deferralMonths? }
      * Retourne { rows: [{ mIdx, payment, principal, interest, balance }],
      *            drawIdx, firstIdx, lastIdx, result }
+     * @param {Loan} loan
+     * @returns {Schedule}
      */
     buildSchedule(loan) {
         const params = {
@@ -87,9 +193,13 @@ export const DebtEngine = {
         return { rows, drawIdx: firstIdx - 1, firstIdx, lastIdx, result };
     },
 
-    /** CRD d'un échéancier à la fin du mois mIdx (0 si non tiré ou éteint) */
+    /** CRD d'un échéancier à la fin du mois mIdx (0 si non tiré ou éteint)
+     *  @param {Schedule} schedule
+     *  @param {number} mIdx
+     *  @returns {number} */
     crdAt(schedule, mIdx) {
         if (mIdx < schedule.drawIdx) return 0;
+        /** @type {ScheduleRow | null} */
         let lastPassed = null;
         for (const r of schedule.rows) {
             if (r.mIdx <= mIdx) lastPassed = r;
@@ -102,6 +212,10 @@ export const DebtEngine = {
         return Math.max(0, lastPassed.balance);
     },
 
+    /**
+     * @param {Schedule} schedule
+     * @returns {number}
+     */
     _initialAmount(schedule) {
         // montant initial = capital restant avant toute échéance
         const first = schedule.rows[0];
@@ -119,6 +233,9 @@ export const DebtEngine = {
      *  - years : [{ closingYear, label, endIdx, opening, drawdowns, principal,
      *               interest, service, closing, isPast, isCurrent }]
      *  - perLoanCapital : [{ label, isNew, data: [capital par exercice] }]
+     * @param {Loan[]} loans
+     * @param {{ closingMonth?: number, includeNew?: boolean, analysisIdx: number }} opts
+     * @returns {Aggregate}
      */
     aggregate(loans, { closingMonth = 12, includeNew = true, analysisIdx }) {
         const active = (loans || [])
@@ -144,7 +261,7 @@ export const DebtEngine = {
         const perLoanCapital = schedules.map(s => ({
             label: s.loan.label,
             isNew: !!s.loan.isNew,
-            data: []
+            data: /** @type {number[]} */ ([])
         }));
 
         let opening = 0;
@@ -193,6 +310,9 @@ export const DebtEngine = {
     /**
      * Retourne { exposure, currentService, currentLabel, peak: {label, service},
      *            weightedRate, wal, amortized3yPct, newCount, newAmount }
+     * @param {Aggregate} agg
+     * @param {number} analysisIdx
+     * @returns {Kpis | null} null si aucun crédit actif
      */
     kpis(agg, analysisIdx) {
         const { schedules, years } = agg;
@@ -205,7 +325,9 @@ export const DebtEngine = {
         // ex. scénario 100 % nouveaux financements) pondéré par le montant initial
         const withCrd = schedules.filter(s => s.crdAtAnalysis > 0);
         const base = withCrd.length ? withCrd : schedules;
-        const weightKey = withCrd.length ? (s => s.crdAtAnalysis) : (s => s.loan.amount);
+        const weightKey = withCrd.length
+            ? ((/** @type {LoanSchedule} */ s) => s.crdAtAnalysis)
+            : ((/** @type {LoanSchedule} */ s) => s.loan.amount);
         const totalW = base.reduce((s, x) => s + weightKey(x), 0);
         const weightedRate = totalW > 0
             ? base.reduce((s, x) => s + weightKey(x) * x.loan.rate, 0) / totalW
@@ -256,7 +378,10 @@ export const DebtEngine = {
         };
     },
 
-    /** Écart CRD calculé vs constaté, en % du constaté (null si pas de contrôle) */
+    /** Écart CRD calculé vs constaté, en % du constaté (null si pas de contrôle)
+     *  @param {number} crdCalc
+     *  @param {number | null | undefined} crdCheck
+     *  @returns {number | null} */
     crdGapPct(crdCalc, crdCheck) {
         if (crdCheck == null || !isFinite(crdCheck) || crdCheck <= 0) return null;
         return (crdCalc - crdCheck) / crdCheck * 100;

@@ -1241,7 +1241,7 @@ async function setupRateHint() {
     hint.className = 'rate-hint';
     // Arrondi à 2 décimales : l'input taux a step="0.01", une 3e décimale
     // déclencherait la validation HTML native et bloquerait le submit
-    hint.innerHTML = `Marché${updated ? ` (${updated})` : ''} : ` + entries.map(([key, r]) => {
+    hint.innerHTML = `Marché${updated ? ` (${updated})` : ''} : ` + entries.map(([, r]) => {
         const v = (Math.round(r.value * 100) / 100).toFixed(2);
         return `<button type="button" class="rate-hint-value" data-rate="${v}" title="Utiliser ${v} %">${escapeHtml(r.label)} ${Financial.formatNumber(r.value, 2)} %</button>`;
     }).join(' · ');

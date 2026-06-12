@@ -2,6 +2,7 @@
  * Auxy Partners - Traduction des labels financiers
  */
 
+/** @type {Record<string, string>} */
 export const PARAM_LABELS = {
     principal: 'Montant emprunt\u00e9',
     annualRate: 'Taux annuel (%)',
@@ -43,6 +44,7 @@ export const PARAM_LABELS = {
     loanAmount: 'Montant du pr\u00eat (\u20ac)'
 };
 
+/** @type {Record<string, string>} */
 export const RESULT_LABELS = {
     monthlyPayment: 'Mensualit\u00e9',
     monthlyPaymentExInsurance: 'Mensualit\u00e9 hors assurance',
@@ -83,6 +85,7 @@ export const RESULT_LABELS = {
     annualDebtServiceImmo: 'Service de dette annuel'
 };
 
+/** @type {Record<string, string>} */
 export const TYPE_LABELS = {
     constant: 'Amortissable Constant',
     degressif: 'Amortissable D\u00e9gressif',
@@ -100,6 +103,9 @@ export const TYPE_LABELS = {
 
 /**
  * Traduit un label camelCase en fran\u00e7ais
+ * @param {string} key Cl\u00e9 du label (camelCase)
+ * @param {Record<string, string> | null} [dict] Dictionnaire sp\u00e9cifique (sinon PARAM_LABELS puis RESULT_LABELS)
+ * @returns {string}
  */
 export function t(key, dict = null) {
     if (dict) return dict[key] || key;
@@ -108,6 +114,9 @@ export function t(key, dict = null) {
 
 /**
  * Formate une valeur selon son type d\u00e9tect\u00e9
+ * @param {string} key Cl\u00e9 du param\u00e8tre/r\u00e9sultat (d\u00e9termine le format : %, mois, \u20ac)
+ * @param {unknown} value Valeur brute (nombre, bool\u00e9en, cha\u00eene\u2026)
+ * @returns {string}
  */
 export function formatValue(key, value) {
     if (key === 'insuranceMode') return value === 'crd' ? 'Capital restant dû' : 'Capital emprunté';

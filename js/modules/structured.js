@@ -4,7 +4,6 @@
  */
 
 import { Financial } from '../utils/financial.js';
-import { Export } from '../utils/export.js';
 import { Storage } from '../utils/storage.js';
 import { Share } from '../utils/share.js';
 import { escapeHtml } from '../utils/sanitize.js';
@@ -125,8 +124,8 @@ function renderTranchesRows(c) {
     return tranchesSenior.map((t, i) => {
         const amount = c.detteSenior * t.pct / 100;
         const annuity = computeAnnuity(amount, t.taux || 0, t.duration || 1, t.amortType || 'constant', t.frequency || 'mensuel');
-        const selAmort = (val) => Object.entries(AMORT_LABELS).map(([k, v]) => `<option value="${k}" ${k === (t.amortType || 'constant') ? 'selected' : ''}>${v}</option>`).join('');
-        const selFreq = (val) => Object.entries(FREQ_LABELS).map(([k, v]) => `<option value="${k}" ${k === (t.frequency || 'mensuel') ? 'selected' : ''}>${v}</option>`).join('');
+        const selAmort = () => Object.entries(AMORT_LABELS).map(([k, v]) => `<option value="${k}" ${k === (t.amortType || 'constant') ? 'selected' : ''}>${v}</option>`).join('');
+        const selFreq = () => Object.entries(FREQ_LABELS).map(([k, v]) => `<option value="${k}" ${k === (t.frequency || 'mensuel') ? 'selected' : ''}>${v}</option>`).join('');
         return `
         <tr data-section="tranches" data-index="${i}">
             <td><input class="er-input" type="text" value="${escapeHtml(t.label)}" data-field="label" style="width:70px"></td>

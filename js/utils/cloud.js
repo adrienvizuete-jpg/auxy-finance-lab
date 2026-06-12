@@ -21,11 +21,33 @@
 
 import { Storage } from './storage.js';
 
+/** @typedef {import('./storage.js').Simulation} Simulation */
+
+/**
+ * Session Supabase persistée en localStorage.
+ * @typedef {Object} Session
+ * @property {string} access_token
+ * @property {string | null} [refresh_token]
+ * @property {number} [expires_at] Échéance (epoch secondes)
+ * @property {string | null} [email]
+ */
+
+/**
+ * Configuration cloud chargée depuis data/cloud-config.json
+ * ({} si non configuré, null tant que non chargée).
+ * @typedef {{ url?: string, anonKey?: string }} CloudConfig
+ */
+
+/** Config dont la présence des deux champs a été vérifiée (isConfigured). */
+/** @typedef {{ url: string, anonKey: string }} CloudConfigReady */
+
 const SESSION_KEY = 'cloud_session';
+/** @type {CloudConfig | null} */
 let config = null; // { url, anonKey } | null une fois chargé ({} si non configuré)
 
 // ── Configuration ──
 
+/** @returns {Promise<CloudConfig>} */
 export async function loadCloudConfig() {
     if (config !== null) return config;
     try {
@@ -45,22 +67,30 @@ function isConfigured() {
 
 // ── Session ──
 
+/** @returns {Session | null} */
 function getSession() {
     return Storage.get(SESSION_KEY);
 }
 
+/** @param {Session | null} s */
 function setSession(s) {
     if (s) Storage.set(SESSION_KEY, s);
     else Storage.remove(SESSION_KEY);
 }
 
+/**
+ * fetch authentifié sur l'API Supabase (suppose la config chargée).
+ * @param {string} path
+ * @param {RequestInit & { headers?: Record<string, string> }} [options]
+ * @returns {Promise<Response>}
+ */
 async function authFetch(path, options = {}) {
     const session = await ensureFreshSession();
     if (!session) throw new Error('Non connecté');
-    const resp = await fetch(`${config.url}${path}`, {
+    const resp = await fetch(`${(/** @type {CloudConfigReady} */ (config)).url}${path}`, {
         ...options,
         headers: {
-            apikey: config.anonKey,
+            apikey: (/** @type {CloudConfigReady} */ (config)).anonKey,
             Authorization: `Bearer ${session.access_token}`,
             'Content-Type': 'application/json',
             ...(options.headers || {})
@@ -73,16 +103,17 @@ async function authFetch(path, options = {}) {
     return resp;
 }
 
-/** Rafraîchit la session si elle expire dans moins de 60 s. Retourne null si déconnecté. */
+/** Rafraîchit la session si elle expire dans moins de 60 s. Retourne null si déconnecté.
+ *  @returns {Promise<Session | null>} */
 async function ensureFreshSession() {
     const s = getSession();
     if (!s?.access_token) return null;
     if (s.expires_at && (s.expires_at - 60) * 1000 > Date.now()) return s;
     if (!s.refresh_token) { setSession(null); return null; }
     try {
-        const resp = await fetch(`${config.url}/auth/v1/token?grant_type=refresh_token`, {
+        const resp = await fetch(`${(/** @type {CloudConfigReady} */ (config)).url}/auth/v1/token?grant_type=refresh_token`, {
             method: 'POST',
-            headers: { apikey: config.anonKey, 'Content-Type': 'application/json' },
+            headers: { apikey: (/** @type {CloudConfigReady} */ (config)).anonKey, 'Content-Type': 'application/json' },
             body: JSON.stringify({ refresh_token: s.refresh_token })
         });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -104,6 +135,7 @@ async function ensureFreshSession() {
 // ── API publique ──
 
 export const Cloud = {
+    /** @returns {Promise<{ state: string, email?: string | null }>} */
     async status() {
         await loadCloudConfig();
         if (!isConfigured()) return { state: 'unconfigured' };
@@ -117,14 +149,15 @@ export const Cloud = {
      * Envoie le lien de connexion par e-mail (compte créé par invitation
      * uniquement). Le lien ramène sur l'app, qui capte la session via
      * captureSessionFromHash().
+     * @param {string} email
      */
     async requestLink(email) {
         await loadCloudConfig();
         if (!isConfigured()) throw new Error('Cloud non configuré');
         const redirect = encodeURIComponent(window.location.origin + window.location.pathname);
-        const resp = await fetch(`${config.url}/auth/v1/otp?redirect_to=${redirect}`, {
+        const resp = await fetch(`${(/** @type {CloudConfigReady} */ (config)).url}/auth/v1/otp?redirect_to=${redirect}`, {
             method: 'POST',
-            headers: { apikey: config.anonKey, 'Content-Type': 'application/json' },
+            headers: { apikey: (/** @type {CloudConfigReady} */ (config)).anonKey, 'Content-Type': 'application/json' },
             body: JSON.stringify({ email, create_user: false })
         });
         if (!resp.ok) {
@@ -143,6 +176,7 @@ export const Cloud = {
      * Capte la session au retour d'un lien magique / d'invitation
      * (#access_token=...&refresh_token=...). Retourne { email } en cas de
      * succès, { error } si le lien est expiré/invalide, null sinon.
+     * @returns {{ email: string | null } | { error: string } | null}
      */
     captureSessionFromHash() {
         const hash = window.location.hash.replace(/^#/, '');
@@ -166,12 +200,15 @@ export const Cloud = {
         return { email };
     },
 
-    /** Vérifie le code reçu par e-mail et ouvre la session */
+    /** Vérifie le code reçu par e-mail et ouvre la session
+     *  @param {string} email
+     *  @param {string} code
+     *  @returns {Promise<string>} e-mail du compte connecté */
     async verifyCode(email, code) {
         await loadCloudConfig();
-        const resp = await fetch(`${config.url}/auth/v1/verify`, {
+        const resp = await fetch(`${(/** @type {CloudConfigReady} */ (config)).url}/auth/v1/verify`, {
             method: 'POST',
-            headers: { apikey: config.anonKey, 'Content-Type': 'application/json' },
+            headers: { apikey: (/** @type {CloudConfigReady} */ (config)).anonKey, 'Content-Type': 'application/json' },
             body: JSON.stringify({ type: 'email', email, token: code.trim() })
         });
         const data = await resp.json().catch(() => ({}));
@@ -194,6 +231,7 @@ export const Cloud = {
     /**
      * Push : envoie les simulations locales vers le cloud (upsert par id —
      * idempotent, n'efface jamais rien côté serveur).
+     * @returns {Promise<{ sent: number }>}
      */
     async pushSimulations() {
         const sims = Storage.getHistory();
@@ -218,9 +256,11 @@ export const Cloud = {
     /**
      * Pull : récupère les simulations du cabinet et les fusionne dans
      * l'historique local (par id, la plus récente gagne).
+     * @returns {Promise<{ fetched: number, added: number }>}
      */
     async pullSimulations() {
         const resp = await authFetch('/rest/v1/dossiers?select=id,payload,updated_by&order=updated_at.desc&limit=500');
+        /** @type {Array<{ id: string, payload: Simulation, updated_by?: string | null }>} */
         const rows = await resp.json();
         const remote = rows.map(r => r.payload).filter(p => p && p.id);
         const { merged, added } = mergeSimulations(Storage.getHistory(), remote);
@@ -233,8 +273,12 @@ export const Cloud = {
  * Fusion locale/distante par id : union, et en cas de doublon la simulation
  * la plus récente (champ date) l'emporte. Résultat trié par date décroissante.
  * Fonction pure — testée dans tests/cloud.test.mjs.
+ * @param {Simulation[] | null | undefined} local
+ * @param {Simulation[] | null | undefined} remote
+ * @returns {{ merged: Simulation[], added: number }}
  */
 export function mergeSimulations(local, remote) {
+    /** @type {Map<string, Simulation>} */
     const byId = new Map();
     for (const sim of local || []) {
         if (sim?.id) byId.set(sim.id, sim);
@@ -250,6 +294,6 @@ export function mergeSimulations(local, remote) {
             byId.set(sim.id, sim);
         }
     }
-    const merged = [...byId.values()].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+    const merged = [...byId.values()].sort((a, b) => /** @type {any} */ (new Date(b.date || 0)) - /** @type {any} */ (new Date(a.date || 0)));
     return { merged, added };
 }

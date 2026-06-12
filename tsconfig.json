@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "target": "es2022",
+    "module": "es2022",
+    "moduleResolution": "bundler",
+    "lib": ["es2022", "dom", "dom.iterable"],
+    "types": []
+  },
+  "include": [
+    "types/global.d.ts",
+    "js/utils/financial.js",
+    "js/utils/debtengine.js",
+    "js/utils/storage.js",
+    "js/utils/sanitize.js",
+    "js/utils/share.js",
+    "js/utils/market.js",
+    "js/utils/cloud.js",
+    "js/utils/i18n.js"
+  ]
+}

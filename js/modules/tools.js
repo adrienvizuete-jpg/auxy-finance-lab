@@ -422,9 +422,6 @@ export const StressTestModule = {
 
             // Flatten all valid cells for KPIs
             const allCells = results.flat().filter(c => c !== null);
-            const minPayment = Math.min(...allCells.map(c => c.periodicPayment));
-            const maxPayment = Math.max(...allCells.map(c => c.periodicPayment));
-            const maxInterest = Math.max(...allCells.map(c => c.totalInterest));
             const maxCost = Math.max(...allCells.map(c => c.totalCost));
             const worstCell = allCells.reduce((a, b) => a.totalCost > b.totalCost ? a : b);
 

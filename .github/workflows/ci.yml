@@ -1,4 +1,4 @@
-# CI Auxy Finance Lab — tests du moteur financier (node:test natif, zéro dépendance)
+# CI Auxy Finance Lab — tests unitaires, typage, lint, E2E smoke
 name: CI
 
 on:
@@ -8,10 +8,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  tests-front:
-    name: Tests moteur financier
+  qualite:
+    name: Tests + typage + lint + E2E
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -19,10 +19,25 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
+          cache: npm
 
-      - name: Tests financial.js
-        run: node --test tests/*.test.mjs
+      - name: Dépendances (dev)
+        run: npm ci
+
+      - name: Tests unitaires (moteurs)
+        run: npm test
+
+      - name: Typage (tsc --checkJs, mode strict)
+        run: npm run typecheck
+
+      - name: Lint (ESLint)
+        run: npm run lint
+
+      - name: E2E smoke (Chrome headless)
+        run: npm run e2e
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
 
       - name: Compilation Python veille
         run: python3 -m py_compile veille/*.py

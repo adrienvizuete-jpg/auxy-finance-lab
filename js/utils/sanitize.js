@@ -4,6 +4,7 @@
  * dans innerHTML / attributs (protection XSS).
  */
 
+/** @type {Record<string, string>} */
 const ESCAPE_MAP = {
     '&': '&amp;',
     '<': '&lt;',
@@ -15,6 +16,8 @@ const ESCAPE_MAP = {
 /**
  * Échappe une valeur pour insertion sûre dans du HTML (texte ou attribut quoté).
  * Toujours utiliser sur les données utilisateur (noms, notes, libellés).
+ * @param {unknown} value Valeur à échapper (null/undefined → chaîne vide)
+ * @returns {string}
  */
 export function escapeHtml(value) {
     if (value == null) return '';
