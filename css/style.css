@@ -1899,3 +1899,49 @@ input[type="month"].form-input {
     font-size: 0.95rem;
     font-variant-numeric: tabular-nums;
 }
+
+/* ===== Bandeau de mise à jour (service worker) ===== */
+.sw-update-banner {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1100;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 16px 12px 20px;
+    background: var(--primary-800, #1a3548);
+    color: #fff;
+    border-radius: var(--radius-lg, 12px);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+    font-size: 0.92rem;
+    font-weight: 600;
+    animation: swBannerIn 0.35s ease;
+    max-width: calc(100vw - 32px);
+}
+
+@keyframes swBannerIn {
+    from { opacity: 0; transform: translate(-50%, 16px); }
+    to   { opacity: 1; transform: translate(-50%, 0); }
+}
+
+.sw-update-banner .btn {
+    padding: 8px 14px;
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+
+.sw-update-dismiss {
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 0.95rem;
+    cursor: pointer;
+    padding: 4px 6px;
+    line-height: 1;
+}
+
+.sw-update-dismiss:hover {
+    color: #fff;
+}

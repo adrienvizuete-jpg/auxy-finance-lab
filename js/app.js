@@ -164,10 +164,72 @@ function initMobileNav() {
 }
 
 // =============================================
+// SERVICE WORKER — mise à jour avec consentement
+// =============================================
+
+// Le SW n'active plus skipWaiting tout seul (voir sw.js) : quand une
+// nouvelle version est téléchargée, elle reste « en attente » et on
+// propose à l'utilisateur de recharger. Au clic : SKIP_WAITING →
+// controllerchange → reload. Page et SW restent synchrones.
+
+// Reload uniquement si la mise à jour a été demandée par l'utilisateur :
+// au tout premier chargement, l'activation du SW (clients.claim) déclenche
+// aussi controllerchange — sans ce garde-fou, le visiteur subirait un
+// rechargement sauvage quelques secondes après son arrivée.
+let updateRequested = false;
+
+function showUpdateBanner(worker) {
+    if (document.getElementById('sw-update-banner')) return;
+    const banner = document.createElement('div');
+    banner.id = 'sw-update-banner';
+    banner.className = 'sw-update-banner';
+    banner.innerHTML = `
+        <span>Nouvelle version disponible</span>
+        <button type="button" class="btn btn-primary" id="sw-update-btn">Mettre à jour</button>
+        <button type="button" class="sw-update-dismiss" id="sw-update-dismiss" aria-label="Plus tard">✕</button>`;
+    document.body.appendChild(banner);
+    document.getElementById('sw-update-btn')?.addEventListener('click', () => {
+        updateRequested = true;
+        worker.postMessage({ type: 'SKIP_WAITING' });
+    });
+    document.getElementById('sw-update-dismiss')?.addEventListener('click', () => banner.remove());
+}
+
+function initServiceWorker() {
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!updateRequested || refreshing) return;
+        refreshing = true;
+        location.reload();
+    });
+
+    navigator.serviceWorker.register('sw.js').then(reg => {
+        // Une version est déjà en attente (mise à jour détectée lors d'une
+        // visite précédente, jamais activée)
+        if (reg.waiting && navigator.serviceWorker.controller) {
+            showUpdateBanner(reg.waiting);
+        }
+        reg.addEventListener('updatefound', () => {
+            const newWorker = reg.installing;
+            if (!newWorker) return;
+            newWorker.addEventListener('statechange', () => {
+                // installed + controller existant = mise à jour (pas 1ère install)
+                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                    showUpdateBanner(newWorker);
+                }
+            });
+        });
+    }).catch(() => { /* PWA optionnelle */ });
+}
+
+// =============================================
 // INITIALIZATION
 // =============================================
 
 function init() {
+    // Migrations de schéma des données persistées — avant tout accès
+    Storage.migrate();
+
     // Theme
     initTheme();
 
@@ -230,7 +292,7 @@ function init() {
 
     // Service worker (PWA) — uniquement servi en http(s), ignoré en file://
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-        navigator.serviceWorker.register('sw.js').catch(() => { /* PWA optionnelle */ });
+        initServiceWorker();
     }
 
     console.log('%c Auxy Partners Finance Lab %c v1.0.0 ', 'background:#1a3548;color:#e8973f;padding:4px 8px;border-radius:4px 0 0 4px;font-weight:bold', 'background:#e8973f;color:#1a3548;padding:4px 8px;border-radius:0 4px 4px 0;font-weight:bold');

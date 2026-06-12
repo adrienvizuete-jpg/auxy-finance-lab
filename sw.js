@@ -6,7 +6,7 @@
  * Incrémenter CACHE_VERSION à chaque évolution notable du front.
  */
 
-const CACHE_VERSION = 'auxy-finance-lab-v3';
+const CACHE_VERSION = 'auxy-finance-lab-v4';
 
 const PRECACHE = [
     './',
@@ -33,7 +33,6 @@ const PRECACHE = [
     './js/utils/sanitize.js',
     './js/utils/share.js',
     './js/utils/market.js',
-    './js/utils/debtengine.js',
     './js/utils/cloud.js',
     './assets/logo.png',
     './assets/favicon.svg',
@@ -44,11 +43,24 @@ const PRECACHE = [
 const CDN_HOSTS = ['cdn.jsdelivr.net', 'cdnjs.cloudflare.com', 'cdn.sheetjs.com', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 
 self.addEventListener('install', event => {
+    // Pas de skipWaiting automatique : le nouveau SW reste en attente et
+    // l'app affiche un bandeau « Mettre à jour » (voir app.js). L'activation
+    // n'a lieu qu'au clic, via le message SKIP_WAITING — la page rechargée
+    // et le SW actif restent ainsi toujours de la même version.
+    // Set : addAll rejette les URLs dupliquées (InvalidStateError) — un
+    // doublon dans PRECACHE a déjà cassé silencieusement l'install (v3).
     event.waitUntil(
         caches.open(CACHE_VERSION)
-            .then(cache => cache.addAll(PRECACHE))
-            .then(() => self.skipWaiting())
+            .then(cache => cache.addAll([...new Set(PRECACHE)]))
+            .catch(err => {
+                console.error('[SW] échec du précache — installation annulée', err);
+                throw err;
+            })
     );
+});
+
+self.addEventListener('message', event => {
+    if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('activate', event => {
