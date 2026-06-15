@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-06-15T10:43:31+00:00",
+  "updated_at": "2026-06-15T11:30:26+00:00",
   "source": "auxy-finance-lab veille",
   "rates": {
     "euribor_3m": {
@@ -19,7 +19,7 @@
     },
     "bund_10y": {
       "label": "Bund 10 ans",
-      "value": 3.03,
+      "value": 3.0,
       "unit": "%"
     },
     "ust_10y": {
