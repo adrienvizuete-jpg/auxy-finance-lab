@@ -1,15 +1,15 @@
 {
-  "updated_at": "2026-07-06T09:35:49+00:00",
+  "updated_at": "2026-07-07T07:57:55+00:00",
   "source": "auxy-finance-lab veille",
   "rates": {
     "euribor_3m": {
       "label": "Euribor 3M",
-      "value": 2.335,
+      "value": 2.321,
       "unit": "%"
     },
     "euribor_12m": {
       "label": "Euribor 12M",
-      "value": 2.733,
+      "value": 2.709,
       "unit": "%"
     },
     "oat_10y": {
