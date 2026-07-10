@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-07-10T07:58:24+00:00",
+  "updated_at": "2026-07-10T08:48:41+00:00",
   "source": "auxy-finance-lab veille",
   "rates": {
     "euribor_3m": {
@@ -14,7 +14,7 @@
     },
     "oat_10y": {
       "label": "OAT 10 ans",
-      "value": 3.74,
+      "value": 3.68,
       "unit": "%"
     },
     "bund_10y": {
