@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-08-28T16:48:20+00:00",
+  "updated_at": "2026-08-28T17:38:38+00:00",
   "source": "auxy-finance-lab veille",
   "rates": {
     "euribor_3m": {
@@ -24,7 +24,7 @@
     },
     "ust_10y": {
       "label": "UST 10 ans",
-      "value": 4.724,
+      "value": 4.726,
       "unit": "%"
     }
   }
