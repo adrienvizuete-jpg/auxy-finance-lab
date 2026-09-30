@@ -1,15 +1,15 @@
 {
-  "updated_at": "2026-09-29T11:29:52+00:00",
+  "updated_at": "2026-09-30T10:37:41+00:00",
   "source": "auxy-finance-lab veille",
   "rates": {
     "euribor_3m": {
       "label": "Euribor 3M",
-      "value": 2.607,
+      "value": 2.594,
       "unit": "%"
     },
     "euribor_12m": {
       "label": "Euribor 12M",
-      "value": 3.379,
+      "value": 3.356,
       "unit": "%"
     },
     "oat_10y": {
@@ -19,12 +19,12 @@
     },
     "bund_10y": {
       "label": "Bund 10 ans",
-      "value": 3.65,
+      "value": 3.6,
       "unit": "%"
     },
     "ust_10y": {
       "label": "UST 10 ans",
-      "value": 5.24,
+      "value": 5.255,
       "unit": "%"
     }
   }
