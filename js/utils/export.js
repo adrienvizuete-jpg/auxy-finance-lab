@@ -2,7 +2,7 @@
  * Auxy Partners - Export Helpers (PDF & Excel)
  */
 
-import { PARAM_LABELS, RESULT_LABELS, t, formatValue } from './i18n.js';
+import { PARAM_LABELS, RESULT_LABELS, t, excelValue, unitOf } from './i18n.js';
 import { LOGO_JPEG_BANNER } from './logo-data.js';
 import { Charts } from './charts.js';
 
@@ -98,24 +98,23 @@ export const Export = {
                 if (key === 'insuranceMonthly' && p.insuranceRate > 0) return;
                 if ((key === 'insuranceRate' || key === 'insuranceMode') && (!p.insuranceRate || p.insuranceRate === 0)) return;
                 const label = t(key, PARAM_LABELS);
-                const formatted = formatValue(key, value);
-                summaryData.push([label, formatted]);
+                // Nombres conservés comme nombres (recalculables dans Excel), unité à part
+                summaryData.push([label, excelValue(key, value), unitOf(key, value)]);
             });
         }
 
         summaryData.push([''], ['RÉSULTATS']);
         if (simulation.results) {
             Object.entries(simulation.results).forEach(([key, value]) => {
-                if (typeof value !== 'object') {
+                if (typeof value !== 'object' || value === null) {
                     const label = t(key, RESULT_LABELS);
-                    const formatted = formatValue(key, value);
-                    summaryData.push([label, formatted]);
+                    summaryData.push([label, excelValue(key, value), unitOf(key, value)]);
                 }
             });
         }
 
         const summaryWs = XLSX.utils.aoa_to_sheet(summaryData);
-        summaryWs['!cols'] = [{ wch: 30 }, { wch: 25 }];
+        summaryWs['!cols'] = [{ wch: 30 }, { wch: 18 }, { wch: 8 }];
         XLSX.utils.book_append_sheet(wb, summaryWs, 'Résumé');
 
         // Schedule sheet
@@ -444,6 +443,11 @@ export const Export = {
                 doc.setFont('helvetica', 'normal');
                 doc.text(this._sanitizePdf(title), pageWidth - 15, 6, { align: 'right' });
             }
+            // Mention de travail sur CHAQUE page (et pas seulement la couverture) :
+            // un PDF sans page de garde (Immobilier, Benchmark, Stress Test) la porte aussi.
+            doc.setFontSize(6.5);
+            doc.setTextColor(165, 165, 165);
+            doc.text(`Document de travail — simulation indicative, ne constitue pas un engagement de financement. Édité le ${new Date().toLocaleDateString('fr-FR')}.`, pageWidth / 2, 286, { align: 'center' });
             doc.setFontSize(8);
             doc.setTextColor(150, 150, 150);
             doc.text(`Confidentiel — Auxy Partners | Page ${i}/${totalPages}`, pageWidth / 2, 290, { align: 'center' });

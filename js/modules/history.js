@@ -44,7 +44,11 @@ function renderHistory() {
                     </thead>
                     <tbody>
                         ${history.map(s => {
-                            const amount = s.params?.principal || s.params?.assetValue || s.params?.creditLine || s.params?.bridgeAmount || s.params?.totalDebt || s.results?.totalEmplois || 0;
+                            // Structuré et Covenants travaillent en k€ : conversion pour un affichage en €
+                            const kEur = s.type === 'structured' || s.type === 'covenants';
+                            const covDebt = Array.isArray(s.params?.debts) ? s.params.debts.reduce((t, d) => t + (parseFloat(d.amount) || 0), 0) : 0;
+                            const raw = s.params?.principal || s.params?.assetValue || s.params?.creditLine || s.params?.bridgeAmount || s.params?.totalDebt || s.results?.totalEmplois || covDebt || 0;
+                            const amount = kEur ? raw * 1000 : raw;
                             return `
                                 <tr>
                                     <td style="white-space:nowrap">${new Date(s.date).toLocaleDateString('fr-FR')} ${new Date(s.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</td>
@@ -159,7 +163,7 @@ function reloadSimulation(id) {
     if (!sim) return;
 
     // Navigate to the appropriate page
-    const PAGE_BY_TYPE = { structured: 'structured', covenants: 'covenants', debtprofile: 'debtprofile', immobilier: 'immobilier' };
+    const PAGE_BY_TYPE = { structured: 'structured', covenants: 'covenants', debtprofile: 'debtprofile' };
     const page = PAGE_BY_TYPE[sim.type] || 'credit';
 
     // À poser AVANT la navigation : init() du module le lit de façon synchrone

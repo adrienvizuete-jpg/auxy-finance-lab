@@ -137,7 +137,7 @@ function computeNOI() {
 
 function computeValuation() {
     const noi = computeNOI();
-    return state.capRate > 0 ? noi / (state.capRate / 100) : 0;
+    return state.capRate > 0 ? noi / (state.capRate / 100) : 0; // 0 = non valorisable (LTV non calculée)
 }
 
 function computePropertyValue() {
@@ -161,7 +161,7 @@ function computeTVAAmount() {
 
 function computeLTV() {
     const value = computePropertyValue();
-    return value > 0 ? (state.loanAmount / value) * 100 : 0;
+    return value > 0 ? (state.loanAmount / value) * 100 : null; // null = valeur inconnue, pas « 0 % »
 }
 
 function computeLTC() {
@@ -177,7 +177,12 @@ function computeDSCR(annualDebtService) {
 function computeSensitivityTable() {
     const noi = computeNOI();
     const rows = [];
-    for (let cr = state.capRateMin; cr <= state.capRateMax + 0.001; cr += state.capRateStep) {
+    // Garde-fous : pas > 0 (sinon boucle infinie), taux > 0 (sinon valeur
+    // infinie), au plus 60 lignes quelle que soit la saisie.
+    const step = state.capRateStep > 0 ? state.capRateStep : 0.25;
+    const min = Math.max(0.25, state.capRateMin || 0);
+    const max = Math.max(min, state.capRateMax || 0);
+    for (let cr = min, i = 0; cr <= max + 0.001 && i < 60; cr += step, i++) {
         const crRound = Math.round(cr * 100) / 100;
         const val = noi / (crRound / 100);
         const ltv = val > 0 ? (state.loanAmount / val) * 100 : 0;
@@ -203,6 +208,7 @@ function computeAmortization() {
 }
 
 function ltvBadge(value) {
+    if (value == null) return '<span class="kpi-badge kpi-badge-orange">Valeur à renseigner</span>';
     if (value > 80) return '<span class="kpi-badge kpi-badge-red">Élevé</span>';
     if (value > 70) return '<span class="kpi-badge kpi-badge-orange">Modéré</span>';
     return '<span class="kpi-badge kpi-badge-green">Bon</span>';
@@ -213,6 +219,9 @@ function dscrBadge(value) {
     if (value < 1.2) return '<span class="kpi-badge kpi-badge-orange">Limite</span>';
     return '<span class="kpi-badge kpi-badge-green">Confortable</span>';
 }
+
+/** @param {number | null} v */
+const fmtLtv = v => (v == null || !isFinite(v) ? 'n.c.' : v.toFixed(1).replace('.', ',') + ' %');
 
 function sensitivityColor(ltv) {
     if (ltv > 80) return 'var(--danger-bg, #fde8e8)';
@@ -635,7 +644,7 @@ function renderResults() {
         <div class="results-grid">
             <div class="result-item">
                 <div class="result-label">LTV</div>
-                <div class="result-value">${r.ltv.toFixed(1)} %</div>
+                <div class="result-value">${fmtLtv(r.ltv)}</div>
                 <div class="result-sub">${ltvBadge(r.ltv)} Loan-to-Value</div>
             </div>
             ${r.ltc !== null ? `
@@ -764,9 +773,12 @@ function renderResults() {
     }
 
     // Bind export + memo buttons
-    document.getElementById('immo-export-pdf')?.addEventListener('click', exportPdf);
-    document.getElementById('immo-export-excel')?.addEventListener('click', exportExcel);
-    document.getElementById('immo-generate-memo')?.addEventListener('click', generateMemo);
+    // Affectation (et non addEventListener) : ces boutons sont statiques et
+    // renderResults() est rappelé à chaque frappe — un seul export par clic.
+    const bind = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = fn; };
+    bind('immo-export-pdf', exportPdf);
+    bind('immo-export-excel', exportExcel);
+    bind('immo-generate-memo', generateMemo);
 }
 
 // =============================================
@@ -782,10 +794,10 @@ function generateMemo() {
 
     let recommendation = '';
     let recClass = '';
-    if (r.ltv <= 70 && (r.dscr === null || r.dscr >= 1.2)) {
+    if (r.ltv != null && r.ltv <= 70 && (r.dscr === null || r.dscr >= 1.2)) {
         recommendation = 'Le profil de risque est favorable. Les ratios sont dans les normes bancaires avec une marge de sécurité confortable.';
         recClass = 'memo-positive';
-    } else if (r.ltv <= 80 && (r.dscr === null || r.dscr >= 1.0)) {
+    } else if (r.ltv != null && r.ltv <= 80 && (r.dscr === null || r.dscr >= 1.0)) {
         recommendation = 'Le profil est acceptable mais les ratios sont proches des limites. Une attention particulière doit être portée à la sensibilité des hypothèses.';
         recClass = 'memo-neutral';
     } else {
@@ -822,7 +834,7 @@ function generateMemo() {
             <div class="memo-section">
                 <table class="data-table" style="max-width:400px;font-size:0.85rem">
                     <tbody>
-                        <tr><td>LTV</td><td class="number">${r.ltv.toFixed(1)} %</td><td>${ltvBadge(r.ltv)}</td></tr>
+                        <tr><td>LTV</td><td class="number">${fmtLtv(r.ltv)}</td><td>${ltvBadge(r.ltv)}</td></tr>
                         ${r.ltc !== null ? `<tr><td>LTC</td><td class="number">${r.ltc.toFixed(1)} %</td><td>${ltvBadge(r.ltc)}</td></tr>` : ''}
                         ${r.dscr !== null ? `<tr><td>DSCR</td><td class="number">${r.dscr.toFixed(2)}x</td><td>${dscrBadge(r.dscr)}</td></tr>` : ''}
                     </tbody>
@@ -878,7 +890,7 @@ function exportPdf() {
     ]});
     sections.push({ type: 'separator' });
 
-    const ratioItems = [{ label: 'LTV', value: r.ltv.toFixed(1) + ' %' }];
+    const ratioItems = [{ label: 'LTV', value: fmtLtv(r.ltv) }];
     if (r.ltc !== null) ratioItems.push({ label: 'LTC', value: r.ltc.toFixed(1) + ' %' });
     if (r.dscr !== null) ratioItems.push({ label: 'DSCR', value: r.dscr.toFixed(2) + 'x' });
     if (r.noi && config.showRevenue) ratioItems.push({ label: 'NOI', value: Financial.formatCurrency(r.noi) });
@@ -943,7 +955,7 @@ function exportExcel() {
         ['FINANCEMENT'], ['Montant du prêt', state.loanAmount], ['Taux', state.annualRate + '%'], ['Durée (mois)', state.durationMonths],
         ['Mensualité', Math.round(r.monthlyPayment * 100) / 100], ['Total intérêts', Math.round(r.totalInterest)],
         ...(r.taeg != null ? [['TAEG', r.taeg.toFixed(2) + '%']] : []), [],
-        ['RATIOS'], ['LTV', r.ltv.toFixed(1) + '%'],
+        ['RATIOS'], ['LTV', r.ltv != null ? Math.round(r.ltv * 10) / 1000 : 'n.c.'],
         ...(r.ltc !== null ? [['LTC', r.ltc.toFixed(1) + '%']] : []),
         ...(r.dscr !== null ? [['DSCR', r.dscr.toFixed(2) + 'x']] : []),
         ...(r.valuation !== null ? [['Valorisation', Math.round(r.valuation)]] : []),

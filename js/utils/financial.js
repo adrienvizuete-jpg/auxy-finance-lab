@@ -1350,6 +1350,21 @@ export const Financial = {
         return results;
     },
 
+    /**
+     * Lit un nombre saisi au format français ou anglais : « -1 000 000 »,
+     * « 1 000,50 », « 1.000,50 », « 4,5 % », « 12 000 € ». NaN si illisible.
+     * @param {unknown} raw
+     * @returns {number}
+     */
+    parseNumber(raw) {
+        if (typeof raw === 'number') return raw;
+        let t = String(raw ?? '').trim().replace(/[\s\u00a0\u202f€%]/g, '');
+        if (!t) return NaN;
+        if (t.includes(',') && t.includes('.')) t = t.replace(/\./g, '').replace(',', '.'); // 1.000,50
+        else t = t.replace(',', '.');
+        return /^[-+]?\d*\.?\d+(e[-+]?\d+)?$/i.test(t) ? parseFloat(t) : NaN;
+    },
+
     // =============================================
     // FORMATTING
     // =============================================

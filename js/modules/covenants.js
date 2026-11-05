@@ -423,7 +423,7 @@ export const CovenantsModule = {
                     <div class="form-group">
                         <label class="form-label">Horizon (années)</label>
                         <select class="form-select" id="cov-horizon">
-                            ${[3, 4, 5, 6, 7].map(n => `<option value="${n}" ${n === horizon ? 'selected' : ''}>${n} ans</option>`).join('')}
+                            ${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => `<option value="${n}" ${n === horizon ? 'selected' : ''}>${n} ans</option>`).join('')}
                         </select>
                     </div>
                     <div class="form-group">

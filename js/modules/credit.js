@@ -148,7 +148,10 @@ function refreshTranchingTotal() {
 
 function setupTranchingListeners() {
     const table = document.getElementById('tranching-table');
-    if (!table) return;
+    // Idempotent : init() et le rechargement d'une simulation l'appellent
+    // tous deux sur le même tableau (sinon « Ajouter » créait 2 tranches)
+    if (!table || table.dataset.bound === '1') return;
+    table.dataset.bound = '1';
 
     table.addEventListener('input', e => {
         const row = e.target.closest('tr');
@@ -1106,7 +1109,8 @@ function renderScheduleTable(schedule) {
 function runPrepaymentAnalysis() {
     if (!lastResult?.results?.schedule) return;
     const period = parseInt(document.getElementById('ra-period')?.value) || 24;
-    const amount = parseFloat(document.getElementById('ra-amount')?.value) || 100000;
+    const amount = parseFloat(document.getElementById('ra-amount')?.value);
+    if (!(amount > 0)) { window.showToast?.('Saisissez le montant remboursé', 'warning'); return; }
     const strategy = document.getElementById('ra-strategy')?.value || 'reduceDuration';
     const iraMode = document.getElementById('ra-ira-mode')?.value || 'legal';
     const iraParam = parseFloat(document.getElementById('ra-ira-param')?.value);
@@ -1526,7 +1530,11 @@ function exportTranchingExcel() {
         }))];
         const ws = XLSX.utils.aoa_to_sheet(data);
         ws['!cols'] = headerLabels.map(() => ({ wch: 16 }));
-        XLSX.utils.book_append_sheet(wb, ws, tr.name.substring(0, 28));
+        // Nom d'onglet Excel : 31 caractères max, sans / \\ ? * [ ] :, et unique
+        const base = (String(tr.name || 'Tranche').replace(/[\\/?*[\]:]/g, ' ').trim() || 'Tranche').substring(0, 24);
+        let sheetName = base, n = 2;
+        while (wb.SheetNames.includes(sheetName)) sheetName = `${base} (${n++})`;
+        XLSX.utils.book_append_sheet(wb, ws, sheetName);
     });
 
     XLSX.writeFile(wb, `tranching_${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -1789,6 +1797,11 @@ export const CreditModule = {
         const shared = Share.getPayload();
         if (shared?.type && shared?.params) {
             window._pendingReload = { type: shared.type, params: shared.params };
+        } else if (!window._pendingReload && lastResult && lastResult.type !== 'tranching' && CREDIT_TYPES.some(t => t.id === lastResult.type)) {
+            // Retour sur la page (navigation, changement de thème) : le formulaire
+            // reprend la dernière simulation au lieu des valeurs par défaut — sinon
+            // « Sauvegarder » enregistrait autre chose que ce qui est affiché.
+            window._pendingReload = { type: lastResult.type, params: lastResult.params };
         }
 
         // Handle pending reload from history (ou lien partagé)

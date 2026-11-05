@@ -282,3 +282,14 @@ describe('Analyse de sensibilité', () => {
         assert.ok(grid[1][2].monthlyPayment < grid[1][1].monthlyPayment, 'durée + → mensualité -');
     });
 });
+
+describe('Saisie au format français (parseNumber)', () => {
+    test('espaces, virgule décimale, symboles', () => {
+        assert.equal(Financial.parseNumber('-1 000 000'), -1000000);
+        assert.equal(Financial.parseNumber('250 000,50'), 250000.5);
+        assert.equal(Financial.parseNumber('1.000,50'), 1000.5);
+        assert.equal(Financial.parseNumber('4,5 %'), 4.5);
+        assert.equal(Financial.parseNumber('12 000 €'), 12000);
+        assert.ok(Number.isNaN(Financial.parseNumber('abc')));
+    });
+});
