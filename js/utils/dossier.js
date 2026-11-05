@@ -45,7 +45,7 @@ import { Storage } from './storage.js';
 /** Libellés reconnus (premières colonnes), du plus spécifique au plus général. */
 const LINE_PATTERNS = {
     ebitda: [/ebitda\s+ajust[ée]\s*(ii|2)?\b/i, /^\W*ebitda\b(?!.*(transfert|%|marge))/i],
-    wcChange: [/variation\s+(du\s+)?bfr/i, /\bvar\.?\s*bfr/i],
+    wcChange: [/variation\s+(du\s+|de\s+|d[eu]\s+la\s+)?bfr/i, /\bvar\.?\s*(du\s+|de\s+)?bfr/i, /\bδ\s*bfr|Δ\s*bfr/i],
     capex: [/\bcapex\b/i, /investissements?\s+(nets?|corporels)/i],
     tax: [/\bis\s+d[ée]caiss[ée]/i, /imp[oô]ts?\s+(sur\s+les\s+soci[ée]t[ée]s\s+)?d[ée]caiss/i],
     netCash: [/tr[ée]sorerie\s+(financi[èe]re\s+)?nette(?!.*variation)/i]
@@ -89,7 +89,9 @@ function findPeriods(rows) {
  */
 export function parseDataPack(sheets) {
     const ordered = [...sheets].sort((a, b) => rank(a.name) - rank(b.name));
-    /** @type {Record<string, { values: Record<number, number>, ref: string, periods: ReturnType<typeof findPeriods> }>} */
+    /** Valeurs indexées par période (libellé de clôture), pas par colonne : les
+     *  feuilles n'ont pas forcément la même mise en page. */
+    /** @type {Record<string, { values: Record<string, number>, ref: string, periods: ReturnType<typeof findPeriods> }>} */
     const found = {};
 
     for (const sheet of ordered) {
@@ -101,9 +103,9 @@ export function parseDataPack(sheets) {
                 const r = sheet.rows.findIndex(row => (row || []).slice(0, 3).some(v => typeof v === 'string' && re.test(v.trim())));
                 if (r < 0) continue;
                 const row = sheet.rows[r];
-                /** @type {Record<number, number>} */
+                /** @type {Record<string, number>} */
                 const values = {};
-                periods.forEach(p => { if (isNum(row[p.col])) values[p.col] = /** @type {number} */ (row[p.col]); });
+                periods.forEach(p => { if (isNum(row[p.col])) values[p.label] = /** @type {number} */ (row[p.col]); });
                 if (!Object.keys(values).length) continue;
                 found[key] = { values, ref: `${sheet.name}!ligne ${r + 1}`, periods };
                 break;
@@ -114,23 +116,30 @@ export function parseDataPack(sheets) {
     const base = found.ebitda || Object.values(found)[0];
     const periods = base ? base.periods : [];
     /** @param {string} key */
-    const series = key => periods.map(p => found[key]?.values[p.col] ?? null);
+    const series = key => periods.map(p => found[key]?.values[p.label] ?? null);
 
-    // Convention de signe : dans une cascade de cash-flow, capex / IS / BFR
-    // sont souvent saisis en négatif (sortie de cash). On les ramène en
-    // montants positifs = besoin de cash, convention du module Covenants.
-    const capexRaw = series('capex').filter(isNum);
-    const cashEffect = capexRaw.length > 0 && capexRaw.filter(v => /** @type {number} */ (v) < 0).length >= capexRaw.length / 2;
+    // Convention de signe, décidée ligne par ligne : dans une cascade de
+    // cash-flow, IS et capex sont saisis en négatif (sortie de cash). On les
+    // ramène en montants positifs = besoin de cash (convention Covenants).
+    // La variation de BFR, qui change de signe d'une année à l'autre, suit la
+    // convention détectée sur le capex (à défaut sur l'IS).
     /** @param {Array<number | null>} arr */
-    const toNeed = arr => arr.map(v => (v == null ? null : cashEffect ? -v : v));
+    const negativeMajority = arr => { const v = arr.filter(isNum); return v.length > 0 && v.filter(x => /** @type {number} */ (x) < 0).length > v.length / 2; };
+    const capexNeg = negativeMajority(series('capex'));
+    const taxNeg = negativeMajority(series('tax'));
+    const hasCapex = series('capex').some(isNum);
+    const wcNeg = hasCapex ? capexNeg : series('tax').some(isNum) ? taxNeg : negativeMajority(series('wcChange'));
+    /** @param {Array<number | null>} arr @param {boolean} flip */
+    const toNeed = (arr, flip) => arr.map(v => (v == null ? null : flip ? -v : v));
+    const cashEffect = capexNeg || taxNeg;
 
     return {
         periods: periods.map(p => ({ label: p.label, year: p.year, type: p.type })),
         lines: {
             ebitda: series('ebitda'),
-            tax: toNeed(series('tax')),
-            capex: toNeed(series('capex')),
-            wcChange: toNeed(series('wcChange')),
+            tax: toNeed(series('tax'), taxNeg),
+            capex: toNeed(series('capex'), capexNeg),
+            wcChange: toNeed(series('wcChange'), wcNeg),
             netCash: series('netCash')
         },
         refs: Object.fromEntries(Object.entries(found).map(([k, v]) => [k, v.ref])),
@@ -191,6 +200,12 @@ export const Dossier = {
         const next = { ...(this.get() || { name: 'Dossier' }), ...patch, updatedAt: new Date().toISOString() };
         Storage.set(KEY, next);
         return /** @type {DossierData} */ (next);
+    },
+
+    /** Remplace le dossier actif (import d'un nouveau client : rien ne survit de l'ancien).
+     *  @param {DossierData} data */
+    replace(data) {
+        Storage.set(KEY, { ...data, updatedAt: new Date().toISOString() });
     },
 
     clear() {

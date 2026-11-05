@@ -96,3 +96,13 @@ describe('LoanEngine.annualProfile', () => {
         assert.equal(p[3].service, 0);
     });
 });
+
+describe('LoanEngine — profil incomplet et durée arrondie', () => {
+    test('profil 10/20 sur 5 ans : le solde tombe à l\'échéance (pas de renormalisation)', () => {
+        const r = LoanEngine.build({ principal: 1000, durationMonths: 60, frequency: 'annual', amortType: 'custom', customProfile: [10, 20], fixedRate: 0 });
+        assert.deepEqual(r.rows.map(x => Math.round(x.principal)), [100, 200, 0, 0, 700]);
+    });
+    test('durée non multiple signalée', () => {
+        assert.equal(LoanEngine.build({ principal: 1000, durationMonths: 18, frequency: 'annual', fixedRate: 1 }).effectiveDurationMonths, 24);
+    });
+});

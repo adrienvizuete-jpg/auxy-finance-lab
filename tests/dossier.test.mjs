@@ -66,3 +66,23 @@ test('dossier actif : fusion et persistance', () => {
     assert.equal(got.ebitdaLtm, 3500);
     assert.equal(got.netCash, 2100);
 });
+
+test('feuilles décalées : valeurs alignées par période, pas par colonne', () => {
+    const pnl2 = { name: '> P&L >', rows: [[null, 'Réel', 'Réel', 'BP'], [null, d(2024), d(2025), d(2026)], ['EBITDA', 1000, 1100, 1200]] };
+    const cf2 = { name: 'Cash Flow', rows: [[null, null, 'Réel', 'Réel', 'BP'], [null, null, d(2024), d(2025), d(2026)], ['Variation de BFR', null, -10, -20, -30], ['− CAPEX net', null, -100, -120, -130]] };
+    const pack = parseDataPack([pnl2, cf2]);
+    assert.deepEqual(pack.lines.capex, [100, 120, 130]);
+    assert.deepEqual(pack.lines.wcChange, [10, 20, 30], '« Variation de BFR » reconnue, signe du capex');
+});
+
+test('signe décidé ligne par ligne : IS négatif inversé même sans ligne capex', () => {
+    const cf3 = { name: 'Cash Flow', rows: [[null, 'Réel', 'BP'], [null, d(2025), d(2026)], ['EBITDA', 1000, 1100], ['IS décaissé', -220, -240]] };
+    assert.deepEqual(parseDataPack([cf3]).lines.tax, [220, 240]);
+});
+
+test('import : le dossier précédent est remplacé (pas de dettes héritées)', () => {
+    store.clear();
+    Dossier.update({ name: 'Ancien', debts: [{ label: 'X', amount: 1 }] });
+    Dossier.replace({ name: 'Nouveau', ebitdaLtm: 10 });
+    assert.equal(Dossier.get().debts, undefined);
+});

@@ -357,7 +357,7 @@ function exportExcel() {
     rows.push(line('Marge levier', (r, i, L) => pct((r.headroomLev ?? 0) / 100, `IF(N(${L}${R.lev})>0,1-${L}${R.lev}/$B$4,"")`)));
     rows.push(line('ICR (EBITDA / intérêts)', (r, i, L) => ratio(r.icr, `IF(${L}${R.interest}>0,${L}${R.ebitda}/${L}${R.interest},"")`)));
     rows.push(line('Statut', (r, i, L) => ({ t: 's', v: ({ ok: 'Conforme', warning: 'Tendu', breach: 'BRIS' })[r.status],
-        f: `IF(OR(AND(ISNUMBER(${L}${R.dscr}),${L}${R.dscr}<$B$3),AND(ISNUMBER(${L}${R.lev}),${L}${R.lev}>$B$4)),"BRIS",IF(MIN(IF(ISNUMBER(${L}${R.mDscr}),${L}${R.mDscr},1),IF(ISNUMBER(${L}${R.mLev}),${L}${R.mLev},1))<0.1,"Tendu","Conforme"))` })));
+        f: `IF(OR(AND(ISNUMBER(${L}${R.dscr}),${L}${R.dscr}<$B$3),AND(ISNUMBER(${L}${R.lev}),${L}${R.lev}>$B$4),AND(${L}${R.ebitda}<=0,${L}${R.crd}>0)),"BRIS",IF(MIN(IF(ISNUMBER(${L}${R.mDscr}),${L}${R.mDscr},1),IF(ISNUMBER(${L}${R.mLev}),${L}${R.mLev},1))<0.1,"Tendu","Conforme"))` })));
     rows.push(line('Cash sweep (remboursement anticipé)', r => num(Math.round(r.sweep || 0))));
     rows.push(line('Equity cure nécessaire', (r, i, L) => num(r.equityCure || 0, `MAX(0,IF(AND(ISNUMBER(${L}${R.dscr}),${L}${R.dscr}<$B$3),$B$3*${L}${R.service}-${L}${num1},0),IF(AND(ISNUMBER(${L}${R.lev}),${L}${R.lev}>$B$4),${L}${R.net}-$B$4*${L}${R.ebitda},0))`)));
     rows.push(['']);
@@ -471,17 +471,23 @@ function loadParams(p) {
     if (typeof p.taxPct === 'number') taxPct = p.taxPct;
     if (typeof p.capexPct === 'number') capexPct = p.capexPct;
     if (typeof p.wcPct === 'number') wcPct = p.wcPct;
-    // Analyses antérieures (sans lignes de cash) : DSCR sur EBITDA conservé
-    // pour retrouver les mêmes chiffres qu'à la sauvegarde.
+    // Analyses antérieures (EBITDA sans lignes de cash) : DSCR sur EBITDA
+    // conservé pour retrouver les mêmes chiffres qu'à la sauvegarde. Un
+    // chargement partiel (dettes seules) ne touche qu'aux champs fournis.
     const legacy = Array.isArray(p.ebitdaYears) && !Array.isArray(p.taxYears);
-    taxYears = nums(p.taxYears) || [];
-    capexYears = nums(p.capexYears) || [];
-    wcYears = nums(p.wcYears) || [];
-    if (legacy) { taxYears = Array(10).fill(0); capexYears = Array(10).fill(0); wcYears = Array(10).fill(0); }
+    if (legacy) {
+        taxYears = Array(10).fill(0); capexYears = Array(10).fill(0); wcYears = Array(10).fill(0);
+        dscrBasis = 'ebitda';
+        excludeBullet = false;
+    } else {
+        if (Array.isArray(p.taxYears)) taxYears = nums(p.taxYears) || [];
+        if (Array.isArray(p.capexYears)) capexYears = nums(p.capexYears) || [];
+        if (Array.isArray(p.wcYears)) wcYears = nums(p.wcYears) || [];
+        if (p.dscrBasis === 'ebitda' || p.dscrBasis === 'cfads') dscrBasis = p.dscrBasis;
+        if (typeof p.excludeBullet === 'boolean') excludeBullet = p.excludeBullet;
+    }
     fillCashLines();
-    openingCash = parseFloat(p.openingCash) || 0;
-    dscrBasis = p.dscrBasis === 'ebitda' || legacy ? 'ebitda' : 'cfads';
-    excludeBullet = legacy ? false : p.excludeBullet !== false;
+    if (p.openingCash != null && isFinite(parseFloat(p.openingCash))) openingCash = parseFloat(p.openingCash);
     if (typeof p.covenantDscr === 'number' && p.covenantDscr > 0) covenantDscr = p.covenantDscr;
     if (typeof p.covenantLeverage === 'number' && p.covenantLeverage > 0) covenantLeverage = p.covenantLeverage;
     if (Array.isArray(p.debts) && p.debts.length) {
@@ -665,7 +671,7 @@ export const CovenantsModule = {
                         <input type="text" class="form-input" id="cov-margin-grid" value="${escapeHtml(marginGridText)}" placeholder="2:2,00 / 3:2,50 / 99:3,00">
                     </div>
                 </div>
-                <p style="font-size:0.8rem;color:var(--text-muted);margin:4px 0 0">Excess cash-flow = CFADS − service de la dette ; le sweep est imputé sur les dernières échéances (l'amortissement contractuel reste inchangé). La grille de sweep, si elle est saisie, remplace le % fixe.</p>
+                <p style="font-size:0.8rem;color:var(--text-muted);margin:4px 0 0">Excess cash-flow = CFADS − service de la dette ; le sweep est imputé sur les dernières échéances (l'amortissement contractuel reste inchangé). La grille de sweep, si elle est saisie, remplace le % fixe ; la 1re année, le palier est fixé par le levier d'entrée.</p>
             </div>
 
             <!-- KPIs -->
@@ -854,6 +860,7 @@ export const CovenantsModule = {
             } else {
                 debts[i][field] = isText ? e.target.value : (parseFloat(e.target.value) || 0);
             }
+            if (field === 'amortType' && debts[i].amortType === 'balloon' && debts[i].balloonPct == null) debts[i].balloonPct = 30;
             if (field === 'amortType' && debts[i].amortType === 'custom' && !(debts[i].customProfile || []).length) {
                 const n = Math.max(1, Math.round(debts[i].durationYears || 1));
                 debts[i].customProfile = Array.from({ length: n }, () => Math.round(100 / n * 10) / 10);
@@ -928,6 +935,16 @@ export const CovenantsModule = {
         if (db2) db2.value = dscrBasis;
         const bl = document.getElementById('cov-bullet');
         if (bl) bl.value = excludeBullet ? 'exclude' : 'include';
+        const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = String(v); };
+        setVal('cov-tax-pct', taxPct);
+        setVal('cov-capex-pct', capexPct);
+        setVal('cov-wc-pct', wcPct);
+        setVal('cov-index-path', indexPath.map(v => Financial.formatNumber(v, 3)).join(' / '));
+        setVal('cov-swap-rate', swapRate);
+        setVal('cov-floor', floorZero ? '0' : 'none');
+        setVal('cov-sweep-pct', sweepPct);
+        setVal('cov-sweep-grid', sweepGridText);
+        setVal('cov-margin-grid', marginGridText);
         const db = document.getElementById('cov-debts-body');
         if (db) db.innerHTML = renderDebtRows();
     }

@@ -180,7 +180,9 @@ export const CalculatorModule = {
         document.getElementById('calc-npv-btn')?.addEventListener('click', () => {
             const rate = parseFloat(document.getElementById('calc-npv-rate').value) / 100;
             // Une ligne par flux, format français admis (« -1 000 000 », « 250 000,50 »)
-            const flows = document.getElementById('calc-npv-flows').value.split('\n').map(v => Financial.parseNumber(v)).filter(v => !isNaN(v));
+            const lines = document.getElementById('calc-npv-flows').value.split('\n').filter(v => v.trim());
+            const flows = lines.map(v => Financial.parseNumber(v)).filter(v => !isNaN(v));
+            if (flows.length < lines.length) window.showToast?.(`${lines.length - flows.length} ligne(s) illisible(s) ignorée(s)`, 'warning');
             if (flows.length < 2) { window.showToast?.('Saisissez au moins deux flux (un par ligne)', 'warning'); return; }
             const npv = flows[0] + Financial.npv(rate, flows.slice(1));
             document.getElementById('calc-npv-result').style.display = 'block';
@@ -194,7 +196,9 @@ export const CalculatorModule = {
 
         // IRR
         document.getElementById('calc-irr-btn')?.addEventListener('click', () => {
-            const flows = document.getElementById('calc-irr-flows').value.split('\n').map(v => Financial.parseNumber(v)).filter(v => !isNaN(v));
+            const lines = document.getElementById('calc-irr-flows').value.split('\n').filter(v => v.trim());
+            const flows = lines.map(v => Financial.parseNumber(v)).filter(v => !isNaN(v));
+            if (flows.length < lines.length) window.showToast?.(`${lines.length - flows.length} ligne(s) illisible(s) ignorée(s)`, 'warning');
             if (flows.length < 2) { window.showToast?.('Saisissez au moins deux flux (un par ligne)', 'warning'); return; }
             let irr;
             try {

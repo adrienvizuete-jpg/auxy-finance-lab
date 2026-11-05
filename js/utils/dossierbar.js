@@ -72,7 +72,7 @@ export const DossierBar = {
                     return;
                 }
                 this._preview(pack, dossier, () => {
-                    Dossier.update(dossier);
+                    Dossier.replace(dossier); // nouveau client : les dettes de l'ancien ne doivent pas survivre
                     refresh();
                     hooks.fromDossier(/** @type {DossierData} */ (Dossier.get()));
                     window.showToast?.('Data Pack importé et chargé', 'success');

@@ -166,7 +166,7 @@ function renderAutresRows() {
             <td><select class="er-input" data-field="rateType" style="width:80px;font-size:0.75rem">${Object.entries(RATE_LABELS).map(([k, v]) => `<option value="${k}" ${k === (a.rateType || 'fixed') ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${a.taux || 0}" data-field="taux" step="0.25" min="0" max="30" style="width:70px"></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${a.duration || 1}" data-field="duration" step="1" min="1" style="width:60px"></td>
-            <td><select class="er-input" data-field="amortType" style="width:100px;font-size:0.75rem">${Object.entries(AMORT_LABELS).filter(([k]) => k !== 'custom').map(([k, v]) => `<option value="${k}" ${k === (a.amortType || 'infine') ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
+            <td><select class="er-input" data-field="amortType" style="width:100px;font-size:0.75rem">${Object.entries(AMORT_LABELS).filter(([k]) => k !== 'custom' && k !== 'balloon').map(([k, v]) => `<option value="${k}" ${k === (a.amortType || 'infine') ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
             <td style="text-align:right" class="er-computed">${fmtK(computeAnnuity(a.amount || 0, a.taux || 0, a.duration || 1, a.amortType || 'infine', a.frequency || 'annuel', a))}</td>
             <td style="width:30px"><button class="er-remove-btn" data-action="remove">${X_SVG}</button></td>
         </tr>`).join('');
@@ -367,6 +367,10 @@ function handleTableInput(e) {
 
     // Profil libre sans profil saisi : répartition linéaire par défaut (sinon
     // tout tomberait à l'échéance, comme un in fine)
+    if (field === 'amortType' && parsed === 'balloon') {
+        const target = section === 'tranches' ? tranchesSenior[index] : null;
+        if (target && target.balloonPct == null) target.balloonPct = 30;
+    }
     if (field === 'amortType' && parsed === 'custom') {
         const target = section === 'tranches' ? tranchesSenior[index] : section === 'autres' ? autresFin[index] : null;
         if (target && !(target.customProfile || []).length) {
@@ -565,10 +569,14 @@ function loadFromHistory() {
         if (p.ebitda !== undefined) ebitda = p.ebitda;
         if (p.fondsPropres !== undefined) fondsPropres = p.fondsPropres;
         if (p.tresorerieMin !== undefined) tresorerieMin = p.tresorerieMin;
-        if (Array.isArray(p.emplois)) emplois = p.emplois.map(e => ({ ...e }));
-        if (Array.isArray(p.detteNonRef)) detteNonRef = p.detteNonRef.map(d => ({ ...d }));
-        if (Array.isArray(p.tranchesSenior)) tranchesSenior = p.tranchesSenior.map(t => ({ ...t }));
-        if (Array.isArray(p.autresFin)) autresFin = p.autresFin.map(a => ({ ...a }));
+        // Champs numériques convertis : un lien partagé ne peut pas injecter de
+        // texte dans les attributs value="…" des lignes
+        const n = v => (isFinite(parseFloat(v)) ? parseFloat(v) : 0);
+        const nums = arr => (Array.isArray(arr) ? arr.map(n) : undefined);
+        if (Array.isArray(p.emplois)) emplois = p.emplois.map(e => ({ ...e, label: String(e.label ?? ''), amount: n(e.amount) }));
+        if (Array.isArray(p.detteNonRef)) detteNonRef = p.detteNonRef.map(d => ({ ...d, label: String(d.label ?? ''), amount: n(d.amount) }));
+        if (Array.isArray(p.tranchesSenior)) tranchesSenior = p.tranchesSenior.map(t => ({ ...t, label: String(t.label ?? ''), pct: n(t.pct), duration: n(t.duration) || 1, taux: n(t.taux), balloonPct: t.balloonPct != null ? n(t.balloonPct) : undefined, customProfile: nums(t.customProfile) }));
+        if (Array.isArray(p.autresFin)) autresFin = p.autresFin.map(a => ({ ...a, label: String(a.label ?? ''), amount: n(a.amount), duration: n(a.duration) || 1, taux: n(a.taux) }));
         if (p.sizing && typeof p.sizing === 'object') sizing = { ...sizing, ...p.sizing };
     }
 
@@ -583,6 +591,8 @@ function loadFromHistory() {
 
     document.getElementById('er-emplois-body').innerHTML = renderEmploisRows();
     document.getElementById('er-dnr-body').innerHTML = renderDetteNonRefRows();
+    const tranchesBody = document.getElementById('er-tranches-body');
+    if (tranchesBody) tranchesBody.innerHTML = renderTranchesRows(compute());
     const autresBody = document.getElementById('er-autres-body');
     if (autresBody) autresBody.innerHTML = renderAutresRows();
     document.querySelectorAll('.er-sizing').forEach(inp => { inp.value = sizing[inp.dataset.field]; });

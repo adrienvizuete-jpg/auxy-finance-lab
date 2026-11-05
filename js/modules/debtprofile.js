@@ -1044,5 +1044,12 @@ export const DebtProfileModule = {
             b.classList.toggle('active', (b.dataset.inc === '1') === includeNew));
         const body = document.getElementById('dp-loans-body');
         if (body) body.innerHTML = renderLoanRows();
+        const pool = document.getElementById('dp-pool-body');
+        if (pool) pool.innerHTML = renderPoolRows();
+        document.querySelectorAll('.dp-refi').forEach(el => {
+            const f = el.dataset.field;
+            if (f === 'financeCosts') el.value = refi.financeCosts ? '1' : '0';
+            else if (f && refi[f] != null) el.value = String(refi[f]);
+        });
     }
 };

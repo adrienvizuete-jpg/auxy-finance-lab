@@ -115,8 +115,11 @@ describe('Covenants LBO — cash sweep, grille de marge, equity cure, dimensionn
 
     test('grille de sweep selon le levier : 0 % sous 1,5x', () => {
         const r = CovenantEngine.project({ ...input, cashSweep: { grid: [{ maxLeverage: 1.5, pct: 0 }, { maxLeverage: 99, pct: 75 }] } });
-        assert.ok(r.rows[0].sweep === 0, 'année 1 : pas de levier connu → grille non appliquée');
-        assert.ok(r.rows.some(x => x.sweep > 0), 'levier > 1,5x : sweep à 75 %');
+        // année 1 : palier fixé par le levier d'entrée (5000 / 2000 = 2,5x > 1,5x) → 75 %
+        const ecf1 = r.rows[0].cfads - r.rows[0].service;
+        near(r.rows[0].sweep, ecf1 * 0.75, 1e-6);
+        const low = CovenantEngine.project({ ...input, debts: [{ ...senior, amount: 2000 }], cashSweep: { grid: [{ maxLeverage: 1.5, pct: 0 }, { maxLeverage: 99, pct: 75 }] } });
+        assert.equal(low.rows[0].sweep, 0, 'levier d\'entrée 1x ≤ 1,5x : pas de sweep');
     });
 
     test('equity cure : apport qui ramène le DSCR au covenant', () => {
@@ -134,5 +137,14 @@ describe('Covenants LBO — cash sweep, grille de marge, equity cure, dimensionn
         const at = CovenantEngine.project({ ...input, debts: [{ ...senior, amount: r.byDscr }], covenantLeverage: Infinity });
         near(Math.min(...at.rows.map(x => x.dscr)), 1.2, 1e-4);
         assert.equal(r.max, Math.min(r.byLeverage, r.byDscr));
+    });
+});
+
+describe('Covenants — in fine refinancé', () => {
+    test('la dette refinancée continue de porter intérêt après l\'échéance', () => {
+        const infine = { label: 'B', amount: 2000, rate: 5, durationYears: 3, amortType: 'infine', frequency: 'annual' };
+        const r = CovenantEngine.project({ years: 6, ebitda: Array(6).fill(1000), debts: [infine], covenantDscr: 1.2, covenantLeverage: 3.5 });
+        near(r.rows[4].interest, 100, 1e-6);
+        assert.ok(r.rows[4].dscr != null);
     });
 });

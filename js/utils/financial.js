@@ -838,7 +838,9 @@ export const Financial = {
      *   cbi: { rate: number, durationYears: number, avancePct: number, residualPct: number, timing?: string } }} p
      */
     cbiVsLoan({ price, landPct, notaryPct, isRate, buildingDepYears, discountRate, loan, cbi }) {
-        const years = Math.max(1, Math.round(Math.max(loan.durationYears, cbi.durationYears)));
+        // Horizon : jusqu'à la fin de l'amortissement du bâti, pour ne pas perdre
+        // l'économie d'IS de l'emprunt après son terme
+        const years = Math.max(1, Math.round(Math.max(loan.durationYears, cbi.durationYears, buildingDepYears)));
         const t = isRate / 100;
         const building = price * (1 - landPct / 100);
         const notary = price * notaryPct / 100;
@@ -850,7 +852,8 @@ export const Financial = {
         // Crédit-bail (loyers mensuels, terme à échoir par défaut)
         const avance = price * cbi.avancePct / 100;
         const residual = price * cbi.residualPct / 100;
-        const cbiSim = this.creditBail({ assetValue: price, deposit: avance, annualRate: cbi.rate, durationMonths: Math.round(cbi.durationYears * 12), residualValue: residual, paymentTiming: cbi.timing || 'advance' });
+        // Les frais d'acquisition sont portés par le crédit-bailleur et refacturés dans les loyers
+        const cbiSim = this.creditBail({ assetValue: price + notary, deposit: avance, annualRate: cbi.rate, durationMonths: Math.round(cbi.durationYears * 12), residualValue: residual, paymentTiming: cbi.timing || 'advance' });
 
         const rows = [];
         let npvLoan = apport, npvCbi = avance;
@@ -1474,10 +1477,21 @@ export const Financial = {
      */
     parseNumber(raw) {
         if (typeof raw === 'number') return raw;
-        let t = String(raw ?? '').trim().replace(/[\s\u00a0\u202f€%]/g, '');
+        let t = String(raw ?? '').trim().replace(/[\s\u00a0\u202f€%]/g, '').replace(/[\u2212\u2013]/g, '-');
         if (!t) return NaN;
-        if (t.includes(',') && t.includes('.')) t = t.replace(/\./g, '').replace(',', '.'); // 1.000,50
-        else t = t.replace(',', '.');
+        const sign = /^[-+]/.test(t) ? t[0] : '';
+        const body = sign ? t.slice(1) : t;
+        if (body.includes(',') && body.includes('.')) {
+            // le dernier séparateur est la décimale : 1.000,50 ou 1,000.50
+            t = body.lastIndexOf(',') > body.lastIndexOf('.') ? body.replace(/\./g, '').replace(',', '.') : body.replace(/,/g, '');
+        } else if (/^\d{1,3}(\.\d{3})+$/.test(body)) {
+            t = body.replace(/\./g, '');            // 1.000 / 1.000.000 (milliers)
+        } else if (/^\d{1,3}(,\d{3}){2,}$/.test(body)) {
+            t = body.replace(/,/g, '');              // 1,000,000
+        } else {
+            t = body.replace(',', '.');
+        }
+        t = sign + t;
         return /^[-+]?\d*\.?\d+(e[-+]?\d+)?$/i.test(t) ? parseFloat(t) : NaN;
     },
 

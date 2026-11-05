@@ -1583,7 +1583,8 @@ async function prefillIndexPath() {
     if (bfrIndex) {
         const d = await Market.getRates();
         const v = Market.rateValue(d, 'euribor_3m');
-        if (v != null && document.contains(bfrIndex)) bfrIndex.value = String(Math.round(v * 1000) / 1000);
+        // seulement la valeur par défaut : une simulation rechargée garde son index
+        if (v != null && document.contains(bfrIndex) && bfrIndex.value === bfrIndex.defaultValue) bfrIndex.value = String(Math.round(v * 1000) / 1000);
     }
     const input = document.getElementById('cr-index-path');
     if (!input) return;
@@ -1923,6 +1924,27 @@ function loadPendingReload() {
                 el.value = value;
             }
         });
+
+        // RCF et comparatif BFR : champs propres (listes, paramètres imbriqués)
+        const setField = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = String(v); };
+        if (pending.type === 'revolving') {
+            const p = pending.params;
+            setField('cr-commitment-mode', p.commitmentMode);
+            setField('cr-rcf-margin', p.margin);
+            setField('cr-upfront', p.upfrontFeePct);
+            if (Array.isArray(p.utilizationProfile)) setField('cr-rcf-profile', p.utilizationProfile.join('/'));
+            if (Array.isArray(p.utilizationFees)) setField('cr-rcf-tiers', p.utilizationFees.map(t => `${t.above}:${Financial.formatNumber(t.fee, 2)}`).join(' / '));
+        }
+        if (pending.type === 'bfr') {
+            const p = pending.params;
+            setField('cr-principal', p.turnover); setField('cr-dso', p.dso); setField('cr-bfr-index', p.index);
+            setField('cr-fact-comm', p.factoring?.commissionPct); setField('cr-fact-margin', p.factoring?.margin);
+            setField('cr-fact-reserve', p.factoring?.reservePct); setField('cr-fact-fixed', p.factoring?.fixedFees);
+            setField('cr-dailly-margin', p.dailly?.margin); setField('cr-dailly-advance', p.dailly?.advancePct);
+            setField('cr-dailly-fee', p.dailly?.feePerBatch); setField('cr-dailly-batches', p.dailly?.batchesPerYear);
+            setField('cr-rcfc-margin', p.rcf?.margin); setField('cr-rcfc-commit', p.rcf?.commitmentPctOfMargin);
+            setField('cr-rcfc-line', p.rcf?.line); setField('cr-rcfc-upfront', p.rcf?.upfrontFeePct); setField('cr-rcfc-years', p.rcf?.years);
+        }
 
         // Taux variable : champs propres (listes, couverture)
         if (pending.type === 'variable') {

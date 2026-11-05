@@ -147,8 +147,12 @@ export const CovenantEngine = {
         let cash = openingCash || 0;
         let refinanced = 0; // in fine supposés refinancés : la dette reste au bilan
         let swept = 0;      // remboursements anticipés cumulés (cash sweep)
-        let prevLeverage = null;
         let crdSchedStart = debts.reduce((s, d) => s + (d.amount || 0), 0);
+        // Levier d'entrée (dette − trésorerie d'ouverture) / EBITDA de l'année 1 :
+        // c'est lui qui fixe le palier des grilles la première année
+        const e0 = (ebitda[0] || 0) * (1 + (ebitdaShock || 0) / 100);
+        let prevLeverage = e0 > 0 ? Math.max(0, crdSchedStart - (openingCash || 0)) / e0 : null;
+        let refinancedInterest = 0; // intérêts annuels portés par les in fine refinancés
         const floatingDebts = profiles.filter(p => p.debt.rateType === 'floating');
         const sweepPctAt = (/** @type {number | null} */ lev) => {
             const grid = (cashSweep.grid || []).filter(g => isFinite(g.maxLeverage)).sort((a, b) => a.maxLeverage - b.maxLeverage);
@@ -178,7 +182,14 @@ export const CovenantEngine = {
             const schedInterest = profiles.reduce((s, p) => s + p.profile[y].interest, 0);
             const schedPrincipal = profiles.reduce((s, p) => s + p.profile[y].principal, 0);
             const bullet = profiles.reduce((s, p) => s + p.profile[y].bullet, 0);
-            if (excludeBullet) refinanced += bullet;
+            // Intérêts de la dette refinancée tombée l'an passé (refinancée au
+            // même taux, index de l'année pour une dette variable)
+            const refinancedCarry = refinancedInterest;
+            if (excludeBullet) {
+                refinanced += bullet;
+                const idx = (market.indexPath && market.indexPath.length ? market.indexPath[Math.min(y, market.indexPath.length - 1)] : 0) + (market.indexShock || 0);
+                refinancedInterest += profiles.reduce((s, p) => s + p.profile[y].bullet * ((p.debt.rate || 0) + (p.debt.rateType === 'floating' ? Math.max(idx, market.floor ?? 0) : 0)) / 100, 0);
+            }
             const crdSched = profiles.reduce((s, p) => s + p.profile[y].crd, 0) + refinanced;
 
             // Cash sweep : l'encours remboursé par anticipation ne porte plus
@@ -192,7 +203,7 @@ export const CovenantEngine = {
             const floatingCrd = floatingDebts.reduce((s, p) => s + (y === 0 ? p.debt.amount : p.profile[y - 1].crd), 0);
             const floatingMargin = floatingDebts.length ? floatingDebts.reduce((s, p) => s + p.debt.rate * p.debt.amount, 0) / Math.max(1e-9, floatingDebts.reduce((s, p) => s + p.debt.amount, 0)) : 0;
             const marginDelta = ratchet == null ? 0 : ratchet - floatingMargin;
-            const interest = schedInterest - sweepSaving + Math.max(0, floatingCrd - swept) * marginDelta / 100;
+            const interest = schedInterest - sweepSaving + Math.max(0, floatingCrd - swept) * marginDelta / 100 + refinancedCarry;
             const outstandingStart = Math.max(0, crdSchedStart - swept);
             const principal = Math.min(schedPrincipal, outstandingStart);
 

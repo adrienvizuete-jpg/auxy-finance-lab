@@ -146,7 +146,9 @@ export const LoanEngine = {
         } else if (amortType === 'infine') {
             plan = Array.from({ length: n }, (_, k) => (k === n - 1 ? principal : 0));
         } else if (amortType === 'custom') {
-            const total = customProfile.reduce((s, v) => s + (v || 0), 0) || 100;
+            // Base 100 % du nominal : un profil incomplet (ex. 10/20) laisse le
+            // solde à l'échéance finale ; un profil > 100 % est ramené à 100 %
+            const total = Math.max(100, customProfile.reduce((s, v) => s + (v || 0), 0));
             plan = Array(n).fill(0);
             const years = Math.ceil(n / ppy);
             for (let y = 0; y < years; y++) {
@@ -219,6 +221,7 @@ export const LoanEngine = {
 
         return {
             rows, totalInterest, totalHedge, totalPayment, upfrontFee, hedgePremium,
+            effectiveDurationMonths: n * step,
             totalCost: totalInterest + totalHedge + upfrontFee + hedgePremium,
             teg, taeg, allInRate: teg, invalid: false
         };
