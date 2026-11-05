@@ -2030,7 +2030,11 @@ export const CreditModule = {
     render() {
         // Type demandé par un parcours de mission (js/utils/mission.js)
         const asked = /** @type {any} */ (window)._creditType;
-        if (asked && CREDIT_TYPES.some(t => t.id === asked)) currentType = asked;
+        if (asked && CREDIT_TYPES.some(t => t.id === asked)) {
+            currentType = asked;
+            // la dernière simulation d'un autre type ne doit pas reprendre la main au retour
+            if (lastResult && lastResult.type !== asked) lastResult = null;
+        }
         /** @type {any} */ (window)._creditType = null;
         return `
             <div class="page-header">

@@ -95,7 +95,11 @@ function navigateTo(page, { history: mode = 'push' } = {}) {
         container.style.animation = '';
         // Initialize module
         modules[page].init?.();
-        if (FormState.DOM_STATE_PAGES.has(page)) FormState.restore(container, FormState.load(page));
+        if (FormState.DOM_STATE_PAGES.has(page)) {
+            FormState.restore(container, FormState.load(page));
+            // un calcul rejoué ne fait pas défiler la page
+            document.getElementById('main-content')?.scrollTo({ top: 0, behavior: 'instant' });
+        }
         mountKpiBar(page, container);
     }
     refreshContext?.();
@@ -174,13 +178,16 @@ function toggleTheme() {
         const container = document.getElementById('page-container');
         const main = document.getElementById('main-content');
         if (container) {
-            const snap = FormState.snapshot(container);
+            // Modules à état DOM : saisies photographiées puis rejouées ; les
+            // autres re-rendent depuis leur état en mémoire
+            const domState = FormState.DOM_STATE_PAGES.has(currentPage);
+            const snap = domState ? FormState.snapshot(container) : undefined;
             const scroll = main?.scrollTop || 0;
             container.innerHTML = modules[currentPage].render();
             modules[currentPage].init?.();
-            FormState.restore(container, snap);
+            if (domState) FormState.restore(container, snap);
             mountKpiBar(currentPage, container);
-            if (main) main.scrollTop = scroll;
+            main?.scrollTo({ top: scroll, behavior: 'instant' });
         }
     }
 }
@@ -348,8 +355,11 @@ function init() {
         });
     });
 
-    // En-tête : client actif et parcours de mission
+    // En-tête : client actif et parcours de mission ; l'accueil suit le dossier
     refreshContext = initContextBar(() => currentPage);
+    window.addEventListener('dossier:change', () => {
+        if (currentPage === 'dashboard') navigateTo('dashboard', { history: 'none' });
+    });
 
     // Calculs lancés sur la page (rejoués au retour)
     const pc = document.getElementById('page-container');

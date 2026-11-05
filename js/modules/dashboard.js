@@ -184,10 +184,8 @@ export const DashboardModule = {
         // Reprise d'un dossier, nouveau dossier, parcours
         document.querySelectorAll('#page-container [data-resume]').forEach(btn => btn.addEventListener('click', () => {
             const name = /** @type {HTMLElement} */ (btn).dataset.resume || '';
-            if (Dossier.activate(name)) {
-                window.showToast?.(`Dossier « ${name} » actif`, 'success');
-                window.navigateTo?.('dashboard');
-            }
+            // l'accueil se redessine sur l'événement dossier:change (app.js)
+            if (Dossier.activate(name)) window.showToast?.(`Dossier « ${name} » actif`, 'success');
         }));
         document.getElementById('home-dossier-new')?.addEventListener('click', () => openDossierPicker());
         document.querySelectorAll('#page-container [data-mission]').forEach(btn => btn.addEventListener('click', () => {

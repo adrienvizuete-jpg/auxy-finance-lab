@@ -1,22 +1,23 @@
 /**
  * Auxy Partners - Saisies conservées d'une visite à l'autre
  *
- * Calculatrice, Stress Test, Crédit et Benchmark gardent leurs saisies dans
+ * Calculatrice, Stress Test et Benchmark gardent leurs saisies dans
  * le DOM : revenir sur la page repartait des valeurs par défaut, et changer
  * de thème effaçait tout ce qui n'avait pas été simulé. On photographie les
  * champs (par id) et les calculs lancés (boutons, formulaires) en quittant
  * la page, puis on les rejoue au retour. Les autres modules gardent déjà leur
- * état en mémoire.
+ * état en mémoire ; Crédit recharge lui-même sa dernière simulation (rejouer
+ * ses saisies en plus entrait en conflit avec ce rechargement).
  *
  * Mémoire de session (sessionStorage) : les saisies survivent à un
  * rechargement de l'onglet, pas à sa fermeture.
  */
 
 /** Pages dont l'état vit dans le DOM */
-export const DOM_STATE_PAGES = new Set(['calculator', 'stress', 'credit', 'benchmark']);
+export const DOM_STATE_PAGES = new Set(['calculator', 'stress', 'benchmark']);
 
 /** Boutons de calcul à rejouer (pas les exports, sauvegardes, partages…) */
-const REPLAY_BTN = /^(calc-[a-z]+-btn|st-run|run-benchmark|btn-calc-prepayment)$/;
+const REPLAY_BTN = /^(calc-[a-z]+-btn|st-run|run-benchmark)$/;
 const KEY = 'formstate:';
 
 /**
@@ -48,6 +49,19 @@ export function snapshot(root) {
 export function restore(root, snap) {
     actions = [];
     if (!snap) return;
+    applyValues(root, snap);
+    snap.actions.forEach(a => {
+        const [kind, id] = a.split(':');
+        const el = root.querySelector(`#${CSS.escape(id)}`);
+        if (kind === 'click' && el instanceof HTMLElement) el.click();
+        else if (kind === 'submit' && el instanceof HTMLFormElement) el.requestSubmit();
+    });
+    // Champs créés par un calcul rejoué (panneau de résultats) : second passage
+    if (snap.actions.length) applyValues(root, snap);
+}
+
+/** @param {ParentNode} root @param {Snapshot} snap */
+function applyValues(root, snap) {
     Object.entries(snap.values).forEach(([id, v]) => {
         const el = /** @type {HTMLInputElement | null} */ (root.querySelector(`#${CSS.escape(id)}`));
         if (!el) return;
@@ -60,12 +74,6 @@ export function restore(root, snap) {
         }
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    snap.actions.forEach(a => {
-        const [kind, id] = a.split(':');
-        const el = root.querySelector(`#${CSS.escape(id)}`);
-        if (kind === 'click' && el instanceof HTMLElement) el.click();
-        else if (kind === 'submit' && el instanceof HTMLFormElement) el.requestSubmit();
     });
 }
 

@@ -24,6 +24,14 @@ function summary() {
     return parts.join(' · ');
 }
 
+// Client changé depuis l'en-tête : le bandeau affiché suit
+if (typeof window !== 'undefined') {
+    window.addEventListener('dossier:change', () => {
+        const el = document.getElementById('dossier-summary');
+        if (el) el.innerHTML = `Dossier : ${summary()}`;
+    });
+}
+
 export const DossierBar = {
     /** @param {string} moduleKey */
     html(moduleKey) {

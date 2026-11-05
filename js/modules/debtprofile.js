@@ -31,6 +31,17 @@ import { Dossier } from '../utils/dossier.js';
 // ── State ──
 const now = new Date();
 let dossierName = '';
+/** Le nom vient du client actif (pas d'une saisie) : il suit les changements de client */
+let nameFromActive = false;
+if (typeof window !== 'undefined') {
+    window.addEventListener('dossier:change', () => {
+        if (dossierName && !nameFromActive) return;
+        dossierName = Dossier.get()?.name?.slice(0, 80) || '';
+        nameFromActive = true;
+        const input = /** @type {HTMLInputElement | null} */ (document.getElementById('dp-dossier'));
+        if (input) input.value = dossierName;
+    });
+}
 let analysis = { year: now.getFullYear(), month: now.getMonth() + 1 };
 let closingMonth = 12;
 let includeNew = true;
@@ -672,7 +683,7 @@ function showAudit(kind) {
 
 function loadParams(p) {
     if (!p) return;
-    if (typeof p.dossierName === 'string') dossierName = p.dossierName.slice(0, 80);
+    if (typeof p.dossierName === 'string') { dossierName = p.dossierName.slice(0, 80); nameFromActive = false; }
     if (p.analysis && parseMonthValue(monthValue(p.analysis.year, p.analysis.month))) {
         analysis = { year: parseInt(p.analysis.year), month: parseInt(p.analysis.month) };
     }
@@ -725,7 +736,10 @@ function loadParams(p) {
 export const DebtProfileModule = {
     render() {
         // Un seul « dossier » : le nom suit le client actif tant qu'il n'est pas saisi ici
-        if (!dossierName) dossierName = Dossier.get()?.name?.slice(0, 80) || '';
+        if (!dossierName || nameFromActive) {
+            dossierName = Dossier.get()?.name?.slice(0, 80) || '';
+            nameFromActive = true;
+        }
         return `
             <div class="page-header">
                 <h1>Profil de Dette</h1>
@@ -933,6 +947,7 @@ export const DebtProfileModule = {
         // ── Paramètres dossier ──
         document.getElementById('dp-dossier')?.addEventListener('input', e => {
             dossierName = e.target.value.slice(0, 80);
+            nameFromActive = false;
         });
         document.getElementById('dp-analysis')?.addEventListener('change', e => {
             const parsed = parseMonthValue(e.target.value);

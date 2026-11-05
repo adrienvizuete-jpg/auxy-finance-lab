@@ -391,8 +391,8 @@ export const Export = {
             }
 
             if (section.type === 'pagebreak') {
-                doc.addPage();
-                y = 20;
+                // page déjà neuve (saut automatique juste au-dessus) : pas de page blanche
+                if (y > 20) { doc.addPage(); y = 20; }
                 continue;
             }
 
