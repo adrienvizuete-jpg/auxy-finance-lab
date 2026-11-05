@@ -148,6 +148,18 @@ async function run() {
         check('Tableau de variation d\'endettement rempli', dpOk.rows >= 2, `${dpOk.rows} lignes`);
         check('Graphiques (canvas) présents', dpOk.canvases >= 2, `${dpOk.canvases} canvas`);
 
+        // --- 4 bis. Bouton Retour du navigateur + titre par page ---
+        console.log('Parcours 4 bis : Retour / Suivant du navigateur');
+        // historique à ce stade : … → covenants → debtprofile
+        await page.goBack();
+        await page.waitForFunction(() => location.hash === '#covenants' && !!document.querySelector('#cov-results-table'), { timeout: 5000 }).catch(() => {});
+        const back1 = await page.evaluate(() => ({ hash: location.hash, title: document.title }));
+        check('Retour : page précédente affichée', back1.hash === '#covenants', back1.hash);
+        check('Titre d\'onglet propre au module', /Covenants/.test(back1.title), back1.title);
+        await page.goForward();
+        await page.waitForFunction(() => location.hash === '#debtprofile', { timeout: 5000 }).catch(() => {});
+        check('Suivant : retour sur la page quittée', await page.evaluate(() => location.hash) === '#debtprofile');
+
         // --- 5. Service worker : installation + flux de mise à jour ---
         console.log('Parcours 5 : Service worker (install + bandeau de mise à jour)');
         const swActive = await page.evaluate(async () => {

@@ -38,11 +38,11 @@
     --gray-50: #f9fafb;
 
     /* Semantic */
-    --success: #059669;
+    --success: #047857;        /* 4,8:1 sur son fond de badge, 5,5:1 en fond sous texte blanc */
     --success-bg: #d1fae5;
-    --warning: #d97706;
+    --warning: #b45309;        /* 4,5:1 */
     --warning-bg: #fef3c7;
-    --danger: #dc2626;
+    --danger: #b91c1c;         /* 5,3:1 */
     --danger-bg: #fee2e2;
     --info: #2563eb;
     --info-bg: #dbeafe;
@@ -53,9 +53,12 @@
     --bg-tertiary: #f8fafc;
     --text-primary: #1a2332;
     --text-secondary: #4b5563;
-    --text-muted: #9ca3af;
+    --text-muted: #5b6472;     /* 5,4 à 6:1 (était 2,5:1) */
     --border-color: #e2e8f0;
     --border-color-strong: #cbd5e1;
+    --input-border: #8a94a6;   /* bordure de champ ≥ 3:1 (WCAG 1.4.11) */
+    --on-status: #ffffff;      /* texte posé sur un fond success / warning / danger */
+    --link: var(--primary-600);
     --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
     --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -2px rgba(0,0,0,0.05);
     --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.08), 0 4px 6px -4px rgba(0,0,0,0.04);
@@ -88,9 +91,15 @@
     --bg-tertiary: #15202d;
     --text-primary: #e8edf2;
     --text-secondary: #94a3b8;
-    --text-muted: #64748b;
+    --text-muted: #8b9bb0;     /* 5,3 à 6,3:1 (était 3,2:1) */
     --border-color: #2a3a4a;
     --border-color-strong: #3a4f63;
+    --input-border: #5b7189;
+    --success: #34d399;
+    --warning: #fbbf24;
+    --danger: #f87171;
+    --on-status: #0f1923;      /* couleurs claires en sombre : texte foncé dessus */
+    --link: var(--primary-300);
     --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
     --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.4);
     --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.5);
@@ -459,7 +468,7 @@ body {
     font-family: inherit;
     color: var(--text-primary);
     background: var(--bg-tertiary);
-    border: 1.5px solid var(--border-color);
+    border: 1.5px solid var(--input-border);
     border-radius: var(--radius-md);
     transition: all var(--transition-fast);
     outline: none;
@@ -468,7 +477,13 @@ body {
 .form-input:focus,
 .form-select:focus {
     border-color: var(--primary-500);
-    box-shadow: 0 0 0 3px rgba(46,134,171,0.15);
+    box-shadow: 0 0 0 3px rgba(46,134,171,0.35);
+}
+
+/* Focus clavier visible partout (boutons, liens, onglets, champs de tableau) */
+:focus-visible {
+    outline: 2px solid var(--primary-400);
+    outline-offset: 2px;
 }
 
 .form-input::placeholder {
@@ -601,7 +616,7 @@ body {
 
 .btn-danger {
     background: var(--danger);
-    color: white;
+    color: var(--on-status);
 }
 
 .btn-danger:hover {
@@ -770,9 +785,9 @@ body {
     max-width: 380px;
 }
 
-.toast.success { background: var(--success); }
-.toast.error { background: var(--danger); }
-.toast.warning { background: var(--warning); }
+.toast.success { background: var(--success); color: var(--on-status); }
+.toast.error { background: var(--danger); color: var(--on-status); }
+.toast.warning { background: var(--warning); color: var(--on-status); }
 .toast.info { background: var(--primary-600); }
 
 @keyframes slideIn {
@@ -934,7 +949,7 @@ body {
     top: -10px;
     right: 12px;
     background: var(--success);
-    color: white;
+    color: var(--on-status);
     font-size: 0.7rem;
     font-weight: 700;
     padding: 2px 10px;
@@ -991,7 +1006,7 @@ body {
 }
 
 .er-section {
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     overflow: hidden;
 }
@@ -1024,7 +1039,7 @@ body {
 .er-table td, .er-table th {
     padding: 6px 12px;
     font-size: 0.85rem;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--border-color);
 }
 
 .er-table th {
@@ -1039,11 +1054,11 @@ body {
 .er-table .er-input {
     width: 100%;
     padding: 4px 8px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--input-border);
     border-radius: var(--radius-sm);
     font-size: 0.85rem;
-    background: var(--bg);
-    color: var(--text);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
     font-variant-numeric: tabular-nums;
 }
 
@@ -1060,7 +1075,7 @@ body {
 
 .er-total-row td {
     font-weight: 700;
-    border-top: 2px solid var(--text);
+    border-top: 2px solid var(--text-primary);
     border-bottom: none;
     padding-top: 8px;
 }
@@ -1068,7 +1083,7 @@ body {
 .er-subtotal-row td {
     font-weight: 600;
     font-style: italic;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--border-color);
 }
 
 .er-pct {
@@ -1079,7 +1094,7 @@ body {
 
 .er-computed {
     font-variant-numeric: tabular-nums;
-    color: var(--text);
+    color: var(--text-primary);
     font-weight: 500;
 }
 
@@ -1090,8 +1105,8 @@ body {
 }
 
 .er-kpi-card {
-    background: var(--bg);
-    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     padding: 16px;
     text-align: center;
@@ -1136,6 +1151,8 @@ body {
 }
 
 .er-remove-btn {
+    min-width: 32px;
+    min-height: 32px;
     background: none;
     border: none;
     color: var(--text-muted);
@@ -1507,7 +1524,7 @@ body {
 
 /* === Benchmark Insurance & Guarantee === */
 .bench-insurance-section {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--border-color);
     padding-top: 12px;
     margin-top: 12px;
 }
@@ -1636,7 +1653,7 @@ body {
 /* Form sections inside single card */
 .immo-form-section {
     padding: 16px 0;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--border-color);
 }
 .immo-form-section:last-child {
     border-bottom: none;
@@ -1685,7 +1702,7 @@ body {
     background: var(--bg-secondary);
     border-radius: var(--radius-lg, 12px);
     padding: 24px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-color);
 }
 .memo-section {
     margin-bottom: 20px;
@@ -1944,4 +1961,58 @@ input[type="month"].form-input {
 
 .sw-update-dismiss:hover {
     color: #fff;
+}
+
+
+/* ── Accessibilité (correctifs semaine 1) ───────────────────────────── */
+
+/* Mode sombre : les bleus foncés employés comme couleur de TEXTE (onglet
+   actif, boutons contour, valeurs de KPI…) tombaient à 1,6–2,4:1 ; les
+   fonds primary-600/700 sous texte blanc restent inchangés. */
+[data-theme="dark"] .btn-outline,
+[data-theme="dark"] .tab.active,
+[data-theme="dark"] .market-tile-value,
+[data-theme="dark"] .st-kpi-value,
+[data-theme="dark"] .badge-blue,
+[data-theme="dark"] .kpi-icon.blue,
+[data-theme="dark"] .kpi-value.highlight,
+[data-theme="dark"] a:not(.nav-item):not(.btn) {
+    color: var(--primary-300);
+}
+[data-theme="dark"] .btn-outline { border-color: var(--primary-400); }
+
+/* Bouton accent : texte foncé sur orange (6,7:1 au lieu de 2,4:1) */
+.btn-accent { color: var(--primary-900); }
+
+/* Impression : toujours sur fond blanc, quel que soit le thème */
+@media print {
+    :root, [data-theme="dark"] {
+        --bg-primary: #ffffff; --bg-secondary: #ffffff; --bg-tertiary: #ffffff;
+        --text-primary: #111827; --text-secondary: #374151; --text-muted: #4b5563;
+        --border-color: #d1d5db; --success: #047857; --warning: #b45309; --danger: #b91c1c;
+    }
+}
+
+/* Mouvements réduits sur demande du système */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* Mode sombre : en-têtes Emplois / Ressources restés en couleurs claires */
+[data-theme="dark"] .er-section-header.emplois {
+    background: rgba(74,158,194,0.12);
+    color: var(--primary-300);
+    border-bottom-color: rgba(74,158,194,0.35);
+}
+[data-theme="dark"] .er-section-header.ressources { color: var(--success); }
+
+/* Bandeau Dossier : boutons lisibles en sombre */
+[data-theme="dark"] .dossier-bar .btn-outline { color: var(--primary-200); }
+
+/* Mobile : tout tableau qui n'est pas déjà dans un .table-container défile
+   horizontalement au lieu d'être coupé (.main-content masque le débordement) */
+@media (max-width: 768px) {
+    .data-table, .er-table { display: block; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .menu-toggle { min-width: 44px; min-height: 44px; }
+    .rate-hint-value { padding: 6px 4px; }
 }

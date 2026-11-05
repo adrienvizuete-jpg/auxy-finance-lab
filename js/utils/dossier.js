@@ -15,6 +15,7 @@
  */
 
 import { Storage } from './storage.js';
+import { ensureExportLibs } from './libs.js';
 
 /**
  * @typedef {Object} DossierDebt Dette au format Covenants (k€)
@@ -218,6 +219,7 @@ export const Dossier = {
      * @param {File} file
      */
     async readDataPack(file) {
+        await ensureExportLibs(); // SheetJS est chargé à la demande (js/utils/libs.js)
         const X = /** @type {any} */ (globalThis).XLSX;
         if (!X) throw new Error('Bibliothèque Excel non chargée');
         if (file.size > 15 * 1024 * 1024) throw new Error('Fichier trop volumineux (> 15 Mo)');

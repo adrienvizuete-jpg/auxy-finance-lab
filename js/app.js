@@ -14,6 +14,8 @@ import { CovenantsModule } from './modules/covenants.js';
 import { DebtProfileModule } from './modules/debtprofile.js';
 import { Storage } from './utils/storage.js';
 import { Cloud } from './utils/cloud.js';
+import { initExportLibs } from './utils/libs.js';
+import { watchA11y } from './utils/a11y.js';
 
 // =============================================
 // MODULE REGISTRY
@@ -33,19 +35,32 @@ const modules = {
 };
 
 let currentPage = 'dashboard';
+const APP_VERSION = '1.2.0';
 
 // =============================================
 // ROUTER
 // =============================================
 
-function navigateTo(page) {
+/**
+ * @param {string} page
+ * @param {{ history?: 'push' | 'replace' | 'none' }} [opts] Entrée d'historique :
+ *   'push' pour une navigation de l'utilisateur, 'none' quand le navigateur
+ *   vient lui-même de changer d'URL (Retour / Suivant), 'replace' au démarrage.
+ */
+function navigateTo(page, { history: mode = 'push' } = {}) {
     if (!modules[page]) page = 'dashboard';
     currentPage = page;
 
-    // Update nav
+    // Update nav (+ page courante annoncée aux lecteurs d'écran)
+    let label = '';
     document.querySelectorAll('.nav-item').forEach(item => {
-        item.classList.toggle('active', item.dataset.page === page);
+        const active = item.dataset.page === page;
+        item.classList.toggle('active', active);
+        if (active) { item.setAttribute('aria-current', 'page'); label = item.textContent.trim(); }
+        else item.removeAttribute('aria-current');
     });
+    // Titre d'onglet par module : onglets et historique du navigateur lisibles
+    document.title = `${label || 'Dashboard'} · Auxy Finance Lab`;
 
     // Render page
     const container = document.getElementById('page-container');
@@ -61,8 +76,10 @@ function navigateTo(page) {
         modules[page].init?.();
     }
 
-    // Update hash
-    history.pushState(null, '', `#${page}`);
+    // Historique : jamais d'entrée ajoutée sur un Retour / Suivant (sinon le
+    // bouton Retour tourne en boucle sur la même page)
+    if (mode === 'push' && location.hash.split('?')[0] !== `#${page}`) history.pushState(null, '', `#${page}`);
+    else if (mode === 'replace') history.replaceState(null, '', `#${page}`);
 
     // Close mobile sidebar
     document.getElementById('sidebar')?.classList.remove('open');
@@ -88,6 +105,8 @@ function showToast(message, type = 'info') {
 
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
+    // Erreurs et avertissements annoncés immédiatement et laissés plus longtemps
+    if (type === 'error' || type === 'warning') toast.setAttribute('role', 'alert');
     // L'icône est une constante ; le message passe en textContent : il peut
     // contenir des données externes (fragment d'URL, réponse serveur).
     toast.innerHTML = icons[type] || icons.info;
@@ -96,12 +115,16 @@ function showToast(message, type = 'info') {
     toast.appendChild(text);
     container.appendChild(toast);
 
-    setTimeout(() => {
+    const close = () => {
         toast.style.opacity = '0';
         toast.style.transform = 'translateX(100%)';
         toast.style.transition = 'all 0.3s ease';
         setTimeout(() => toast.remove(), 300);
-    }, 3000);
+    };
+    // 3 s pour une confirmation, 8 s pour une erreur ; pause au survol
+    let timer = setTimeout(close, type === 'error' ? 8000 : type === 'warning' ? 6000 : 3000);
+    toast.addEventListener('mouseenter', () => clearTimeout(timer));
+    toast.addEventListener('mouseleave', () => { timer = setTimeout(close, 2000); });
 }
 
 window.showToast = showToast;
@@ -135,7 +158,41 @@ function toggleTheme() {
 // MODAL MANAGEMENT
 // =============================================
 
+/** Focus dans la fenêtre à l'ouverture, piège à Tab, retour au déclencheur à la fermeture. */
+function initModalFocus() {
+    const overlay = document.getElementById('modal-overlay');
+    const content = document.getElementById('modal-content');
+    if (!overlay || !content) return;
+    /** @type {HTMLElement | null} */
+    let opener = null;
+    const focusables = () => [...content.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+        .filter(el => !(/** @type {any} */ (el).disabled) && /** @type {HTMLElement} */ (el).offsetParent !== null);
+    new MutationObserver(() => {
+        const open = !overlay.classList.contains('hidden');
+        if (open && !opener) {
+            opener = /** @type {HTMLElement | null} */ (document.activeElement);
+            if (!content.contains(document.activeElement)) {
+                const first = focusables().find(el => el.id !== 'modal-close') || content;
+                setTimeout(() => /** @type {HTMLElement} */ (first).focus(), 0);
+            }
+        } else if (!open && opener) {
+            const back = opener;
+            opener = null;
+            if (document.contains(back)) back.focus();
+        }
+    }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
+    content.addEventListener('keydown', e => {
+        if (e.key !== 'Tab') return;
+        const list = focusables();
+        if (!list.length) return;
+        const first = /** @type {HTMLElement} */ (list[0]), last = /** @type {HTMLElement} */ (list[list.length - 1]);
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    });
+}
+
 function initModal() {
+    initModalFocus();
     document.getElementById('modal-close')?.addEventListener('click', () => {
         document.getElementById('modal-overlay')?.classList.add('hidden');
     });
@@ -158,8 +215,10 @@ function initModal() {
 // =============================================
 
 function initMobileNav() {
-    document.getElementById('menu-toggle')?.addEventListener('click', () => {
-        document.getElementById('sidebar')?.classList.toggle('open');
+    const toggle = document.getElementById('menu-toggle');
+    toggle?.addEventListener('click', () => {
+        const open = document.getElementById('sidebar')?.classList.toggle('open');
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
     });
 
     // Close sidebar on outside click (mobile)
@@ -182,6 +241,23 @@ function initMobileNav() {
 // aussi controllerchange — sans ce garde-fou, le visiteur subirait un
 // rechargement sauvage quelques secondes après son arrivée.
 let updateRequested = false;
+
+// Mise à jour automatique à l'ouverture : si une nouvelle version est prête
+// dans les premières secondes et que l'utilisateur n'a encore rien saisi ni
+// cliqué, on l'applique sans demander (rien à perdre). Sinon : bandeau.
+const OPENED_AT = Date.now();
+let userInteracted = false;
+['pointerdown', 'keydown', 'input'].forEach(evt => document.addEventListener(evt, () => { userInteracted = true; }, { once: true, capture: true }));
+
+/** @param {ServiceWorker} worker */
+function offerUpdate(worker) {
+    if (!userInteracted && Date.now() - OPENED_AT < 10000) {
+        updateRequested = true;
+        worker.postMessage({ type: 'SKIP_WAITING' });
+        return;
+    }
+    showUpdateBanner(worker);
+}
 
 function showUpdateBanner(worker) {
     if (document.getElementById('sw-update-banner')) return;
@@ -212,7 +288,7 @@ function initServiceWorker() {
         // Une version est déjà en attente (mise à jour détectée lors d'une
         // visite précédente, jamais activée)
         if (reg.waiting && navigator.serviceWorker.controller) {
-            showUpdateBanner(reg.waiting);
+            offerUpdate(reg.waiting);
         }
         reg.addEventListener('updatefound', () => {
             const newWorker = reg.installing;
@@ -220,7 +296,7 @@ function initServiceWorker() {
             newWorker.addEventListener('statechange', () => {
                 // installed + controller existant = mise à jour (pas 1ère install)
                 if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                    showUpdateBanner(newWorker);
+                    offerUpdate(newWorker);
                 }
             });
         });
@@ -260,7 +336,7 @@ function init() {
     // Le hash peut contenir un payload de partage (#credit?s=...) : la page est avant le '?'
     window.addEventListener('popstate', () => {
         const hash = (location.hash.slice(1) || 'dashboard').split('?')[0];
-        navigateTo(hash);
+        navigateTo(hash, { history: 'none' });
     });
 
     // Lien de partage collé dans un onglet où l'app est déjà chargée :
@@ -268,15 +344,7 @@ function init() {
     // le module, dont l'init() lit le payload (?s=...).
     window.addEventListener('hashchange', () => {
         if (!location.hash.includes('?s=')) return;
-        navigateTo(location.hash.slice(1).split('?')[0]);
-    });
-
-    // Keyboard shortcut: Ctrl/Cmd + K for quick search (future feature)
-    document.addEventListener('keydown', e => {
-        if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-            e.preventDefault();
-            // Could open a command palette in the future
-        }
+        navigateTo(location.hash.slice(1).split('?')[0], { history: 'none' });
     });
 
     // Retour d'un lien de connexion cloud (#access_token=...) : capte la
@@ -296,14 +364,24 @@ function init() {
 
     // Initial page from hash (la partie avant '?' — un payload de partage peut suivre)
     const initialPage = (location.hash.slice(1) || 'dashboard').split('?')[0];
-    navigateTo(initialPage);
+    navigateTo(initialPage, { history: 'replace' });
+
+    // Version affichée = version réelle
+    const versionLabel = document.querySelector('.version-label');
+    if (versionLabel) versionLabel.textContent = `v${APP_VERSION}`;
+
+    // Noms accessibles des champs et boutons générés par les modules
+    watchA11y(/** @type {HTMLElement[]} */ ([document.getElementById('page-container'), document.getElementById('modal-body')].filter(Boolean)));
+
+    // Bibliothèques d'export (jsPDF, SheetJS) : après le premier affichage
+    initExportLibs();
 
     // Service worker (PWA) — uniquement servi en http(s), ignoré en file://
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
         initServiceWorker();
     }
 
-    console.log('%c Auxy Partners Finance Lab %c v1.0.0 ', 'background:#1a3548;color:#e8973f;padding:4px 8px;border-radius:4px 0 0 4px;font-weight:bold', 'background:#e8973f;color:#1a3548;padding:4px 8px;border-radius:0 4px 4px 0;font-weight:bold');
+    console.log('%c Auxy Partners Finance Lab %c v' + APP_VERSION + ' ', 'background:#1a3548;color:#e8973f;padding:4px 8px;border-radius:4px 0 0 4px;font-weight:bold', 'background:#e8973f;color:#1a3548;padding:4px 8px;border-radius:0 4px 4px 0;font-weight:bold');
 }
 
 // Start app when DOM is ready
