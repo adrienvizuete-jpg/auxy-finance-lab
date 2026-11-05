@@ -103,7 +103,9 @@ export const Storage = {
 
     /** @param {string} key */
     remove(key) {
-        localStorage.removeItem(STORAGE_PREFIX + key);
+        try {
+            localStorage.removeItem(STORAGE_PREFIX + key);
+        } catch { /* stockage indisponible (navigation privée) : rien à retirer */ }
     },
 
     // Simulation history
@@ -130,7 +132,10 @@ export const Storage = {
 
     /** @returns {Simulation[]} */
     getHistory() {
-        return this.get('history', /** @type {Simulation[]} */ ([]));
+        // Tolère un historique corrompu (non-tableau, entrées nulles) plutôt que
+        // de faire planter l'Historique et la sauvegarde.
+        const raw = this.get('history', /** @type {Simulation[]} */ ([]));
+        return Array.isArray(raw) ? raw.filter(s => s && typeof s === 'object' && typeof s.id === 'string') : [];
     },
 
     /**
@@ -145,10 +150,36 @@ export const Storage = {
     deleteSimulation(id) {
         const history = this.getHistory().filter(s => s.id !== id);
         this.set('history', history);
+        this.addTombstones([id]);
     },
 
     clearHistory() {
+        this.addTombstones(this.getHistory().map(s => String(s.id)));
         this.set('history', []);
+    },
+
+    // Suppressions locales à propager au cloud au prochain envoi (sinon le
+    // pull « ressusciterait » les simulations supprimées).
+    /** @returns {Array<{ id: string, at: string }>} */
+    getTombstones() {
+        /** @type {unknown} */
+        const raw = this.get('cloud_tombstones', []);
+        return Array.isArray(raw) ? raw.filter(t => t && typeof t.id === 'string') : [];
+    },
+
+    /** @param {string[]} ids */
+    addTombstones(ids) {
+        if (!ids.length) return;
+        const at = new Date().toISOString();
+        const byId = new Map(this.getTombstones().map(t => [t.id, t]));
+        for (const id of ids) byId.set(id, { id, at });
+        this.set('cloud_tombstones', [...byId.values()].slice(-500));
+    },
+
+    /** @param {string[]} ids */
+    clearTombstones(ids) {
+        const done = new Set(ids);
+        this.set('cloud_tombstones', this.getTombstones().filter(t => !done.has(t.id)));
     },
 
     // Benchmark saves — retourne null si l'écriture a échoué (quota plein)

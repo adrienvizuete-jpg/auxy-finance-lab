@@ -240,8 +240,11 @@ async function renderCloudCard() {
 
     document.getElementById('cloud-push')?.addEventListener('click', async () => {
         try {
-            const { sent } = await Cloud.pushSimulations();
-            window.showToast?.(sent ? `${sent} simulation${sent > 1 ? 's' : ''} envoy\u00e9e${sent > 1 ? 's' : ''} au cloud` : 'Aucune simulation locale \u00e0 envoyer', sent ? 'success' : 'info');
+            const { sent, deleted } = await Cloud.pushSimulations();
+            const parts = [];
+            if (sent) parts.push(`${sent} simulation${sent > 1 ? 's' : ''} envoy\u00e9e${sent > 1 ? 's' : ''}`);
+            if (deleted) parts.push(`${deleted} suppression${deleted > 1 ? 's' : ''} propag\u00e9e${deleted > 1 ? 's' : ''}`);
+            window.showToast?.(parts.length ? `${parts.join(', ')} au cloud` : 'Rien de nouveau \u00e0 envoyer', parts.length ? 'success' : 'info');
         } catch (e) {
             window.showToast?.(`\u00c9chec de l'envoi : ${e.message}`, 'error');
         }
