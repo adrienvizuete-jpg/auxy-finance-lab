@@ -21,6 +21,7 @@ import { enhanceGlossary } from './utils/glossary.js';
 import { Dialog } from './utils/dialog.js';
 import * as FormState from './utils/formstate.js';
 import { mountKpiBar } from './utils/kpibar.js';
+import { initContextBar } from './utils/contextbar.js';
 
 // =============================================
 // MODULE REGISTRY
@@ -48,7 +49,9 @@ const AMOUNT_UNITS = /** @type {Record<string, string>} */ ({
 let currentPage = 'dashboard';
 /** Page réellement affichée (dont on sauvegarde les saisies en la quittant) */
 let renderedPage = '';
-const APP_VERSION = '1.2.0';
+/** @type {(() => void) | undefined} */
+let refreshContext;
+const APP_VERSION = '1.3.0';
 
 // =============================================
 // ROUTER
@@ -73,7 +76,7 @@ function navigateTo(page, { history: mode = 'push' } = {}) {
         else item.removeAttribute('aria-current');
     });
     // Titre d'onglet par module : onglets et historique du navigateur lisibles
-    document.title = `${label || 'Dashboard'} · Auxy Finance Lab`;
+    document.title = `${label || 'Accueil'} · Auxy Finance Lab`;
 
     // Render page (saisies de la page quittée gardées pour le retour)
     const container = document.getElementById('page-container');
@@ -95,6 +98,7 @@ function navigateTo(page, { history: mode = 'push' } = {}) {
         if (FormState.DOM_STATE_PAGES.has(page)) FormState.restore(container, FormState.load(page));
         mountKpiBar(page, container);
     }
+    refreshContext?.();
 
     // Historique : jamais d'entrée ajoutée sur un Retour / Suivant (sinon le
     // bouton Retour tourne en boucle sur la même page)
@@ -343,6 +347,9 @@ function init() {
             if (page) navigateTo(page);
         });
     });
+
+    // En-tête : client actif et parcours de mission
+    refreshContext = initContextBar(() => currentPage);
 
     // Calculs lancés sur la page (rejoués au retour)
     const pc = document.getElementById('page-container');

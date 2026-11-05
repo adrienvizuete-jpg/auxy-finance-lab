@@ -27,7 +27,34 @@ const CREDIT_TYPES = [
     { id: 'tranching', label: 'Tranching', desc: 'Financement multi-tranches (LBO)' }
 ];
 
+/** Types regroupés en 3 familles : la barre de 10 onglets débordait */
+const CREDIT_FAMILIES = [
+    { id: 'mt', label: 'Moyen / long terme', desc: 'Amortissable, in fine, taux variable, crédit-bail', types: ['constant', 'degressif', 'infine', 'variable', 'creditbail'] },
+    { id: 'ct', label: 'Court terme & BFR', desc: 'Comparatif BFR, RCF, prêt relais', types: ['bfr', 'revolving', 'relais'] },
+    { id: 'st', label: 'Structuré', desc: 'Mezzanine, tranching LBO', types: ['mezzanine', 'tranching'] }
+];
+
 let currentType = 'constant';
+
+/** Familles et onglets alignés sur le type courant (rechargement d'une simulation) */
+function syncTypeTabs() {
+    const tabs = document.getElementById('credit-tabs');
+    if (tabs) tabs.innerHTML = typeTabsHtml();
+    document.querySelectorAll('#credit-families .credit-family').forEach(b => {
+        const on = !!CREDIT_FAMILIES.find(f => f.id === /** @type {HTMLElement} */ (b).dataset.family)?.types.includes(currentType);
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', String(on));
+    });
+}
+
+/** Onglets des types de la famille du type courant */
+function typeTabsHtml() {
+    const fam = CREDIT_FAMILIES.find(f => f.types.includes(currentType)) || CREDIT_FAMILIES[0];
+    return fam.types.map(id => CREDIT_TYPES.find(t => t.id === id)).filter(Boolean).map(t => `
+                    <button class="tab ${t.id === currentType ? 'active' : ''}" data-type="${t.id}" title="${t.desc}">
+                        ${t.label}
+                    </button>`).join('');
+}
 let lastResult = null;
 let tranchingTranches = [
     { name: 'Senior A', amount: 3000000, rate: 3.5, duration: 84, type: 'constant', frequency: 'monthly' },
@@ -1863,9 +1890,7 @@ function loadPendingReload() {
     // Switch to correct type
     if (pending.type && pending.type !== currentType) {
         currentType = pending.type;
-        document.querySelectorAll('#credit-tabs .tab').forEach(t => {
-            t.classList.toggle('active', t.dataset.type === currentType);
-        });
+        syncTypeTabs();
         document.getElementById('credit-form-fields').innerHTML = getFormHTML(currentType);
         const sub = document.querySelector('.card-subtitle');
         if (sub) sub.textContent = CREDIT_TYPES.find(t => t.id === currentType)?.desc || '';
@@ -2003,20 +2028,24 @@ function loadPendingReload() {
 
 export const CreditModule = {
     render() {
+        // Type demandé par un parcours de mission (js/utils/mission.js)
+        const asked = /** @type {any} */ (window)._creditType;
+        if (asked && CREDIT_TYPES.some(t => t.id === asked)) currentType = asked;
+        /** @type {any} */ (window)._creditType = null;
         return `
             <div class="page-header">
                 <h1>Simulation de Crédit Entreprise</h1>
                 <p>Simulez et comparez différents types de financements</p>
             </div>
 
-            <!-- Credit Type Tabs -->
-            <div class="tabs" id="credit-tabs">
-                ${CREDIT_TYPES.map(t => `
-                    <button class="tab ${t.id === currentType ? 'active' : ''}" data-type="${t.id}" title="${t.desc}">
-                        ${t.label}
-                    </button>
-                `).join('')}
+            <!-- Familles puis types de crédit -->
+            <div class="credit-families" id="credit-families" role="group" aria-label="Famille de financement">
+                ${CREDIT_FAMILIES.map(f => `
+                    <button type="button" class="credit-family ${f.types.includes(currentType) ? 'active' : ''}" data-family="${f.id}" aria-pressed="${f.types.includes(currentType)}">
+                        <span class="credit-family-label">${f.label}</span><span class="credit-family-desc">${f.desc}</span>
+                    </button>`).join('')}
             </div>
+            <div class="tabs" id="credit-tabs">${typeTabsHtml()}</div>
 
             <!-- Form -->
             <div class="card section">
@@ -2095,6 +2124,25 @@ export const CreditModule = {
     },
 
     init() {
+        // Famille : affiche ses types et ouvre le premier
+        document.getElementById('credit-families')?.addEventListener('click', e => {
+            const btn = e.target.closest('.credit-family');
+            if (!btn) return;
+            const fam = CREDIT_FAMILIES.find(f => f.id === btn.dataset.family);
+            if (!fam || fam.types.includes(currentType)) return;
+            document.querySelectorAll('#credit-families .credit-family').forEach(b => {
+                const on = b === btn;
+                b.classList.toggle('active', on);
+                b.setAttribute('aria-pressed', String(on));
+            });
+            const tabs = document.getElementById('credit-tabs');
+            const previous = currentType;
+            currentType = fam.types[0];
+            if (tabs) tabs.innerHTML = typeTabsHtml();
+            currentType = previous;
+            /** @type {HTMLElement | null} */ (tabs?.querySelector(`.tab[data-type="${fam.types[0]}"]`))?.click();
+        });
+
         // Tab switching
         document.getElementById('credit-tabs')?.addEventListener('click', e => {
             const btn = e.target.closest('.tab');

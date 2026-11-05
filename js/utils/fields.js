@@ -78,7 +78,6 @@ const display = n => nf.format(n);
 
 /** @param {HTMLInputElement} input */
 function upgrade(input) {
-    const raw = NATIVE.get?.call(input) ?? '';
     const unit = unitOf(input);
     const step = parseFloat(input.step);
     input.type = 'text';

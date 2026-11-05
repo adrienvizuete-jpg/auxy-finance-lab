@@ -186,6 +186,19 @@ export function dossierFromDataPack(pack, fileName = '') {
 }
 
 const KEY = 'dossier_active';
+const RECENT_KEY = 'dossiers_recent';
+const RECENT_MAX = 8;
+
+/** Mémorise le dossier dans la liste des dossiers récents et prévient l'interface.
+ *  @param {DossierData | null} d */
+function changed(d) {
+    if (d) {
+        const list = Dossier.recent().filter(x => x.name !== d.name);
+        list.unshift(d);
+        Storage.set(RECENT_KEY, list.slice(0, RECENT_MAX));
+    }
+    if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('dossier:change', { detail: d }));
+}
 
 export const Dossier = {
     /** @returns {DossierData | null} */
@@ -200,17 +213,40 @@ export const Dossier = {
     update(patch) {
         const next = { ...(this.get() || { name: 'Dossier' }), ...patch, updatedAt: new Date().toISOString() };
         Storage.set(KEY, next);
+        changed(/** @type {DossierData} */ (next));
         return /** @type {DossierData} */ (next);
     },
 
     /** Remplace le dossier actif (import d'un nouveau client : rien ne survit de l'ancien).
      *  @param {DossierData} data */
     replace(data) {
-        Storage.set(KEY, { ...data, updatedAt: new Date().toISOString() });
+        const next = { ...data, updatedAt: new Date().toISOString() };
+        Storage.set(KEY, next);
+        changed(next);
     },
 
     clear() {
         Storage.remove(KEY);
+        changed(null);
+    },
+
+    /** Dossiers récemment actifs (le plus récent d'abord).
+     *  @returns {DossierData[]} */
+    recent() {
+        /** @type {unknown} */
+        const list = Storage.get(RECENT_KEY, []);
+        return Array.isArray(list) ? list.filter(d => d && typeof d === 'object' && typeof d.name === 'string') : [];
+    },
+
+    /** Rend actif un dossier récent (reprise d'un client).
+     *  @param {string} name
+     *  @returns {DossierData | null} */
+    activate(name) {
+        const d = this.recent().find(x => x.name === name);
+        if (!d) return null;
+        Storage.set(KEY, d);
+        changed(d);
+        return d;
     },
 
     /**

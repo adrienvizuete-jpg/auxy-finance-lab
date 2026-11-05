@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { Fmt } from '../js/utils/format.js';
 
 // Intl fr-FR : espace fine insécable (U+202F) pour les milliers
-const norm = (/** @type {string} */ s) => s.replace(/[  ]/g, ' ');
+const norm = (/** @type {string} */ s) => s.replace(/[\u00a0\u202f]/g, ' ');
 
 describe('Fmt', () => {
     test('montants, pourcentages et multiples à la française', () => {

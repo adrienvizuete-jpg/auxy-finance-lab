@@ -16,6 +16,7 @@ const STORAGE_PREFIX = 'auxy_';
  * @property {any} [params]
  * @property {any} [results]
  * @property {string} [typeLabel]
+ * @property {string} [dossier] Dossier client actif lors de l'enregistrement
  */
 
 /**
@@ -119,6 +120,9 @@ export const Storage = {
         const history = this.getHistory();
         simulation.id = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
         simulation.date = new Date().toISOString();
+        // Rattachée au dossier client actif (accueil : dossiers récents, export dossier banque)
+        const active = this.get('dossier_active');
+        if (!simulation.dossier && active && typeof active.name === 'string') simulation.dossier = active.name.slice(0, 80);
         history.unshift(simulation);
         // Keep last 100 simulations
         if (history.length > 100) history.length = 100;

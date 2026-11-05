@@ -9,6 +9,91 @@ import { PARAM_LABELS, RESULT_LABELS, TYPE_LABELS, t, formatValue } from '../uti
 import { escapeHtml } from '../utils/sanitize.js';
 import { Cloud } from '../utils/cloud.js';
 import { Dialog } from '../utils/dialog.js';
+import { Dossier } from '../utils/dossier.js';
+
+/**
+ * Export « dossier banque » : plusieurs analyses enregistrées (Structuré,
+ * Covenants, Profil de dette, Crédit…) réunies dans un seul PDF, avec page
+ * de garde au nom du client. Par défaut : les analyses du dossier actif.
+ */
+function openBankPack() {
+    const history = Storage.getHistory();
+    if (!history.length) { window.showToast?.('Aucune analyse enregistrée', 'warning'); return; }
+    const active = Dossier.get()?.name || '';
+    const hasActive = active && history.some(h => h.dossier === active);
+    const rows = history.slice(0, 60).map(h => {
+        const checked = hasActive ? h.dossier === active : true;
+        return `<li class="bank-pack-row"><label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
+            <input type="checkbox" class="bank-pack-item" value="${escapeHtml(String(h.id))}" ${checked ? 'checked' : ''} style="margin-top:3px">
+            <span><strong>${escapeHtml(h.name || h.typeLabel || 'Simulation')}</strong>
+            <span class="context-meta" style="display:block">${escapeHtml(TYPE_LABELS[h.type] || h.type || '')} · ${new Date(h.date).toLocaleDateString('fr-FR')}${h.dossier ? ` · ${escapeHtml(h.dossier)}` : ''}</span></span>
+        </label></li>`;
+    }).join('');
+    Dialog.open(`
+        <h2 style="margin-bottom:8px">Dossier banque</h2>
+        <p class="context-meta" style="margin-bottom:12px">Les analyses cochées sont réunies dans un seul PDF, une par page, après une page de garde.</p>
+        <div class="form-group" style="margin-bottom:12px">
+            <label class="form-label" for="bank-pack-client">Client</label>
+            <input type="text" class="form-input" id="bank-pack-client" value="${escapeHtml(active)}" maxlength="80" placeholder="Nom du client" style="width:100%">
+        </div>
+        <ul class="bank-pack">${rows}</ul>
+        <div class="btn-group" style="justify-content:space-between;margin-top:16px">
+            <button type="button" class="btn btn-ghost btn-sm" id="bank-pack-all">Tout cocher / décocher</button>
+            <div class="btn-group">
+                <button type="button" class="btn btn-outline" id="bank-pack-cancel">Annuler</button>
+                <button type="button" class="btn btn-primary" id="bank-pack-export">Générer le PDF</button>
+            </div>
+        </div>`);
+    const items = () => /** @type {HTMLInputElement[]} */ ([...document.querySelectorAll('.bank-pack-item')]);
+    document.getElementById('bank-pack-all')?.addEventListener('click', () => {
+        const all = items().every(i => i.checked);
+        items().forEach(i => { i.checked = !all; });
+    });
+    document.getElementById('bank-pack-cancel')?.addEventListener('click', () => Dialog.close());
+    document.getElementById('bank-pack-export')?.addEventListener('click', () => {
+        const ids = new Set(items().filter(i => i.checked).map(i => i.value));
+        const sims = history.filter(h => ids.has(String(h.id)));
+        if (!sims.length) { window.showToast?.('Cochez au moins une analyse', 'warning'); return; }
+        const client = /** @type {HTMLInputElement | null} */ (document.getElementById('bank-pack-client'))?.value.trim() || 'Dossier';
+        Export.toPdf(`Dossier de financement — ${client}`, bankPackSections(sims), `dossier_banque_${client.replace(/[^\w-]+/g, '_').slice(0, 40)}`, {
+            cover: {
+                subtitle: client,
+                items: [
+                    { label: 'Analyses', value: String(sims.length) },
+                    { label: 'Modules', value: [...new Set(sims.map(s => TYPE_LABELS[s.type] || s.type))].join(', ') },
+                    { label: 'Établi le', value: new Date().toLocaleDateString('fr-FR') }
+                ]
+            }
+        });
+        Dialog.close();
+    });
+}
+
+/** @param {any[]} sims */
+function bankPackSections(sims) {
+    /** @type {any[]} */
+    const sections = [];
+    sims.forEach((sim, i) => {
+        if (i > 0) sections.push({ type: 'pagebreak' });
+        sections.push({ type: 'title', text: `${i + 1}. ${sim.name || sim.typeLabel || 'Analyse'}` });
+        sections.push({ type: 'keyvalue', items: [
+            { label: 'Module', value: TYPE_LABELS[sim.type] || sim.type || '' },
+            { label: 'Enregistrée le', value: new Date(sim.date).toLocaleDateString('fr-FR') }
+        ] });
+        if (sim.notes) sections.push({ type: 'note', text: String(sim.notes) });
+        const results = Object.entries(sim.results || {}).filter(([k, v]) => k !== 'schedule' && (typeof v !== 'object' || v === null));
+        if (results.length) {
+            sections.push({ type: 'title', text: 'Résultats' });
+            sections.push({ type: 'table', headers: ['Indicateur', 'Valeur'], rows: results.map(([k, v]) => [t(k, RESULT_LABELS), formatValue(k, v)]) });
+        }
+        const params = Object.entries(sim.params || {}).filter(([, v]) => typeof v !== 'object' || v === null);
+        if (params.length) {
+            sections.push({ type: 'title', text: 'Hypothèses' });
+            sections.push({ type: 'table', headers: ['Paramètre', 'Valeur'], rows: params.map(([k, v]) => [t(k, PARAM_LABELS), formatValue(k, v)]) });
+        }
+    });
+    return sections;
+}
 
 function renderHistory() {
     const history = Storage.getHistory();
@@ -30,7 +115,10 @@ function renderHistory() {
                 <div>
                     <div class="card-title">${history.length} simulation${history.length > 1 ? 's' : ''} sauvegard\u00e9e${history.length > 1 ? 's' : ''}</div>
                 </div>
-                <button class="btn btn-danger btn-sm" id="clear-history">Tout supprimer</button>
+                <div class="btn-group">
+                    <button class="btn btn-primary btn-sm" id="bank-pack-open">Dossier banque (PDF)</button>
+                    <button class="btn btn-danger btn-sm" id="clear-history">Tout supprimer</button>
+                </div>
             </div>
             <div class="table-container">
                 <table class="data-table">
@@ -333,6 +421,8 @@ export const HistoryModule = {
                 });
                 return;
             }
+
+            if (e.target.closest('#bank-pack-open')) { openBankPack(); return; }
 
             // Clear all
             if (e.target.closest('#clear-history')) {

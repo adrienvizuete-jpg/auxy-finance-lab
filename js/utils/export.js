@@ -390,6 +390,12 @@ export const Export = {
                 y += noteH + 10;
             }
 
+            if (section.type === 'pagebreak') {
+                doc.addPage();
+                y = 20;
+                continue;
+            }
+
             if (section.type === 'separator') {
                 doc.setDrawColor(200, 200, 200);
                 doc.line(15, y, pageWidth - 15, y);

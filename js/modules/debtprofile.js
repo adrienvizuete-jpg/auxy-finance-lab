@@ -26,6 +26,7 @@ import { escapeHtml } from '../utils/sanitize.js';
 import { DossierBar } from '../utils/dossierbar.js';
 import { RefiEngine } from '../utils/refiengine.js';
 import { Dialog } from '../utils/dialog.js';
+import { Dossier } from '../utils/dossier.js';
 
 // ── State ──
 const now = new Date();
@@ -723,6 +724,8 @@ function loadParams(p) {
 
 export const DebtProfileModule = {
     render() {
+        // Un seul « dossier » : le nom suit le client actif tant qu'il n'est pas saisi ici
+        if (!dossierName) dossierName = Dossier.get()?.name?.slice(0, 80) || '';
         return `
             <div class="page-header">
                 <h1>Profil de Dette</h1>
@@ -735,7 +738,7 @@ export const DebtProfileModule = {
                 <div class="card-title">Dossier</div>
                 <div class="form-row" style="margin-top:12px">
                     <div class="form-group">
-                        <label class="form-label">Nom du dossier / client</label>
+                        <label class="form-label">Client (dossier actif par défaut)</label>
                         <input type="text" class="form-input" id="dp-dossier" value="${escapeHtml(dossierName)}" placeholder="Ex : SAS Dupont Industries">
                     </div>
                     <div class="form-group">
