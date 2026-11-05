@@ -8,6 +8,7 @@ import { Export } from '../utils/export.js';
 import { PARAM_LABELS, RESULT_LABELS, TYPE_LABELS, t, formatValue } from '../utils/i18n.js';
 import { escapeHtml } from '../utils/sanitize.js';
 import { Cloud } from '../utils/cloud.js';
+import { Dialog } from '../utils/dialog.js';
 
 function renderHistory() {
     const history = Storage.getHistory();
@@ -86,7 +87,6 @@ function showSimDetails(id) {
     const sim = Storage.getSimulation(id);
     if (!sim) return;
 
-    const modal = document.getElementById('modal-overlay');
     const body = document.getElementById('modal-body');
 
     let html = `
@@ -145,11 +145,11 @@ function showSimDetails(id) {
     `;
 
     body.innerHTML = html;
-    modal.classList.remove('hidden');
+    Dialog.show();
 
     // Modal action handlers
     body.querySelector('.modal-reload')?.addEventListener('click', () => {
-        modal.classList.add('hidden');
+        Dialog.close();
         reloadSimulation(id);
     });
     body.querySelector('.modal-export')?.addEventListener('click', () => {
@@ -325,21 +325,23 @@ export const HistoryModule = {
             // Delete
             const deleteBtn = e.target.closest('.delete-sim');
             if (deleteBtn) {
-                if (confirm('Supprimer cette simulation ?')) {
+                Dialog.confirm('Cette simulation sera supprimée de l\u2019historique.', { title: 'Supprimer la simulation ?', confirmLabel: 'Supprimer', danger: true }).then(ok => {
+                    if (!ok) return;
                     Storage.deleteSimulation(deleteBtn.dataset.id);
                     content.innerHTML = renderHistory();
                     window.showToast?.('Simulation supprim\u00e9e', 'info');
-                }
+                });
                 return;
             }
 
             // Clear all
             if (e.target.closest('#clear-history')) {
-                if (confirm('\u00cates-vous s\u00fbr de vouloir supprimer tout l\'historique ?')) {
+                Dialog.confirm('Toutes les simulations enregistrées sur ce poste seront supprimées.', { title: 'Effacer tout l\u2019historique ?', confirmLabel: 'Tout effacer', danger: true }).then(ok => {
+                    if (!ok) return;
                     Storage.clearHistory();
                     content.innerHTML = renderHistory();
                     window.showToast?.('Historique effac\u00e9', 'info');
-                }
+                });
             }
         });
     }

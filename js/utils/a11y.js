@@ -40,7 +40,7 @@ function tableLabel(field) {
     const first = row.children[0];
     let rowName = '';
     if (first && first !== cell) {
-        const inp = /** @type {HTMLInputElement | null} */ (first.querySelector('input[type="text"], input:not([type])'));
+        const inp = /** @type {HTMLInputElement | null} */ (first.querySelector('input[type="text"]:not([data-amount]), input:not([type])'));
         rowName = inp ? inp.value : text(first);
     }
     return [col, rowName].filter(Boolean).join(' — ');
@@ -75,15 +75,18 @@ export function enhance(root) {
 /**
  * Applique enhance() au conteneur de page et à la fenêtre de dialogue, à
  * chaque ajout de contenu (re-rendus partiels des tableaux compris).
+ * Les passages `before` (champ montant…) tournent avant, sur les mêmes nœuds.
  * @param {HTMLElement[]} roots
+ * @param {Array<(root: ParentNode) => void>} [before]
  */
-export function watchA11y(roots) {
+export function watchA11y(roots, before = []) {
     let scheduled = false;
-    const run = () => { scheduled = false; roots.forEach(r => enhance(r)); };
+    const pass = (/** @type {HTMLElement} */ r) => { before.forEach(fn => fn(r)); enhance(r); };
+    const run = () => { scheduled = false; roots.forEach(pass); };
     const obs = new MutationObserver(() => {
         if (scheduled) return;
         scheduled = true;
         setTimeout(run, 0); // pas requestAnimationFrame : suspendu quand l'onglet est en arrière-plan
     });
-    roots.forEach(r => { obs.observe(r, { childList: true, subtree: true }); enhance(r); });
+    roots.forEach(r => { obs.observe(r, { childList: true, subtree: true }); pass(r); });
 }

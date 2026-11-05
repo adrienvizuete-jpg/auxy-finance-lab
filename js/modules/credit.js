@@ -12,6 +12,7 @@ import { escapeHtml } from '../utils/sanitize.js';
 import { Share } from '../utils/share.js';
 import { Market } from '../utils/market.js';
 import { LoanEngine } from '../utils/loanengine.js';
+import { Dialog } from '../utils/dialog.js';
 
 const CREDIT_TYPES = [
     { id: 'constant', label: 'Amortissable Constant', desc: 'Mensualités fixes' },
@@ -48,33 +49,6 @@ const DEFAULTS = {
     tranching: {}
 };
 
-// ── Live formatting helper ──
-function setupLiveFormatting() {
-    document.querySelectorAll('#credit-form-fields .form-input[type="number"]').forEach(input => {
-        const suffix = input.closest('.input-group')?.querySelector('.input-suffix')?.textContent?.trim();
-        if (suffix !== '€') return;
-
-        // Create or reuse preview element
-        let preview = input.closest('.form-group')?.querySelector('.input-preview');
-        if (!preview) {
-            preview = document.createElement('div');
-            preview.className = 'input-preview';
-            input.closest('.form-group')?.appendChild(preview);
-        }
-
-        const updatePreview = () => {
-            const val = parseFloat(input.value);
-            if (!isNaN(val) && val > 0) {
-                preview.textContent = Financial.formatCurrency(val);
-            } else {
-                preview.textContent = '';
-            }
-        };
-
-        input.addEventListener('input', updatePreview);
-        updatePreview();
-    });
-}
 
 // ── Insurance toggle logic ──
 function setupInsuranceToggle() {
@@ -236,7 +210,7 @@ function validateForm() {
 
     // Validation HTML native désactivée (novalidate : elle refusait 4,125 %
     // ou 62 jours à cause des pas) : seuls les maxima déclarés sont contrôlés
-    document.querySelectorAll('#credit-form-fields input[type="number"][max]').forEach(el => {
+    document.querySelectorAll('#credit-form-fields input[max]').forEach(el => {
         const input = /** @type {HTMLInputElement} */ (el);
         const val = parseFloat(input.value);
         if (!isNaN(val) && input.max !== '' && val > parseFloat(input.max) && !input.classList.contains('invalid')) {
@@ -1532,7 +1506,6 @@ function saveSimulation() {
     }
 
     // Show save dialog with name and notes
-    const modal = document.getElementById('modal-overlay');
     const body = document.getElementById('modal-body');
 
     const typeLabel = CREDIT_TYPES.find(t => t.id === currentType)?.label || currentType;
@@ -1557,13 +1530,13 @@ function saveSimulation() {
         </div>
     `;
 
-    modal.classList.remove('hidden');
+    Dialog.show();
 
     // Focus name input
     document.getElementById('save-sim-name')?.focus();
 
     document.getElementById('save-cancel')?.addEventListener('click', () => {
-        modal.classList.add('hidden');
+        Dialog.close();
     });
 
     document.getElementById('save-confirm')?.addEventListener('click', () => {
@@ -1577,7 +1550,7 @@ function saveSimulation() {
             typeLabel
         });
 
-        modal.classList.add('hidden');
+        Dialog.close();
         if (id) {
             window.showToast?.('Simulation sauvegardée', 'success');
         } else {
@@ -1708,7 +1681,6 @@ function resetForm() {
     lastResult = null;
 
     // Re-setup live formatting
-    setupLiveFormatting();
 
     window.showToast?.('Formulaire réinitialisé', 'info');
 }
@@ -1801,7 +1773,7 @@ function exportExcel() {
 function exportTranchingExcel() {
     if (!lastResult || currentType !== 'tranching') return;
     if (typeof XLSX === 'undefined') {
-        alert('Bibliothèque Excel non chargée');
+        window.showToast?.('Outils d\u2019export Excel indisponibles (connexion ?) — réessayez', 'error');
         return;
     }
 
@@ -2025,7 +1997,6 @@ function loadPendingReload() {
     }
 
     // Setup live formatting and insurance toggle after populating
-    setupLiveFormatting();
     setupInsuranceToggle();
     setupDeferralToggle();
 }
@@ -2142,7 +2113,6 @@ export const CreditModule = {
             if (sub) sub.textContent = CREDIT_TYPES.find(t => t.id === currentType)?.desc || '';
 
             // Re-setup live formatting, insurance toggle, deferral toggle
-            setupLiveFormatting();
             setupInsuranceToggle();
             setupDeferralToggle();
             setupRateHint();
@@ -2171,7 +2141,6 @@ export const CreditModule = {
         document.getElementById('btn-export-excel')?.addEventListener('click', exportExcel);
 
         // Setup live formatting, insurance toggle, deferral toggle
-        setupLiveFormatting();
         setupInsuranceToggle();
         setupDeferralToggle();
         setupRateHint();

@@ -21,7 +21,7 @@ export const Export = {
      */
     toExcel(schedule, filename = 'simulation', sheetName = 'Amortissement') {
         if (typeof XLSX === 'undefined') {
-            alert('Bibliothèque Excel non chargée');
+            window.showToast?.('Outils d\u2019export Excel indisponibles (connexion ?) — réessayez', 'error');
             return;
         }
 
@@ -67,7 +67,7 @@ export const Export = {
      */
     fullReportExcel(simulation) {
         if (typeof XLSX === 'undefined') {
-            alert('Bibliothèque Excel non chargée');
+            window.showToast?.('Outils d\u2019export Excel indisponibles (connexion ?) — réessayez', 'error');
             return;
         }
 
@@ -222,7 +222,7 @@ export const Export = {
      */
     toPdf(title, sections, filename = 'simulation', opts = {}) {
         if (typeof jspdf === 'undefined') {
-            alert('Bibliothèque PDF non chargée');
+            window.showToast?.('Outils d\u2019export PDF indisponibles (connexion ?) — réessayez', 'error');
             return;
         }
 

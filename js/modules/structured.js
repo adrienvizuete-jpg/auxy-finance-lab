@@ -11,6 +11,7 @@ import { DossierBar } from '../utils/dossierbar.js';
 import { Market } from '../utils/market.js';
 import { Dossier } from '../utils/dossier.js';
 import { Financial } from '../utils/financial.js';
+import { Dialog } from '../utils/dialog.js';
 
 // ── State ──
 let emplois = [
@@ -334,7 +335,10 @@ function recalculate() {
     const setKpi = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
     setKpi('kpi-ve', fmtK(c.veRetenue));
     setKpi('kpi-df-closing', fmtK(c.detteFinClosing));
-    setKpi('kpi-dfn', fmtK(c.dfn));
+    // DFN négative = trésorerie nette : libellé et signe lisibles
+    setKpi('kpi-dfn', fmtK(Math.abs(c.dfn)));
+    const dfnLabel = document.getElementById('kpi-dfn')?.closest('.er-kpi-card')?.querySelector('.kpi-label');
+    if (dfnLabel) dfnLabel.textContent = c.dfn < 0 ? 'Trésorerie nette' : 'DFN';
     setKpi('kpi-levier', c.ratioLevier == null ? 'n.s.' : fmtRatio(c.ratioLevier));
     setKpi('kpi-annuity-total', fmtK(totalAnnuity));
 
@@ -426,7 +430,6 @@ function saveSimulation() {
         recalculate();
     }
 
-    const modal = document.getElementById('modal-overlay');
     const body = document.getElementById('modal-body');
     const defaultName = `Emplois-Ressources — ${fmtK(lastResult.results.totalEmplois)} k€`;
 
@@ -449,10 +452,10 @@ function saveSimulation() {
         </div>
     `;
 
-    modal.classList.remove('hidden');
+    Dialog.show();
     document.getElementById('save-sf-name')?.focus();
 
-    document.getElementById('save-sf-cancel')?.addEventListener('click', () => modal.classList.add('hidden'));
+    document.getElementById('save-sf-cancel')?.addEventListener('click', () => Dialog.close());
     document.getElementById('save-sf-confirm')?.addEventListener('click', () => {
         const name = document.getElementById('save-sf-name')?.value || defaultName;
         const notes = document.getElementById('save-sf-notes')?.value || '';
@@ -464,7 +467,7 @@ function saveSimulation() {
             typeLabel: 'Financement Structuré'
         });
 
-        modal.classList.add('hidden');
+        Dialog.close();
         if (id) {
             window.showToast?.('Simulation sauvegardée', 'success');
         } else {
@@ -482,7 +485,7 @@ function shareStructured() {
 // ── Export Excel ──
 function exportExcel() {
     if (typeof XLSX === 'undefined') {
-        alert('Bibliothèque Excel non chargée');
+        window.showToast?.('Outils d\u2019export Excel indisponibles (connexion ?) — réessayez', 'error');
         return;
     }
     if (!lastResult) recalculate();
@@ -805,8 +808,8 @@ export const StructuredModule = {
                         <div class="kpi-value" id="kpi-df-closing">${fmtK(c.detteFinClosing)}</div>
                     </div>
                     <div class="er-kpi-card">
-                        <div class="kpi-label">DFN</div>
-                        <div class="kpi-value highlight" id="kpi-dfn">${fmtK(c.dfn)}</div>
+                        <div class="kpi-label">${c.dfn < 0 ? 'Trésorerie nette' : 'DFN'}</div>
+                        <div class="kpi-value highlight" id="kpi-dfn">${fmtK(Math.abs(c.dfn))}</div>
                     </div>
                     <div class="er-kpi-card">
                         <div class="kpi-label">Ratio Levier Net</div>

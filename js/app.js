@@ -16,6 +16,11 @@ import { Storage } from './utils/storage.js';
 import { Cloud } from './utils/cloud.js';
 import { initExportLibs } from './utils/libs.js';
 import { watchA11y } from './utils/a11y.js';
+import { enhanceAmounts } from './utils/fields.js';
+import { enhanceGlossary } from './utils/glossary.js';
+import { Dialog } from './utils/dialog.js';
+import * as FormState from './utils/formstate.js';
+import { mountKpiBar } from './utils/kpibar.js';
 
 // =============================================
 // MODULE REGISTRY
@@ -34,7 +39,15 @@ const modules = {
     history: HistoryModule
 };
 
+/** Unité des montants saisis par module (affichée dans chaque champ montant) */
+const AMOUNT_UNITS = /** @type {Record<string, string>} */ ({
+    structured: 'k€', covenants: 'k€',
+    credit: '€', debtprofile: '€', immobilier: '€', benchmark: '€', stress: '€', calculator: '€'
+});
+
 let currentPage = 'dashboard';
+/** Page réellement affichée (dont on sauvegarde les saisies en la quittant) */
+let renderedPage = '';
 const APP_VERSION = '1.2.0';
 
 // =============================================
@@ -62,9 +75,14 @@ function navigateTo(page, { history: mode = 'push' } = {}) {
     // Titre d'onglet par module : onglets et historique du navigateur lisibles
     document.title = `${label || 'Dashboard'} · Auxy Finance Lab`;
 
-    // Render page
+    // Render page (saisies de la page quittée gardées pour le retour)
     const container = document.getElementById('page-container');
     if (container) {
+        if (renderedPage && FormState.DOM_STATE_PAGES.has(renderedPage)) FormState.save(renderedPage, container);
+        FormState.reset();
+        renderedPage = page;
+        if (AMOUNT_UNITS[page]) container.dataset.amountUnit = AMOUNT_UNITS[page];
+        else delete container.dataset.amountUnit;
         container.innerHTML = modules[page].render();
         // Reset scroll
         document.getElementById('main-content')?.scrollTo(0, 0);
@@ -74,6 +92,8 @@ function navigateTo(page, { history: mode = 'push' } = {}) {
         container.style.animation = '';
         // Initialize module
         modules[page].init?.();
+        if (FormState.DOM_STATE_PAGES.has(page)) FormState.restore(container, FormState.load(page));
+        mountKpiBar(page, container);
     }
 
     // Historique : jamais d'entrée ajoutée sur un Retour / Suivant (sinon le
@@ -144,12 +164,19 @@ function toggleTheme() {
     document.documentElement.setAttribute('data-theme', next);
     Storage.setTheme(next);
 
-    // Re-render current page to update charts
+    // Re-render de la page pour redessiner les graphiques aux couleurs du
+    // thème, sans perdre les saisies en cours ni le défilement
     if (modules[currentPage]) {
         const container = document.getElementById('page-container');
+        const main = document.getElementById('main-content');
         if (container) {
+            const snap = FormState.snapshot(container);
+            const scroll = main?.scrollTop || 0;
             container.innerHTML = modules[currentPage].render();
             modules[currentPage].init?.();
+            FormState.restore(container, snap);
+            mountKpiBar(currentPage, container);
+            if (main) main.scrollTop = scroll;
         }
     }
 }
@@ -193,20 +220,14 @@ function initModalFocus() {
 
 function initModal() {
     initModalFocus();
-    document.getElementById('modal-close')?.addEventListener('click', () => {
-        document.getElementById('modal-overlay')?.classList.add('hidden');
-    });
+    document.getElementById('modal-close')?.addEventListener('click', () => Dialog.close());
 
     document.getElementById('modal-overlay')?.addEventListener('click', e => {
-        if (e.target === e.currentTarget) {
-            e.currentTarget.classList.add('hidden');
-        }
+        if (e.target === e.currentTarget) Dialog.close();
     });
 
     document.addEventListener('keydown', e => {
-        if (e.key === 'Escape') {
-            document.getElementById('modal-overlay')?.classList.add('hidden');
-        }
+        if (e.key === 'Escape' && Dialog.isOpen()) Dialog.close();
     });
 }
 
@@ -323,6 +344,10 @@ function init() {
         });
     });
 
+    // Calculs lancés sur la page (rejoués au retour)
+    const pc = document.getElementById('page-container');
+    if (pc) FormState.trackActions(pc);
+
     // Theme toggle
     document.getElementById('toggle-theme')?.addEventListener('click', toggleTheme);
 
@@ -370,8 +395,8 @@ function init() {
     const versionLabel = document.querySelector('.version-label');
     if (versionLabel) versionLabel.textContent = `v${APP_VERSION}`;
 
-    // Noms accessibles des champs et boutons générés par les modules
-    watchA11y(/** @type {HTMLElement[]} */ ([document.getElementById('page-container'), document.getElementById('modal-body')].filter(Boolean)));
+    // Champs montant formatés, puis noms accessibles des champs et boutons générés par les modules
+    watchA11y(/** @type {HTMLElement[]} */ ([document.getElementById('page-container'), document.getElementById('modal-body')].filter(Boolean)), [enhanceAmounts, enhanceGlossary]);
 
     // Bibliothèques d'export (jsPDF, SheetJS) : après le premier affichage
     initExportLibs();

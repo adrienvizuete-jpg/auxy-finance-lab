@@ -7,6 +7,7 @@
 
 import { Dossier } from './dossier.js';
 import { escapeHtml } from './sanitize.js';
+import { Dialog } from './dialog.js';
 
 /** @typedef {import('./dossier.js').DossierData} DossierData */
 
@@ -115,12 +116,12 @@ export const DossierBar = {
                 <button class="btn btn-outline" id="dossier-cancel">Annuler</button>
                 <button class="btn btn-primary" id="dossier-confirm">Charger ces chiffres</button>
             </div>`;
-        modal.classList.remove('hidden');
-        document.getElementById('dossier-cancel')?.addEventListener('click', () => modal.classList.add('hidden'));
+        Dialog.show();
+        document.getElementById('dossier-cancel')?.addEventListener('click', () => Dialog.close());
         document.getElementById('dossier-confirm')?.addEventListener('click', () => {
             const name = /** @type {HTMLInputElement | null} */ (document.getElementById('dossier-name'))?.value.trim();
             if (name) dossier.name = name;
-            modal.classList.add('hidden');
+            Dialog.close();
             onConfirm();
         });
     }
