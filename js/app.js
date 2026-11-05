@@ -16,6 +16,12 @@ import { Storage } from './utils/storage.js';
 import { Cloud } from './utils/cloud.js';
 import { initExportLibs } from './utils/libs.js';
 import { watchA11y } from './utils/a11y.js';
+import { enhanceAmounts } from './utils/fields.js';
+import { enhanceGlossary } from './utils/glossary.js';
+import { Dialog } from './utils/dialog.js';
+import * as FormState from './utils/formstate.js';
+import { mountKpiBar } from './utils/kpibar.js';
+import { initContextBar } from './utils/contextbar.js';
 
 // =============================================
 // MODULE REGISTRY
@@ -34,8 +40,18 @@ const modules = {
     history: HistoryModule
 };
 
+/** Unité des montants saisis par module (affichée dans chaque champ montant) */
+const AMOUNT_UNITS = /** @type {Record<string, string>} */ ({
+    structured: 'k€', covenants: 'k€',
+    credit: '€', debtprofile: '€', immobilier: '€', benchmark: '€', stress: '€', calculator: '€'
+});
+
 let currentPage = 'dashboard';
-const APP_VERSION = '1.2.0';
+/** Page réellement affichée (dont on sauvegarde les saisies en la quittant) */
+let renderedPage = '';
+/** @type {(() => void) | undefined} */
+let refreshContext;
+const APP_VERSION = '1.3.0';
 
 // =============================================
 // ROUTER
@@ -60,11 +76,16 @@ function navigateTo(page, { history: mode = 'push' } = {}) {
         else item.removeAttribute('aria-current');
     });
     // Titre d'onglet par module : onglets et historique du navigateur lisibles
-    document.title = `${label || 'Dashboard'} · Auxy Finance Lab`;
+    document.title = `${label || 'Accueil'} · Auxy Finance Lab`;
 
-    // Render page
+    // Render page (saisies de la page quittée gardées pour le retour)
     const container = document.getElementById('page-container');
     if (container) {
+        if (renderedPage && FormState.DOM_STATE_PAGES.has(renderedPage)) FormState.save(renderedPage, container);
+        FormState.reset();
+        renderedPage = page;
+        if (AMOUNT_UNITS[page]) container.dataset.amountUnit = AMOUNT_UNITS[page];
+        else delete container.dataset.amountUnit;
         container.innerHTML = modules[page].render();
         // Reset scroll
         document.getElementById('main-content')?.scrollTo(0, 0);
@@ -74,7 +95,14 @@ function navigateTo(page, { history: mode = 'push' } = {}) {
         container.style.animation = '';
         // Initialize module
         modules[page].init?.();
+        if (FormState.DOM_STATE_PAGES.has(page)) {
+            FormState.restore(container, FormState.load(page));
+            // un calcul rejoué ne fait pas défiler la page
+            document.getElementById('main-content')?.scrollTo({ top: 0, behavior: 'instant' });
+        }
+        mountKpiBar(page, container);
     }
+    refreshContext?.();
 
     // Historique : jamais d'entrée ajoutée sur un Retour / Suivant (sinon le
     // bouton Retour tourne en boucle sur la même page)
@@ -144,12 +172,22 @@ function toggleTheme() {
     document.documentElement.setAttribute('data-theme', next);
     Storage.setTheme(next);
 
-    // Re-render current page to update charts
+    // Re-render de la page pour redessiner les graphiques aux couleurs du
+    // thème, sans perdre les saisies en cours ni le défilement
     if (modules[currentPage]) {
         const container = document.getElementById('page-container');
+        const main = document.getElementById('main-content');
         if (container) {
+            // Modules à état DOM : saisies photographiées puis rejouées ; les
+            // autres re-rendent depuis leur état en mémoire
+            const domState = FormState.DOM_STATE_PAGES.has(currentPage);
+            const snap = domState ? FormState.snapshot(container) : undefined;
+            const scroll = main?.scrollTop || 0;
             container.innerHTML = modules[currentPage].render();
             modules[currentPage].init?.();
+            if (domState) FormState.restore(container, snap);
+            mountKpiBar(currentPage, container);
+            main?.scrollTo({ top: scroll, behavior: 'instant' });
         }
     }
 }
@@ -193,20 +231,14 @@ function initModalFocus() {
 
 function initModal() {
     initModalFocus();
-    document.getElementById('modal-close')?.addEventListener('click', () => {
-        document.getElementById('modal-overlay')?.classList.add('hidden');
-    });
+    document.getElementById('modal-close')?.addEventListener('click', () => Dialog.close());
 
     document.getElementById('modal-overlay')?.addEventListener('click', e => {
-        if (e.target === e.currentTarget) {
-            e.currentTarget.classList.add('hidden');
-        }
+        if (e.target === e.currentTarget) Dialog.close();
     });
 
     document.addEventListener('keydown', e => {
-        if (e.key === 'Escape') {
-            document.getElementById('modal-overlay')?.classList.add('hidden');
-        }
+        if (e.key === 'Escape' && Dialog.isOpen()) Dialog.close();
     });
 }
 
@@ -323,6 +355,16 @@ function init() {
         });
     });
 
+    // En-tête : client actif et parcours de mission ; l'accueil suit le dossier
+    refreshContext = initContextBar(() => currentPage);
+    window.addEventListener('dossier:change', () => {
+        if (currentPage === 'dashboard') navigateTo('dashboard', { history: 'none' });
+    });
+
+    // Calculs lancés sur la page (rejoués au retour)
+    const pc = document.getElementById('page-container');
+    if (pc) FormState.trackActions(pc);
+
     // Theme toggle
     document.getElementById('toggle-theme')?.addEventListener('click', toggleTheme);
 
@@ -370,8 +412,8 @@ function init() {
     const versionLabel = document.querySelector('.version-label');
     if (versionLabel) versionLabel.textContent = `v${APP_VERSION}`;
 
-    // Noms accessibles des champs et boutons générés par les modules
-    watchA11y(/** @type {HTMLElement[]} */ ([document.getElementById('page-container'), document.getElementById('modal-body')].filter(Boolean)));
+    // Champs montant formatés, puis noms accessibles des champs et boutons générés par les modules
+    watchA11y(/** @type {HTMLElement[]} */ ([document.getElementById('page-container'), document.getElementById('modal-body')].filter(Boolean)), [enhanceAmounts, enhanceGlossary]);
 
     // Bibliothèques d'export (jsPDF, SheetJS) : après le premier affichage
     initExportLibs();

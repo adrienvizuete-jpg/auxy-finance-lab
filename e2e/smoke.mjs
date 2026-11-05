@@ -2,7 +2,7 @@
  * Auxy Finance Lab — test E2E smoke (puppeteer-core)
  *
  * Vérifie les parcours critiques dans un vrai Chrome headless :
- *   1. Dashboard : l'app démarre, les KPI s'affichent, zéro erreur console
+ *   1. Accueil : l'app démarre, parcours et en-tête client affichés, zéro erreur console
  *   2. Crédit : une simulation par défaut produit un panneau de résultats
  *   3. Covenants : le tableau DSCR/levier est calculé au chargement
  *   4. Profil de dette : tableau de variation + graphiques rendus
@@ -113,12 +113,15 @@ async function run() {
             if (msg.type() === 'error') consoleErrors.push(`console: ${msg.text()}`);
         });
 
-        // --- 1. Dashboard ---
-        console.log('Parcours 1 : Dashboard');
+        // --- 1. Accueil ---
+        console.log('Parcours 1 : Accueil');
         await page.goto(`${baseUrl}#dashboard`, { waitUntil: 'networkidle0', timeout: 30000 });
-        await page.waitForSelector('.kpi-card', { timeout: 10000 });
-        const kpiCount = await page.$$eval('.kpi-card', els => els.length);
-        check('KPI cards affichées', kpiCount >= 4, `${kpiCount} trouvées`);
+        await page.waitForSelector('.home-mission', { timeout: 10000 });
+        const missionCount = await page.$$eval('.home-mission', els => els.length);
+        check('Parcours de mission proposés', missionCount >= 4, `${missionCount} trouvés`);
+        const quickCount = await page.$$eval('.home-quick-item', els => els.length);
+        check('Accès à tous les modules', quickCount >= 8, `${quickCount} trouvés`);
+        check('En-tête client affiché', await page.$eval('#context-bar', el => /dossier/i.test(el.textContent || '')));
 
         // --- 2. Crédit : simulation par défaut ---
         console.log('Parcours 2 : Simulateur de crédit');
@@ -161,6 +164,29 @@ async function run() {
         check('Suivant : retour sur la page quittée', await page.evaluate(() => location.hash) === '#debtprofile');
 
         // --- 5. Service worker : installation + flux de mise à jour ---
+        // --- 4 ter. Socle commun : champ montant, saisies conservées, parcours ---
+        console.log('Parcours 4 ter : champ montant, saisies conservées, parcours de mission');
+        await navByClick(page, 'calculator');
+        await page.waitForSelector('#calc-pmt-pv[data-amount]', { timeout: 5000 });
+        const amount = await page.$eval('#calc-pmt-pv', el => {
+            const shown = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.get?.call(el);
+            return { shown, value: /** @type {HTMLInputElement} */ (el).value };
+        });
+        check('Montant affiché formaté, lu en nombre brut', /^500[\s\u00a0\u202f]000$/.test(amount.shown || '') && amount.value === '500000', JSON.stringify(amount));
+        await page.$eval('#calc-pmt-pv', el => { /** @type {HTMLInputElement} */ (el).value = '1250000'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+        await page.click('#calc-pmt-btn');
+        await navByClick(page, 'dashboard');
+        await navByClick(page, 'calculator');
+        await page.waitForSelector('#calc-pmt-pv[data-amount]', { timeout: 5000 });
+        check('Saisie de la Calculatrice conservée au retour', await page.$eval('#calc-pmt-pv', el => /** @type {HTMLInputElement} */ (el).value === '1250000'));
+        await navByClick(page, 'dashboard');
+        await page.click('.home-mission[data-mission="refi"]');
+        await page.waitForFunction(() => location.hash === '#debtprofile', { timeout: 5000 });
+        await page.click('#mission-next');
+        await page.waitForFunction(() => location.hash === '#credit', { timeout: 5000 });
+        check('Parcours : étape Crédit ouverte sur le bon type', await page.$eval('#credit-tabs .tab.active', el => el.getAttribute('data-type') === 'variable'));
+        await page.click('#mission-stop');
+
         console.log('Parcours 5 : Service worker (install + bandeau de mise à jour)');
         const swActive = await page.evaluate(async () => {
             if (!('serviceWorker' in navigator)) return 'unsupported';

@@ -21,7 +21,7 @@ export const Export = {
      */
     toExcel(schedule, filename = 'simulation', sheetName = 'Amortissement') {
         if (typeof XLSX === 'undefined') {
-            alert('Bibliothèque Excel non chargée');
+            window.showToast?.('Outils d\u2019export Excel indisponibles (connexion ?) — réessayez', 'error');
             return;
         }
 
@@ -67,7 +67,7 @@ export const Export = {
      */
     fullReportExcel(simulation) {
         if (typeof XLSX === 'undefined') {
-            alert('Bibliothèque Excel non chargée');
+            window.showToast?.('Outils d\u2019export Excel indisponibles (connexion ?) — réessayez', 'error');
             return;
         }
 
@@ -222,7 +222,7 @@ export const Export = {
      */
     toPdf(title, sections, filename = 'simulation', opts = {}) {
         if (typeof jspdf === 'undefined') {
-            alert('Bibliothèque PDF non chargée');
+            window.showToast?.('Outils d\u2019export PDF indisponibles (connexion ?) — réessayez', 'error');
             return;
         }
 
@@ -388,6 +388,12 @@ export const Export = {
                 doc.setTextColor(90, 99, 110);
                 doc.text(textLines, 20, ny);
                 y += noteH + 10;
+            }
+
+            if (section.type === 'pagebreak') {
+                // page déjà neuve (saut automatique juste au-dessus) : pas de page blanche
+                if (y > 20) { doc.addPage(); y = 20; }
+                continue;
             }
 
             if (section.type === 'separator') {

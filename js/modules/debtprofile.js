@@ -25,10 +25,23 @@ import { Market } from '../utils/market.js';
 import { escapeHtml } from '../utils/sanitize.js';
 import { DossierBar } from '../utils/dossierbar.js';
 import { RefiEngine } from '../utils/refiengine.js';
+import { Dialog } from '../utils/dialog.js';
+import { Dossier } from '../utils/dossier.js';
 
 // ── State ──
 const now = new Date();
 let dossierName = '';
+/** Le nom vient du client actif (pas d'une saisie) : il suit les changements de client */
+let nameFromActive = false;
+if (typeof window !== 'undefined') {
+    window.addEventListener('dossier:change', () => {
+        if (dossierName && !nameFromActive) return;
+        dossierName = Dossier.get()?.name?.slice(0, 80) || '';
+        nameFromActive = true;
+        const input = /** @type {HTMLInputElement | null} */ (document.getElementById('dp-dossier'));
+        if (input) input.value = dossierName;
+    });
+}
 let analysis = { year: now.getFullYear(), month: now.getMonth() + 1 };
 let closingMonth = 12;
 let includeNew = true;
@@ -378,7 +391,6 @@ function addLoan(isNew) {
 
 function saveProfile() {
     if (!lastResult) recalculate();
-    const modal = document.getElementById('modal-overlay');
     const body = document.getElementById('modal-body');
     const defaultName = dossierName
         ? `Profil de dette — ${dossierName}`
@@ -399,20 +411,20 @@ function saveProfile() {
             <button class="btn btn-primary" id="save-dp-confirm">Sauvegarder</button>
         </div>
     `;
-    modal.classList.remove('hidden');
+    Dialog.show();
     document.getElementById('save-dp-name')?.focus();
-    document.getElementById('save-dp-cancel')?.addEventListener('click', () => modal.classList.add('hidden'));
+    document.getElementById('save-dp-cancel')?.addEventListener('click', () => Dialog.close());
     document.getElementById('save-dp-confirm')?.addEventListener('click', () => {
         const name = document.getElementById('save-dp-name')?.value || defaultName;
         const notes = document.getElementById('save-dp-notes')?.value || '';
         const id = Storage.saveSimulation({ ...lastResult, name, notes, typeLabel: 'Profil de Dette' });
-        modal.classList.add('hidden');
+        Dialog.close();
         window.showToast?.(id ? 'Profil sauvegardé' : 'Échec de la sauvegarde : stockage local plein', id ? 'success' : 'error');
     });
 }
 
 function exportExcel() {
-    if (typeof XLSX === 'undefined') { alert('Bibliothèque Excel non chargée'); return; }
+    if (typeof XLSX === 'undefined') { window.showToast?.('Outils d\u2019export Excel indisponibles (connexion ?) — réessayez', 'error'); return; }
     if (!lastResult) recalculate();
     const r = lastResult.results;
     const wb = XLSX.utils.book_new();
@@ -648,7 +660,6 @@ function showAudit(kind) {
             : 'Aucun flux de capital futur.';
     }
 
-    const modal = document.getElementById('modal-overlay');
     const body = document.getElementById('modal-body');
     body.innerHTML = `
         <h2 style="margin-bottom:4px">${spec.title}</h2>
@@ -665,14 +676,14 @@ function showAudit(kind) {
         <div class="dp-audit-total">${totalLine}</div>
         <p style="color:var(--text-muted);font-size:0.8rem;margin-top:14px">${spec.convention}</p>
     `;
-    modal.classList.remove('hidden');
+    Dialog.show();
 }
 
 // ── Restauration (partage / historique), avec rétrocompatibilité v1 ──
 
 function loadParams(p) {
     if (!p) return;
-    if (typeof p.dossierName === 'string') dossierName = p.dossierName.slice(0, 80);
+    if (typeof p.dossierName === 'string') { dossierName = p.dossierName.slice(0, 80); nameFromActive = false; }
     if (p.analysis && parseMonthValue(monthValue(p.analysis.year, p.analysis.month))) {
         analysis = { year: parseInt(p.analysis.year), month: parseInt(p.analysis.month) };
     }
@@ -724,6 +735,11 @@ function loadParams(p) {
 
 export const DebtProfileModule = {
     render() {
+        // Un seul « dossier » : le nom suit le client actif tant qu'il n'est pas saisi ici
+        if (!dossierName || nameFromActive) {
+            dossierName = Dossier.get()?.name?.slice(0, 80) || '';
+            nameFromActive = true;
+        }
         return `
             <div class="page-header">
                 <h1>Profil de Dette</h1>
@@ -736,7 +752,7 @@ export const DebtProfileModule = {
                 <div class="card-title">Dossier</div>
                 <div class="form-row" style="margin-top:12px">
                     <div class="form-group">
-                        <label class="form-label">Nom du dossier / client</label>
+                        <label class="form-label">Client (dossier actif par défaut)</label>
                         <input type="text" class="form-input" id="dp-dossier" value="${escapeHtml(dossierName)}" placeholder="Ex : SAS Dupont Industries">
                     </div>
                     <div class="form-group">
@@ -931,6 +947,7 @@ export const DebtProfileModule = {
         // ── Paramètres dossier ──
         document.getElementById('dp-dossier')?.addEventListener('input', e => {
             dossierName = e.target.value.slice(0, 80);
+            nameFromActive = false;
         });
         document.getElementById('dp-analysis')?.addEventListener('change', e => {
             const parsed = parseMonthValue(e.target.value);

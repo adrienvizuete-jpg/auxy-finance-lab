@@ -746,13 +746,13 @@ body {
 
 /* === Badges === */
 .badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 3px 10px;
-    font-size: 0.75rem;
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    font-size: 0.72rem;
     font-weight: 600;
-    border-radius: 100px;
-    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
 .badge-blue { background: var(--primary-100); color: var(--primary-700); }
@@ -771,19 +771,6 @@ body {
     gap: 8px;
 }
 
-.toast {
-    padding: 14px 20px;
-    border-radius: var(--radius-md);
-    font-size: 0.88rem;
-    font-weight: 500;
-    color: white;
-    box-shadow: var(--shadow-lg);
-    animation: slideIn 0.3s ease;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    max-width: 380px;
-}
 
 .toast.success { background: var(--success); color: var(--on-status); }
 .toast.error { background: var(--danger); color: var(--on-status); }
@@ -1608,19 +1595,6 @@ body {
     gap: 12px;
 }
 
-.badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: var(--radius-sm);
-    font-size: 0.72rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-.badge-blue {
-    background: var(--primary-100);
-    color: var(--primary-700);
-}
 
 /* === Hidden utility === */
 .hidden {
@@ -1629,7 +1603,7 @@ body {
 
 /* === Enhanced Print === */
 @media print {
-    .sidebar, .mobile-header, .theme-toggle, .toast-container, .modal-overlay { display: none !important; }
+    .sidebar, .mobile-header, .theme-toggle, .toast-container, .modal-overlay, .context-bar, .kpi-sticky { display: none !important; }
     body { overflow: visible; height: auto; }
     #app { display: block; height: auto; }
     .main-content { padding: 0; overflow: visible; height: auto; }
@@ -2016,3 +1990,135 @@ input[type="month"].form-input {
     .menu-toggle { min-width: 44px; min-height: 44px; }
     .rate-hint-value { padding: 6px 4px; }
 }
+
+/* =============================================
+   SOCLE COMMUN — champ montant, dialogue, KPI fixes
+   ============================================= */
+
+/* Champ montant : « 1 000 000 » + unité dans le champ */
+.amount-input { font-variant-numeric: tabular-nums; }
+.amount-wrap { position: relative; display: inline-flex; align-items: center; max-width: 100%; }
+.form-group > .amount-wrap, .amount-wrap:has(> .form-input:not(.form-input-sm)) { display: flex; width: 100%; }
+.amount-wrap > input { padding-right: 2.1em !important; width: 100%; }
+.amount-wrap > input[style*="width"] { width: auto; }
+.amount-unit {
+    position: absolute; right: 0.55em; pointer-events: none;
+    font-size: 0.72em; font-weight: 600; color: var(--text-muted);
+}
+
+/* Bandeau de KPI fixe (Structuré, Covenants, Profil de dette) */
+.kpi-sticky {
+    /* collé au bord haut de la zone qui défile (padding de .main-content compensé) */
+    position: sticky; top: -32px; z-index: 20;
+    display: flex; flex-wrap: wrap; gap: 6px 20px; align-items: baseline;
+    margin: 0 0 16px; padding: 10px 16px;
+    background: var(--bg-secondary); border: 1px solid var(--border-color);
+    border-radius: 10px; box-shadow: 0 4px 14px rgba(15, 25, 35, 0.08);
+    cursor: pointer; transition: opacity 0.2s ease;
+}
+.kpi-sticky:empty { display: none; }
+.kpi-sticky-hidden { opacity: 0; visibility: hidden; }
+.kpi-sticky-item { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.kpi-sticky-label { font-size: 0.74rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; }
+.kpi-sticky-value { font-size: 1rem; font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.kpi-sticky-value .cov-kpi-sub { font-size: 0.72rem; font-weight: 400; color: var(--text-muted); }
+@media (max-width: 768px) {
+    .kpi-sticky { top: -16px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; padding: 8px 12px; }
+    .kpi-sticky-item { flex-direction: column; gap: 0; }
+    .kpi-sticky-value { font-size: 0.9rem; }
+}
+
+/* Statuts : icône + texte, lisibles projetés ou imprimés en noir et blanc */
+.cov-badge::before, .kpi-badge::before, .badge-green::before, .badge-red::before {
+    display: inline-block; margin-right: 0.35em; font-weight: 700;
+}
+.cov-badge.ok::before, .kpi-badge-green::before, .badge-green::before { content: "✓"; }
+.cov-badge.warning::before, .kpi-badge-orange::before { content: "!"; }
+.cov-badge.breach::before, .kpi-badge-red::before, .badge-red::before { content: "✕"; }
+.has-def { text-decoration: underline dotted; text-decoration-color: var(--text-muted); text-underline-offset: 3px; cursor: help; }
+
+/* Mobile : cibles tactiles d'au moins 36 px, et point de rupture 480 px */
+@media (max-width: 768px) {
+    .btn, .btn-sm, .tab, .nav-item, .theme-toggle { min-height: 36px; }
+    .form-input, .er-input, select.form-input { min-height: 36px; }
+    .tabs { overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; }
+    .tab { flex: 0 0 auto; }
+    .card-header { flex-wrap: wrap; gap: 8px; }
+}
+@media (max-width: 480px) {
+    .page-header h1 { font-size: 1.35rem; }
+    .page-header p { font-size: 0.85rem; }
+    .card { padding: 16px; }
+    .er-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .btn-group { flex-wrap: wrap; }
+    .btn-group .btn { flex: 1 1 auto; }
+    .kpi-sticky-label { font-size: 0.66rem; }
+}
+
+/* Module Crédit : 3 familles, puis les types de la famille */
+.credit-families { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+.credit-family {
+    display: flex; flex-direction: column; gap: 2px; text-align: left; cursor: pointer;
+    padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border-color);
+    background: var(--bg-secondary); color: var(--text-primary); font: inherit;
+}
+.credit-family:hover { border-color: var(--accent-500, #e8973f); }
+.credit-family.active { border-color: var(--accent-500, #e8973f); box-shadow: inset 0 0 0 1px var(--accent-500, #e8973f); }
+.credit-family-label { font-weight: 700; font-size: 0.9rem; }
+.credit-family-desc { font-size: 0.75rem; color: var(--text-muted); }
+@media (max-width: 768px) { .credit-families { grid-template-columns: 1fr; } }
+
+/* En-tête de contexte : client actif + parcours */
+.context-bar { margin-bottom: 16px; }
+.context-bar:empty { display: none; }
+.context-row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+.context-dossier { font-size: 0.9rem; min-width: 0; overflow-wrap: anywhere; }
+.context-label { color: var(--text-muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.context-client { font-size: 1rem; }
+.context-meta { color: var(--text-muted); font-size: 0.78rem; }
+.mission-bar {
+    margin-top: 10px; padding: 12px 14px; border-radius: 10px;
+    background: var(--bg-secondary); border: 1px solid var(--border-color);
+    display: grid; gap: 8px;
+}
+.mission-head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+.mission-hint { color: var(--text-secondary); font-size: 0.85rem; }
+.mission-steps { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
+.mission-step {
+    display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px;
+    border: 1px solid var(--border-color); background: transparent; color: var(--text-secondary);
+    font: inherit; font-size: 0.82rem; cursor: pointer; min-height: 32px;
+}
+.mission-step-num {
+    display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px;
+    border-radius: 50%; background: var(--bg-tertiary); font-size: 0.72rem; font-weight: 700;
+}
+.mission-step.done .mission-step-num { background: var(--success); color: var(--on-status, #fff); }
+.mission-step.current { border-color: var(--accent-500, #e8973f); color: var(--text-primary); font-weight: 600; }
+.mission-step.current .mission-step-num { background: var(--accent-500, #e8973f); color: #1a3548; }
+.mission-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.dossier-pick { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-height: 50vh; overflow: auto; }
+.dossier-pick-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; }
+
+/* Accueil : dossiers récents, parcours, modules */
+.home-dossiers { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+.home-dossier { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; }
+.home-dossier.active { border-color: var(--success); }
+.home-dossier-name { font-weight: 600; overflow-wrap: anywhere; }
+.home-missions { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; margin-top: 12px; }
+.home-mission {
+    display: flex; flex-direction: column; gap: 4px; text-align: left; cursor: pointer; font: inherit;
+    padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border-color);
+    background: var(--bg-primary); color: var(--text-primary);
+}
+.home-mission:hover, .home-mission:focus-visible { border-color: var(--accent-500); }
+.home-mission-label { font-weight: 700; }
+.home-mission-desc { font-size: 0.8rem; color: var(--text-secondary); }
+.home-mission-steps { font-size: 0.72rem; color: var(--text-muted); }
+.home-quick { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 12px; }
+.home-quick-item { padding: 14px 10px; flex-direction: column; gap: 6px; text-align: center; }
+.home-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+.home-stats .kpi-value { font-size: 1.1rem; }
+@media (max-width: 768px) { .home-missions, .home-stats { grid-template-columns: 1fr; } }
+.bank-pack { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 45vh; overflow: auto; }
+.bank-pack-row { padding: 8px 10px; border: 1px solid var(--border-color); border-radius: 8px; }

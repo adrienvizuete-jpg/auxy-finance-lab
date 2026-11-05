@@ -12,6 +12,7 @@ import { escapeHtml } from '../utils/sanitize.js';
 import { Share } from '../utils/share.js';
 import { Market } from '../utils/market.js';
 import { LoanEngine } from '../utils/loanengine.js';
+import { Dialog } from '../utils/dialog.js';
 
 const CREDIT_TYPES = [
     { id: 'constant', label: 'Amortissable Constant', desc: 'Mensualités fixes' },
@@ -26,7 +27,34 @@ const CREDIT_TYPES = [
     { id: 'tranching', label: 'Tranching', desc: 'Financement multi-tranches (LBO)' }
 ];
 
+/** Types regroupés en 3 familles : la barre de 10 onglets débordait */
+const CREDIT_FAMILIES = [
+    { id: 'mt', label: 'Moyen / long terme', desc: 'Amortissable, in fine, taux variable, crédit-bail', types: ['constant', 'degressif', 'infine', 'variable', 'creditbail'] },
+    { id: 'ct', label: 'Court terme & BFR', desc: 'Comparatif BFR, RCF, prêt relais', types: ['bfr', 'revolving', 'relais'] },
+    { id: 'st', label: 'Structuré', desc: 'Mezzanine, tranching LBO', types: ['mezzanine', 'tranching'] }
+];
+
 let currentType = 'constant';
+
+/** Familles et onglets alignés sur le type courant (rechargement d'une simulation) */
+function syncTypeTabs() {
+    const tabs = document.getElementById('credit-tabs');
+    if (tabs) tabs.innerHTML = typeTabsHtml();
+    document.querySelectorAll('#credit-families .credit-family').forEach(b => {
+        const on = !!CREDIT_FAMILIES.find(f => f.id === /** @type {HTMLElement} */ (b).dataset.family)?.types.includes(currentType);
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', String(on));
+    });
+}
+
+/** Onglets des types de la famille du type courant */
+function typeTabsHtml() {
+    const fam = CREDIT_FAMILIES.find(f => f.types.includes(currentType)) || CREDIT_FAMILIES[0];
+    return fam.types.map(id => CREDIT_TYPES.find(t => t.id === id)).filter(Boolean).map(t => `
+                    <button class="tab ${t.id === currentType ? 'active' : ''}" data-type="${t.id}" title="${t.desc}">
+                        ${t.label}
+                    </button>`).join('');
+}
 let lastResult = null;
 let tranchingTranches = [
     { name: 'Senior A', amount: 3000000, rate: 3.5, duration: 84, type: 'constant', frequency: 'monthly' },
@@ -48,33 +76,6 @@ const DEFAULTS = {
     tranching: {}
 };
 
-// ── Live formatting helper ──
-function setupLiveFormatting() {
-    document.querySelectorAll('#credit-form-fields .form-input[type="number"]').forEach(input => {
-        const suffix = input.closest('.input-group')?.querySelector('.input-suffix')?.textContent?.trim();
-        if (suffix !== '€') return;
-
-        // Create or reuse preview element
-        let preview = input.closest('.form-group')?.querySelector('.input-preview');
-        if (!preview) {
-            preview = document.createElement('div');
-            preview.className = 'input-preview';
-            input.closest('.form-group')?.appendChild(preview);
-        }
-
-        const updatePreview = () => {
-            const val = parseFloat(input.value);
-            if (!isNaN(val) && val > 0) {
-                preview.textContent = Financial.formatCurrency(val);
-            } else {
-                preview.textContent = '';
-            }
-        };
-
-        input.addEventListener('input', updatePreview);
-        updatePreview();
-    });
-}
 
 // ── Insurance toggle logic ──
 function setupInsuranceToggle() {
@@ -236,7 +237,7 @@ function validateForm() {
 
     // Validation HTML native désactivée (novalidate : elle refusait 4,125 %
     // ou 62 jours à cause des pas) : seuls les maxima déclarés sont contrôlés
-    document.querySelectorAll('#credit-form-fields input[type="number"][max]').forEach(el => {
+    document.querySelectorAll('#credit-form-fields input[max]').forEach(el => {
         const input = /** @type {HTMLInputElement} */ (el);
         const val = parseFloat(input.value);
         if (!isNaN(val) && input.max !== '' && val > parseFloat(input.max) && !input.classList.contains('invalid')) {
@@ -1532,7 +1533,6 @@ function saveSimulation() {
     }
 
     // Show save dialog with name and notes
-    const modal = document.getElementById('modal-overlay');
     const body = document.getElementById('modal-body');
 
     const typeLabel = CREDIT_TYPES.find(t => t.id === currentType)?.label || currentType;
@@ -1557,13 +1557,13 @@ function saveSimulation() {
         </div>
     `;
 
-    modal.classList.remove('hidden');
+    Dialog.show();
 
     // Focus name input
     document.getElementById('save-sim-name')?.focus();
 
     document.getElementById('save-cancel')?.addEventListener('click', () => {
-        modal.classList.add('hidden');
+        Dialog.close();
     });
 
     document.getElementById('save-confirm')?.addEventListener('click', () => {
@@ -1577,7 +1577,7 @@ function saveSimulation() {
             typeLabel
         });
 
-        modal.classList.add('hidden');
+        Dialog.close();
         if (id) {
             window.showToast?.('Simulation sauvegardée', 'success');
         } else {
@@ -1708,7 +1708,6 @@ function resetForm() {
     lastResult = null;
 
     // Re-setup live formatting
-    setupLiveFormatting();
 
     window.showToast?.('Formulaire réinitialisé', 'info');
 }
@@ -1801,7 +1800,7 @@ function exportExcel() {
 function exportTranchingExcel() {
     if (!lastResult || currentType !== 'tranching') return;
     if (typeof XLSX === 'undefined') {
-        alert('Bibliothèque Excel non chargée');
+        window.showToast?.('Outils d\u2019export Excel indisponibles (connexion ?) — réessayez', 'error');
         return;
     }
 
@@ -1891,9 +1890,7 @@ function loadPendingReload() {
     // Switch to correct type
     if (pending.type && pending.type !== currentType) {
         currentType = pending.type;
-        document.querySelectorAll('#credit-tabs .tab').forEach(t => {
-            t.classList.toggle('active', t.dataset.type === currentType);
-        });
+        syncTypeTabs();
         document.getElementById('credit-form-fields').innerHTML = getFormHTML(currentType);
         const sub = document.querySelector('.card-subtitle');
         if (sub) sub.textContent = CREDIT_TYPES.find(t => t.id === currentType)?.desc || '';
@@ -2025,27 +2022,34 @@ function loadPendingReload() {
     }
 
     // Setup live formatting and insurance toggle after populating
-    setupLiveFormatting();
     setupInsuranceToggle();
     setupDeferralToggle();
 }
 
 export const CreditModule = {
     render() {
+        // Type demandé par un parcours de mission (js/utils/mission.js)
+        const asked = /** @type {any} */ (window)._creditType;
+        if (asked && CREDIT_TYPES.some(t => t.id === asked)) {
+            currentType = asked;
+            // la dernière simulation d'un autre type ne doit pas reprendre la main au retour
+            if (lastResult && lastResult.type !== asked) lastResult = null;
+        }
+        /** @type {any} */ (window)._creditType = null;
         return `
             <div class="page-header">
                 <h1>Simulation de Crédit Entreprise</h1>
                 <p>Simulez et comparez différents types de financements</p>
             </div>
 
-            <!-- Credit Type Tabs -->
-            <div class="tabs" id="credit-tabs">
-                ${CREDIT_TYPES.map(t => `
-                    <button class="tab ${t.id === currentType ? 'active' : ''}" data-type="${t.id}" title="${t.desc}">
-                        ${t.label}
-                    </button>
-                `).join('')}
+            <!-- Familles puis types de crédit -->
+            <div class="credit-families" id="credit-families" role="group" aria-label="Famille de financement">
+                ${CREDIT_FAMILIES.map(f => `
+                    <button type="button" class="credit-family ${f.types.includes(currentType) ? 'active' : ''}" data-family="${f.id}" aria-pressed="${f.types.includes(currentType)}">
+                        <span class="credit-family-label">${f.label}</span><span class="credit-family-desc">${f.desc}</span>
+                    </button>`).join('')}
             </div>
+            <div class="tabs" id="credit-tabs">${typeTabsHtml()}</div>
 
             <!-- Form -->
             <div class="card section">
@@ -2124,6 +2128,25 @@ export const CreditModule = {
     },
 
     init() {
+        // Famille : affiche ses types et ouvre le premier
+        document.getElementById('credit-families')?.addEventListener('click', e => {
+            const btn = e.target.closest('.credit-family');
+            if (!btn) return;
+            const fam = CREDIT_FAMILIES.find(f => f.id === btn.dataset.family);
+            if (!fam || fam.types.includes(currentType)) return;
+            document.querySelectorAll('#credit-families .credit-family').forEach(b => {
+                const on = b === btn;
+                b.classList.toggle('active', on);
+                b.setAttribute('aria-pressed', String(on));
+            });
+            const tabs = document.getElementById('credit-tabs');
+            const previous = currentType;
+            currentType = fam.types[0];
+            if (tabs) tabs.innerHTML = typeTabsHtml();
+            currentType = previous;
+            /** @type {HTMLElement | null} */ (tabs?.querySelector(`.tab[data-type="${fam.types[0]}"]`))?.click();
+        });
+
         // Tab switching
         document.getElementById('credit-tabs')?.addEventListener('click', e => {
             const btn = e.target.closest('.tab');
@@ -2142,7 +2165,6 @@ export const CreditModule = {
             if (sub) sub.textContent = CREDIT_TYPES.find(t => t.id === currentType)?.desc || '';
 
             // Re-setup live formatting, insurance toggle, deferral toggle
-            setupLiveFormatting();
             setupInsuranceToggle();
             setupDeferralToggle();
             setupRateHint();
@@ -2171,7 +2193,6 @@ export const CreditModule = {
         document.getElementById('btn-export-excel')?.addEventListener('click', exportExcel);
 
         // Setup live formatting, insurance toggle, deferral toggle
-        setupLiveFormatting();
         setupInsuranceToggle();
         setupDeferralToggle();
         setupRateHint();

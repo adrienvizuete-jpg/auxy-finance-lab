@@ -14,6 +14,8 @@ import { Storage } from '../utils/storage.js';
 import { Share } from '../utils/share.js';
 import { escapeHtml } from '../utils/sanitize.js';
 import { DossierBar } from '../utils/dossierbar.js';
+import { Dialog } from '../utils/dialog.js';
+import { Fmt } from '../utils/format.js';
 
 // ── State ──
 let horizon = 5; // années
@@ -193,7 +195,7 @@ function renderResultsTable(c) {
                     <tr><td>ICR <span class="cov-covenant-ref">(EBITDA / intérêts)</span></td>${cell(fmtX, 'icr')}</tr>
                     <tr class="cov-sep"><td>CRD fin d'année</td>${cell(fmtK, 'crd')}</tr>
                     <tr><td>Trésorerie fin d'année</td>${cell(fmtK, 'cash')}</tr>
-                    <tr><td>Dette nette</td>${cell(fmtK, 'netDebt')}</tr>
+                    <tr><td>Dette nette <span class="cov-covenant-ref">(« tréso. » = trésorerie nette)</span></td>${cell(Fmt.netDebtCell, 'netDebt')}</tr>
                     <tr><td><strong>Levier net</strong> <span class="cov-covenant-ref">(covenant ≤ ${fmtX(covenantLeverage)})</span></td>${levCell}</tr>
                     <tr><td>Marge levier <span class="cov-covenant-ref">(baisse d'EBITDA supportable)</span></td>${levHeadroomCell}</tr>
                     ${cols.some(r => r.sweep > 0) ? `<tr><td>Cash sweep (remboursement anticipé)</td>${cell(fmtK, 'sweep')}</tr>` : ''}
@@ -285,7 +287,6 @@ function applyGrowth() {
 
 function saveSimulation() {
     if (!lastResult) recalculate();
-    const modal = document.getElementById('modal-overlay');
     const body = document.getElementById('modal-body');
     const defaultName = `Covenants — DSCR min ${fmtX(lastResult.results.dscrMin)}`;
 
@@ -304,20 +305,20 @@ function saveSimulation() {
             <button class="btn btn-primary" id="save-cov-confirm">Sauvegarder</button>
         </div>
     `;
-    modal.classList.remove('hidden');
+    Dialog.show();
     document.getElementById('save-cov-name')?.focus();
-    document.getElementById('save-cov-cancel')?.addEventListener('click', () => modal.classList.add('hidden'));
+    document.getElementById('save-cov-cancel')?.addEventListener('click', () => Dialog.close());
     document.getElementById('save-cov-confirm')?.addEventListener('click', () => {
         const name = document.getElementById('save-cov-name')?.value || defaultName;
         const notes = document.getElementById('save-cov-notes')?.value || '';
         const id = Storage.saveSimulation({ ...lastResult, name, notes, typeLabel: 'Covenants & DSCR' });
-        modal.classList.add('hidden');
+        Dialog.close();
         window.showToast?.(id ? 'Analyse sauvegardée' : 'Échec de la sauvegarde : stockage local plein', id ? 'success' : 'error');
     });
 }
 
 function exportExcel() {
-    if (typeof XLSX === 'undefined') { alert('Bibliothèque Excel non chargée'); return; }
+    if (typeof XLSX === 'undefined') { window.showToast?.('Outils d\u2019export Excel indisponibles (connexion ?) — réessayez', 'error'); return; }
     if (!lastResult) recalculate();
     const c = lastResult.results;
     const n = c.rows.length;

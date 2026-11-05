@@ -5,6 +5,7 @@
 import { Financial } from '../utils/financial.js';
 import { Charts } from '../utils/charts.js';
 import { Export } from '../utils/export.js';
+import { Fmt } from '../utils/format.js';
 
 // =============================================
 // FINANCIAL CALCULATOR
@@ -255,9 +256,9 @@ export const CalculatorModule = {
             document.getElementById('calc-ratio-result').style.display = 'block';
             document.getElementById('calc-ratio-result').innerHTML = `
                 <div class="results-grid">
-                    <div class="result-item"><div class="result-label">DSCR</div><div class="result-value" style="color:${dscrColor}">${dscr.toFixed(2)}x</div><div class="result-sub">${dscr >= 1.2 ? 'Au-dessus du covenant usuel (1,20x)' : dscr >= 1.0 ? 'Sous le covenant usuel' : 'Insuffisant'}</div></div>
-                    <div class="result-item"><div class="result-label">ICR</div><div class="result-value" style="color:${icrColor}">${icr.toFixed(2)}x</div><div class="result-sub">${icr >= 3 ? 'Solide' : icr >= 1.5 ? 'Acceptable' : 'Risqu\u00e9'}</div></div>
-                    <div class="result-item"><div class="result-label">LTV</div><div class="result-value" style="color:${ltvColor}">${ltv.toFixed(1)}%</div><div class="result-sub">${ltv <= 60 ? 'Conservateur' : ltv <= 80 ? 'Mod\u00e9r\u00e9' : '\u00c9lev\u00e9'}</div></div>
+                    <div class="result-item"><div class="result-label">DSCR</div><div class="result-value" style="color:${dscrColor}">${Fmt.multiple(dscr, 2)}</div><div class="result-sub">${dscr >= 1.2 ? 'Au-dessus du covenant usuel (1,20x)' : dscr >= 1.0 ? 'Sous le covenant usuel' : 'Insuffisant'}</div></div>
+                    <div class="result-item"><div class="result-label">ICR</div><div class="result-value" style="color:${icrColor}">${Fmt.multiple(icr, 2)}</div><div class="result-sub">${icr >= 3 ? 'Solide' : icr >= 1.5 ? 'Acceptable' : 'Risqu\u00e9'}</div></div>
+                    <div class="result-item"><div class="result-label">LTV</div><div class="result-value" style="color:${ltvColor}">${Fmt.pct(ltv, 1)}</div><div class="result-sub">${ltv <= 60 ? 'Conservateur' : ltv <= 80 ? 'Mod\u00e9r\u00e9' : '\u00c9lev\u00e9'}</div></div>
                 </div>
             `;
         });
@@ -385,7 +386,7 @@ export const StressTestModule = {
                             <tbody>
                                 ${results.map((row, ri) => `
                                     <tr>
-                                        <td style="font-weight:600">${(baseRate + rateRange[ri]).toFixed(2)}%</td>
+                                        <td style="font-weight:600">${Fmt.pct((baseRate + rateRange[ri]), 2)}</td>
                                         ${row.map(cell => {
                                             if (!cell) return '<td class="heatmap-cell">\u2014</td>';
                                             const val = cell[valueKey];
@@ -452,22 +453,22 @@ export const StressTestModule = {
                     <div class="card st-kpi-card">
                         <div class="st-kpi-label">\u00c9ch\u00e9ance de base (${freqLabel})</div>
                         <div class="st-kpi-value">${Financial.formatCurrency(basePayment)}</div>
-                        <div class="st-kpi-sub">${baseRate.toFixed(2)}% \u2014 ${baseDuration} mois</div>
+                        <div class="st-kpi-sub">${Fmt.pct(baseRate, 2)} \u2014 ${baseDuration} mois</div>
                     </div>
                     <div class="card st-kpi-card">
                         <div class="st-kpi-label">Co\u00fbt total de base</div>
                         <div class="st-kpi-value">${Financial.formatCurrency(baseCost, 0)}</div>
-                        <div class="st-kpi-sub">${baseRate.toFixed(2)}% \u2014 ${baseDuration} mois</div>
+                        <div class="st-kpi-sub">${Fmt.pct(baseRate, 2)} \u2014 ${baseDuration} mois</div>
                     </div>
                     <div class="card st-kpi-card">
                         <div class="st-kpi-label">Co\u00fbt total min</div>
                         <div class="st-kpi-value" style="color:var(--success)">${Financial.formatCurrency(Math.min(...allCells.map(c => c.totalCost)), 0)}</div>
-                        <div class="st-kpi-sub">${(() => { const best = allCells.reduce((a, b) => a.totalCost < b.totalCost ? a : b); return best.rate.toFixed(2) + '% \u2014 ' + best.duration + ' mois'; })()}</div>
+                        <div class="st-kpi-sub">${(() => { const best = allCells.reduce((a, b) => a.totalCost < b.totalCost ? a : b); return Fmt.pct(best.rate, 2) + ' \u2014 ' + best.duration + ' mois'; })()}</div>
                     </div>
                     <div class="card st-kpi-card">
                         <div class="st-kpi-label">Co\u00fbt total max</div>
                         <div class="st-kpi-value" style="color:var(--danger)">${Financial.formatCurrency(maxCost, 0)}</div>
-                        <div class="st-kpi-sub">${worstCell.rate.toFixed(2)}% \u2014 ${worstCell.duration} mois</div>
+                        <div class="st-kpi-sub">${Fmt.pct(worstCell.rate, 2)} \u2014 ${worstCell.duration} mois</div>
                     </div>
                 </div>
 
@@ -536,7 +537,7 @@ export const StressTestModule = {
 
             // === Line chart: mensualit\u00e9 par taux (dur\u00e9e fixe) ===
             const validRates = rateRange.filter(rd => baseRate + rd > 0);
-            const lineLabels = validRates.map(rd => (baseRate + rd).toFixed(2) + '%');
+            const lineLabels = validRates.map(rd => Fmt.pct(baseRate + rd, 2));
             const lineData = validRates.map(rd => {
                 const sim = Financial.amortissableConstant({ principal, annualRate: baseRate + rd, durationMonths: baseDuration, insuranceMonthly: insurance, frequency });
                 return sim.periodicPayment;
@@ -700,7 +701,7 @@ export const StressTestModule = {
     _exportExcel() {
         const d = this._lastAnalysis;
         if (!d) return;
-        if (typeof XLSX === 'undefined') { alert('Biblioth\u00e8que Excel non charg\u00e9e'); return; }
+        if (typeof XLSX === 'undefined') { window.showToast?.('Outils d\u2019export Excel indisponibles (connexion ?) — réessayez', 'error'); return; }
 
         const wb = XLSX.utils.book_new();
 
