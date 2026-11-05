@@ -23,6 +23,7 @@ import { Storage } from '../utils/storage.js';
 import { Share } from '../utils/share.js';
 import { Market } from '../utils/market.js';
 import { escapeHtml } from '../utils/sanitize.js';
+import { DossierBar } from '../utils/dossierbar.js';
 
 // ── State ──
 const now = new Date();
@@ -425,10 +426,11 @@ function shareProfile() {
  * l'annuité recalculée sur (CRD, taux, durée restante) est mathématiquement
  * égale à l'annuité contractuelle.
  */
-function sendToCovenants() {
+/** Crédits vivants ou à venir au format Covenants (k€, durée résiduelle). */
+function liveDebtsForCovenants() {
     const agg = computeAll();
     const aIdx = analysisIdx();
-    const debts = agg.schedules
+    return agg.schedules
         .filter(s => s.crdAtAnalysis > 0 || s.sched.drawIdx > aIdx) // vivants ou à venir
         .map(s => ({
             label: s.loan.label,
@@ -440,7 +442,10 @@ function sendToCovenants() {
             frequency: s.loan.frequency
         }))
         .filter(d => d.amount > 0);
+}
 
+function sendToCovenants() {
+    const debts = liveDebtsForCovenants();
     if (!debts.length) {
         window.showToast?.('Aucun crédit actif à transférer', 'warning');
         return;
@@ -600,6 +605,7 @@ export const DebtProfileModule = {
                 <h1>Profil de Dette</h1>
                 <p>Exposition crédit et service de la dette — historique reconstitué et projection, depuis les conditions d'origine</p>
             </div>
+            ${DossierBar.html('debtprofile')}
 
             <!-- Paramètres du dossier -->
             <div class="card section">
@@ -730,6 +736,12 @@ export const DebtProfileModule = {
 
     init() {
         const body = document.getElementById('dp-loans-body');
+
+        // Dossier client : nom et dettes vivantes (CRD, durée résiduelle) → Covenants
+        DossierBar.bind({
+            toDossier: () => ({ ...(dossierName ? { name: dossierName } : {}), debts: liveDebtsForCovenants(), source: 'module Profil de dette' }),
+            fromDossier: d => { dossierName = d.name.slice(0, 80); this._rerenderInputs(); }
+        });
 
         // Taux de marché pour le pré-remplissage des nouveaux financements
         Market.getRates().then(d => { marketRates = d; }).catch(() => {});

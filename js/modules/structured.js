@@ -7,6 +7,7 @@ import { CovenantEngine } from '../utils/covenantengine.js';
 import { Storage } from '../utils/storage.js';
 import { Share } from '../utils/share.js';
 import { escapeHtml } from '../utils/sanitize.js';
+import { DossierBar } from '../utils/dossierbar.js';
 
 // ── State ──
 let emplois = [
@@ -431,6 +432,7 @@ export const StructuredModule = {
                 <h1>Financement Structuré</h1>
                 <p>Tableau Emplois-Ressources — Modélisation Sources & Uses</p>
             </div>
+            ${DossierBar.html('structured')}
 
             <!-- Données de référence -->
             <div class="card section">
@@ -618,6 +620,33 @@ export const StructuredModule = {
     },
 
     init() {
+        // Dossier client : EBITDA de référence, trésorerie, dette senior → Covenants
+        DossierBar.bind({
+            toDossier: () => {
+                const c = compute();
+                return {
+                    ebitdaLtm: ebitda,
+                    netCash: tresorerieMin,
+                    debts: tranchesSenior.map(t => ({
+                        label: `Senior ${t.label}`,
+                        amount: Math.round(trancheAmount(c.detteSenior, t)),
+                        rate: t.taux || 0,
+                        durationYears: t.duration || 1,
+                        amortType: t.frequency === 'infine' ? 'infine' : (t.amortType || 'constant'),
+                        frequency: FREQ_TO_ENGINE[t.frequency] || 'monthly'
+                    })),
+                    source: 'module Financement Structuré'
+                };
+            },
+            fromDossier: d => {
+                window._pendingReload = { type: 'structured', params: {
+                    ...(d.ebitdaLtm != null ? { ebitda: d.ebitdaLtm } : {}),
+                    ...(d.netCash != null ? { tresorerieMin: d.netCash } : {})
+                } };
+                loadFromHistory();
+            }
+        });
+
         // ── Direct inputs ──
         const bindInput = (id, setter) => {
             document.getElementById(id)?.addEventListener('input', e => {

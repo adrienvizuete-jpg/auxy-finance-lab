@@ -13,6 +13,7 @@ import { Export } from '../utils/export.js';
 import { Storage } from '../utils/storage.js';
 import { Share } from '../utils/share.js';
 import { escapeHtml } from '../utils/sanitize.js';
+import { DossierBar } from '../utils/dossierbar.js';
 
 // ── State ──
 let horizon = 5; // années
@@ -456,6 +457,7 @@ export const CovenantsModule = {
                 <h1>Covenants &amp; DSCR</h1>
                 <p>Projection du DSCR et du levier vs covenants bancaires — headroom année par année</p>
             </div>
+            ${DossierBar.html('covenants')}
 
             <!-- Hypothèses -->
             <div class="card section">
@@ -641,6 +643,37 @@ export const CovenantsModule = {
     },
 
     init() {
+        // Dossier client : prévisionnel (EBITDA → CFADS), trésorerie et dettes
+        DossierBar.bind({
+            toDossier: () => ({
+                forecast: {
+                    years: Array.from({ length: horizon }, (_, i) => `Année ${i + 1}`),
+                    ebitda: ebitdaYears.slice(0, horizon),
+                    tax: taxYears.slice(0, horizon),
+                    capex: capexYears.slice(0, horizon),
+                    wcChange: wcYears.slice(0, horizon)
+                },
+                netCash: openingCash,
+                debts: debts.map(d => ({ ...d })),
+                source: 'module Covenants'
+            }),
+            fromDossier: d => {
+                const fc = d.forecast;
+                const p = {};
+                if (fc?.ebitda?.length) {
+                    Object.assign(p, { horizon: Math.min(10, fc.ebitda.length), ebitdaYears: fc.ebitda, taxYears: fc.tax, capexYears: fc.capex, wcYears: fc.wcChange, dscrBasis: 'cfads', excludeBullet: true });
+                } else if (d.ebitdaLtm != null) {
+                    Object.assign(p, { ebitdaYears: [d.ebitdaLtm], taxYears: [], capexYears: [], wcYears: [] });
+                }
+                if (d.netCash != null) p.openingCash = d.netCash;
+                if (d.debts?.length) p.debts = d.debts;
+                loadParams(p);
+                if (d.ebitdaLtm != null && !fc?.ebitda?.length) applyGrowth();
+                this._rerenderInputs();
+                recalculate();
+            }
+        });
+
         // Hypothèses
         document.getElementById('cov-horizon')?.addEventListener('change', e => {
             horizon = parseInt(e.target.value) || 5;
