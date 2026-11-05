@@ -824,23 +824,46 @@ export const Financial = {
     },
 
     /**
-     * Ligne de Crédit Revolving
-     * @param {{ creditLine: number, utilization: number, annualRate: number, commitmentFee: number, durationMonths: number }} params
+     * Ligne de Crédit Revolving (RCF)
+     * - utilization : % moyen tiré, ou utilizationProfile : % tiré par mois
+     *   (12 valeurs, répétées sur la durée) pour un BFR saisonnier ;
+     * - commission de non-utilisation sur le non tiré : commitmentFee en %/an,
+     *   ou commitmentMode 'ofMargin' = commitmentFee % de la marge (ex. 35 %) ;
+     * - commission d'utilisation par paliers (utilizationFees : au-delà de
+     *   x % de tirage, +y %/an sur le tiré) ; frais de mise en place (% de la ligne).
+     * @param {{ creditLine: number, utilization?: number, utilizationProfile?: number[], annualRate: number, commitmentFee: number,
+     *   commitmentMode?: string, margin?: number, utilizationFees?: Array<{ above: number, fee: number }>, upfrontFeePct?: number, durationMonths: number }} params
      */
-    revolving({ creditLine, utilization, annualRate, commitmentFee, durationMonths }) {
+    revolving({ creditLine, utilization = 0, utilizationProfile = [], annualRate, commitmentFee, commitmentMode = 'flat', margin = 0, utilizationFees = [], upfrontFeePct = 0, durationMonths }) {
+        const n = Math.max(1, Math.round(durationMonths || 0));
         const monthlyRate = annualRate / 100 / 12;
-        const commitmentMonthly = commitmentFee / 100 / 12;
-        const utilized = creditLine * (utilization / 100);
-        const unused = creditLine - utilized;
+        const commitmentPct = commitmentMode === 'ofMargin' ? margin * commitmentFee / 100 : commitmentFee;
+        const commitmentMonthly = commitmentPct / 100 / 12;
+        const profile = (utilizationProfile || []).filter(v => isFinite(v));
+        const tiers = (utilizationFees || []).filter(t => isFinite(t.above) && isFinite(t.fee)).sort((a, b) => a.above - b.above);
+        const upfrontFee = creditLine * (upfrontFeePct || 0) / 100;
         const schedule = [];
         let totalInterest = 0;
         let totalCommitment = 0;
+        let totalUtilFee = 0;
+        let sumUtilized = 0;
+        let peak = 0;
+        let monthsAtZero = 0;
 
-        for (let i = 1; i <= durationMonths; i++) {
+        for (let i = 1; i <= n; i++) {
+            const pct = Math.min(100, Math.max(0, profile.length ? profile[(i - 1) % profile.length] : utilization));
+            const utilized = creditLine * pct / 100;
+            const unused = creditLine - utilized;
             const interest = utilized * monthlyRate;
             const commitment = unused * commitmentMonthly;
+            const tier = tiers.filter(t => pct > t.above).pop();
+            const utilFee = tier ? utilized * tier.fee / 100 / 12 : 0;
             totalInterest += interest;
             totalCommitment += commitment;
+            totalUtilFee += utilFee;
+            sumUtilized += utilized;
+            peak = Math.max(peak, utilized);
+            if (utilized === 0) monthsAtZero++;
 
             schedule.push({
                 period: i,
@@ -848,24 +871,64 @@ export const Financial = {
                 unused,
                 interest,
                 commitmentFee: commitment,
-                totalCost: interest + commitment,
+                utilizationFee: utilFee,
+                totalCost: interest + commitment + utilFee,
                 totalInterest,
                 totalCommitment
             });
         }
 
+        const avgUtilized = sumUtilized / n;
+        const totalCost = totalInterest + totalCommitment + totalUtilFee + upfrontFee;
         return {
-            monthlyInterest: utilized * monthlyRate,
-            monthlyCommitment: unused * commitmentMonthly,
-            monthlyCost: utilized * monthlyRate + unused * commitmentMonthly,
+            monthlyInterest: schedule[0].interest,
+            monthlyCommitment: schedule[0].commitmentFee,
+            monthlyCost: totalCost / n,
             totalInterest,
             totalCommitment,
-            totalCost: totalInterest + totalCommitment,
-            // Coût annualisé rapporté au montant tiré ; sans tirage, seul le coût
+            totalUtilizationFee: totalUtilFee,
+            upfrontFee,
+            totalCost,
+            avgUtilized,
+            peakUtilized: peak,
+            monthsAtZero,
+            commitmentRate: commitmentPct,
+            // Coût annualisé rapporté au tiré moyen ; sans tirage, seul le coût
             // de la ligne (commission de non-utilisation) a un sens.
-            effectiveRate: utilized > 0 && durationMonths > 0 ? ((totalInterest + totalCommitment) / utilized / durationMonths * 12) * 100 : null,
-            lineCostRate: creditLine > 0 && durationMonths > 0 ? ((totalInterest + totalCommitment) / creditLine / durationMonths * 12) * 100 : null,
+            effectiveRate: avgUtilized > 0 ? (totalCost / avgUtilized / n * 12) * 100 : null,
+            lineCostRate: creditLine > 0 ? (totalCost / creditLine / n * 12) * 100 : null,
             schedule
+        };
+    },
+
+    /**
+     * Comparatif de financement du poste clients (BFR) : affacturage,
+     * mobilisation Dailly / escompte, RCF. Coûts annuels, base Exact/360.
+     * @param {{
+     *   turnover: number, dso: number, index: number,
+     *   factoring: { commissionPct: number, margin: number, reservePct: number, fixedFees?: number },
+     *   dailly: { margin: number, advancePct: number, feePerBatch?: number, batchesPerYear?: number },
+     *   rcf: { margin: number, commitmentPctOfMargin: number, upfrontFeePct?: number, line?: number, years?: number }
+     * }} p turnover = CA TTC confié / mobilisé (€/an), dso en jours, index Euribor (%)
+     */
+    bfrComparison({ turnover, dso, index, factoring, dailly, rcf }) {
+        const receivables = Math.max(0, turnover) * Math.max(0, dso) / 365;
+        const dc = 365 / 360;
+        const fFin = receivables * (1 - (factoring.reservePct || 0) / 100);
+        const fCost = turnover * (factoring.commissionPct || 0) / 100 + fFin * (index + factoring.margin) / 100 * dc + (factoring.fixedFees || 0);
+        const dFin = receivables * (dailly.advancePct ?? 100) / 100;
+        const dCost = dFin * (index + dailly.margin) / 100 * dc + (dailly.feePerBatch || 0) * (dailly.batchesPerYear || 0);
+        const line = Math.max(rcf.line || 0, dFin);
+        const rCommit = (line - dFin) * (rcf.margin * (rcf.commitmentPctOfMargin || 0) / 100) / 100;
+        const rCost = dFin * (index + rcf.margin) / 100 * dc + rCommit + line * (rcf.upfrontFeePct || 0) / 100 / Math.max(1, rcf.years || 1);
+        const row = (/** @type {string} */ name, /** @type {number} */ fin, /** @type {number} */ cost, /** @type {string} */ note) => ({ name, financed: fin, cost, ratePct: fin > 0 ? cost / fin * 100 : null, note });
+        return {
+            receivables,
+            solutions: [
+                row('Affacturage', fFin, fCost, 'commission sur le CA cédé + financement ; inclut en général gestion du poste clients et assurance-crédit'),
+                row('Dailly / escompte', dFin, dCost, 'mobilisation des créances, pas de délégation de gestion'),
+                row('RCF', dFin, rCost, `ligne de ${Math.round(line).toLocaleString('fr-FR')} €, non-utilisation et frais de mise en place inclus`)
+            ]
         };
     },
 

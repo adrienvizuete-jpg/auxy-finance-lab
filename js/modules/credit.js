@@ -22,6 +22,7 @@ const CREDIT_TYPES = [
     { id: 'relais', label: 'Prêt Relais', desc: 'Court terme, intérêts capitalisés' },
     { id: 'mezzanine', label: 'Dette Mezzanine', desc: 'Cash + PIK + equity kicker' },
     { id: 'variable', label: 'Taux variable', desc: 'Euribor + marge, floor, couverture, Exact/360' },
+    { id: 'bfr', label: 'BFR : comparatif', desc: 'Affacturage, Dailly / escompte, RCF — coût du financement du poste clients' },
     { id: 'tranching', label: 'Tranching', desc: 'Financement multi-tranches (LBO)' }
 ];
 
@@ -43,6 +44,7 @@ const DEFAULTS = {
     relais: { 'cr-principal': 300000, 'cr-salePrice': 450000, 'cr-rate': 5.0, 'cr-duration': 18, 'cr-capitalized': false, 'cr-fees': 0 },
     mezzanine: { 'cr-principal': 2000000, 'cr-duration': 60, 'cr-rate': 8.0, 'cr-pikRate': 4.0, 'cr-kicker': 5.0, 'cr-fees': 0, 'cr-pik-compounding': 'annual' },
     variable: { 'cr-principal': 5000000, 'cr-duration': 84, 'cr-frequency': 'quarterly', 'cr-vamort': 'constant', 'cr-margin': 2.25, 'cr-upfront': 1.0 },
+    bfr: {},
     tranching: {}
 };
 
@@ -248,6 +250,11 @@ function getRequiredFields(type) {
                 { id: 'cr-rate', label: 'Taux', min: 0 },
                 { id: 'cr-duration', label: 'Durée', min: 1 }
             ];
+        case 'bfr':
+            return [
+                { id: 'cr-principal', label: 'CA confié', min: 1 },
+                { id: 'cr-dso', label: 'Délai clients', min: 1 }
+            ];
         case 'variable':
             return [
                 { id: 'cr-principal', label: 'Montant', min: 1 },
@@ -405,7 +412,7 @@ function getFormHTML(type) {
                 <div class="form-row">
                     <div class="form-group">
                         <label class="form-label">Marge (%)</label>
-                        <div class="input-group"><input type="number" class="form-input" id="cr-margin" value="2.25" min="0" max="20" step="0.05"><span class="input-suffix">%</span></div>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-margin" value="2.25" min="0" max="20" step="any"><span class="input-suffix">%</span></div>
                     </div>
                     <div class="form-group">
                         <label class="form-label" title="Une valeur par année, séparées par / ; la dernière est prolongée">Euribor par année (%)</label>
@@ -443,7 +450,7 @@ function getFormHTML(type) {
                     </div>
                     <div class="form-group">
                         <label class="form-label">Taux swap / strike cap (%)</label>
-                        <div class="input-group"><input type="number" class="form-input" id="cr-hedge-rate" value="2.80" min="-1" max="15" step="0.05"><span class="input-suffix">%</span></div>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-hedge-rate" value="2.80" min="-1" max="15" step="any"><span class="input-suffix">%</span></div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Prime du cap (% du couvert)</label>
@@ -451,7 +458,7 @@ function getFormHTML(type) {
                     </div>
                     <div class="form-group">
                         <label class="form-label">Frais d'arrangement (%)</label>
-                        <div class="input-group"><input type="number" class="form-input" id="cr-upfront" value="1.0" min="0" max="10" step="0.05"><span class="input-suffix">%</span></div>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-upfront" value="1.0" min="0" max="10" step="any"><span class="input-suffix">%</span></div>
                     </div>
                 </div>`;
 
@@ -549,9 +556,19 @@ function getFormHTML(type) {
                         </div>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Commission d'engagement (%/an)</label>
+                        <label class="form-label">Commission de non-utilisation</label>
                         <div class="input-group">
-                            <input type="number" class="form-input" id="cr-commitment" value="0.5" min="0" max="5" step="0.1">
+                            <input type="number" class="form-input" id="cr-commitment" value="0.5" min="0" max="100" step="any">
+                            <select class="form-select" id="cr-commitment-mode" style="max-width:150px">
+                                <option value="flat">%/an du non tiré</option>
+                                <option value="ofMargin">% de la marge</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Marge (pour « % de la marge »)</label>
+                        <div class="input-group">
+                            <input type="number" class="form-input" id="cr-rcf-margin" value="1.5" min="0" max="20" step="any">
                             <span class="input-suffix">%</span>
                         </div>
                     </div>
@@ -562,6 +579,59 @@ function getFormHTML(type) {
                             <span class="input-suffix">mois</span>
                         </div>
                     </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:2">
+                        <label class="form-label" title="12 valeurs de janvier à décembre, séparées par / ; vide = taux d'utilisation constant">Profil de tirage mensuel (% de la ligne)</label>
+                        <input type="text" class="form-input" id="cr-rcf-profile" value="" placeholder="ex. 20/30/60/80/90/70/40/20/10/0/30/50">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" title="Au-delà de x % de tirage : +y %/an sur le tiré, ex. 33:0,10 / 66:0,20">Commission d'utilisation (paliers)</label>
+                        <input type="text" class="form-input" id="cr-rcf-tiers" value="" placeholder="33:0,10 / 66:0,20">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Frais de mise en place (% ligne)</label>
+                        <div class="input-group">
+                            <input type="number" class="form-input" id="cr-upfront" value="0" min="0" max="5" step="any">
+                            <span class="input-suffix">%</span>
+                        </div>
+                    </div>
+                </div>`;
+
+        case 'bfr':
+            return `
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">CA TTC confié / mobilisable (€/an)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-principal" value="12000000" min="0" step="10000"><span class="input-suffix">€</span></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Délai de paiement clients (jours)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-dso" value="60" min="0" max="365" step="5"><span class="input-suffix">j</span></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Euribor 3M (%)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-bfr-index" value="2.75" step="any"><span class="input-suffix">%</span></div>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label class="form-label">Affacturage : commission (% CA)</label><input type="number" class="form-input" id="cr-fact-comm" value="0.25" step="any" min="0"></div>
+                    <div class="form-group"><label class="form-label">Affacturage : marge (%)</label><input type="number" class="form-input" id="cr-fact-margin" value="1.20" step="any" min="0"></div>
+                    <div class="form-group"><label class="form-label">Retenue de garantie (%)</label><input type="number" class="form-input" id="cr-fact-reserve" value="10" step="1" min="0" max="50"></div>
+                    <div class="form-group"><label class="form-label">Frais fixes affacturage (€/an)</label><input type="number" class="form-input" id="cr-fact-fixed" value="3000" step="500" min="0"></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label class="form-label">Dailly : marge (%)</label><input type="number" class="form-input" id="cr-dailly-margin" value="1.00" step="any" min="0"></div>
+                    <div class="form-group"><label class="form-label">Quotité financée (%)</label><input type="number" class="form-input" id="cr-dailly-advance" value="80" step="5" min="0" max="100"></div>
+                    <div class="form-group"><label class="form-label">Frais par bordereau (€) × nb/an</label>
+                        <div style="display:flex;gap:4px"><input type="number" class="form-input" id="cr-dailly-fee" value="50" step="10" min="0"><input type="number" class="form-input" id="cr-dailly-batches" value="24" step="1" min="0"></div></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label class="form-label">RCF : marge (%)</label><input type="number" class="form-input" id="cr-rcfc-margin" value="1.50" step="any" min="0"></div>
+                    <div class="form-group"><label class="form-label">Non-utilisation (% de la marge)</label><input type="number" class="form-input" id="cr-rcfc-commit" value="35" step="5" min="0"></div>
+                    <div class="form-group"><label class="form-label">Taille de ligne (€)</label><input type="number" class="form-input" id="cr-rcfc-line" value="2500000" step="50000" min="0"></div>
+                    <div class="form-group"><label class="form-label">Frais de mise en place (%) / durée (ans)</label>
+                        <div style="display:flex;gap:4px"><input type="number" class="form-input" id="cr-rcfc-upfront" value="0.50" step="any" min="0"><input type="number" class="form-input" id="cr-rcfc-years" value="3" step="1" min="1"></div></div>
                 </div>`;
 
         case 'relais':
@@ -866,6 +936,16 @@ function getResultsHTML(type, result) {
                         <div class="result-value">${f(result.totalCost)}</div>
                     </div>
                     <div class="result-item">
+                        <div class="result-label">Tiré moyen / pic</div>
+                        <div class="result-value">${f(result.avgUtilized)}</div>
+                        <div class="result-sub">pic ${f(result.peakUtilized)} · ${result.monthsAtZero > 0 ? `${result.monthsAtZero} mois à zéro (clean-down possible)` : 'aucun mois à zéro (clean-down non respecté)'}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-label">Commissions d'utilisation / frais</div>
+                        <div class="result-value">${f(result.totalUtilizationFee + result.upfrontFee)}</div>
+                        <div class="result-sub">non-utilisation au taux de ${p(result.commitmentRate)}</div>
+                    </div>
+                    <div class="result-item">
                         <div class="result-label">Taux effectif (sur le tiré)</div>
                         <div class="result-value">${p(result.effectiveRate)}</div>
                         <div class="result-sub">Coût rapporté à la ligne : ${p(result.lineCostRate)}</div>
@@ -937,6 +1017,21 @@ function getResultsHTML(type, result) {
                     </div>
                     ${taegItem(result)}
                 </div>`;
+
+        case 'bfr': {
+            const best = result.solutions.reduce((a, b) => ((b.ratePct ?? Infinity) < (a.ratePct ?? Infinity) ? b : a));
+            return `
+                <div class="results-grid">
+                    <div class="result-item"><div class="result-label">Encours clients moyen</div><div class="result-value">${f(result.receivables)}</div><div class="result-sub">CA TTC × délai / 365</div></div>
+                </div>
+                <div class="table-container" style="margin-top:12px">
+                    <table class="data-table">
+                        <thead><tr><th>Solution</th><th style="text-align:right">Financement moyen</th><th style="text-align:right">Coût annuel</th><th style="text-align:right">Coût / financement</th><th>Remarque</th></tr></thead>
+                        <tbody>${result.solutions.map(x => `<tr style="${x === best ? 'font-weight:700' : ''}"><td>${x.name}${x === best ? ' ★' : ''}</td><td class="number">${f(x.financed)}</td><td class="number">${f(x.cost)}</td><td class="number">${p(x.ratePct)}</td><td style="font-size:0.8rem;color:var(--text-muted)">${escapeHtml(x.note)}</td></tr>`).join('')}</tbody>
+                    </table>
+                </div>
+                <p style="font-size:0.8rem;color:var(--text-muted);margin-top:8px">Comparaison du seul coût financier (base Exact/360). L'affacturage finance moins (retenue de garantie) mais externalise le recouvrement et l'assurance-crédit : à intégrer dans l'arbitrage.</p>`;
+        }
 
         case 'variable':
             return `
@@ -1068,7 +1163,22 @@ function runSimulation({ scroll = true } = {}) {
             result = Financial.creditBail(params);
             break;
         case 'revolving':
-            params = { creditLine: val('cr-principal'), utilization: val('cr-utilization'), annualRate: val('cr-rate'), commitmentFee: val('cr-commitment'), durationMonths: val('cr-duration') };
+            {
+                const list = txt => String(txt || '').split(/[/;|]/).map(v => Financial.parseNumber(v)).filter(v => !isNaN(v));
+                const tiers = String(document.getElementById('cr-rcf-tiers')?.value || '').split(/[/;|]/).map(part => {
+                    const [above, fee] = part.split(':').map(v => Financial.parseNumber(v));
+                    return { above, fee };
+                }).filter(t => isFinite(t.above) && isFinite(t.fee));
+                params = {
+                    creditLine: val('cr-principal'), utilization: val('cr-utilization'), annualRate: val('cr-rate'),
+                    commitmentFee: val('cr-commitment'), durationMonths: val('cr-duration'),
+                    commitmentMode: document.getElementById('cr-commitment-mode')?.value || 'flat',
+                    margin: val('cr-rcf-margin'),
+                    utilizationProfile: list(document.getElementById('cr-rcf-profile')?.value),
+                    utilizationFees: tiers,
+                    upfrontFeePct: val('cr-upfront')
+                };
+            }
             result = Financial.revolving(params);
             break;
         case 'relais':
@@ -1078,6 +1188,15 @@ function runSimulation({ scroll = true } = {}) {
         case 'mezzanine':
             params = { principal: val('cr-principal'), cashRate: val('cr-rate'), pikRate: val('cr-pikRate'), durationMonths: val('cr-duration'), equityKicker: val('cr-kicker'), fees: val('cr-fees'), pikCompounding: document.getElementById('cr-pik-compounding')?.value || 'annual' };
             result = Financial.detteMezzanine(params);
+            break;
+        case 'bfr':
+            params = {
+                turnover: val('cr-principal'), dso: val('cr-dso'), index: val('cr-bfr-index'),
+                factoring: { commissionPct: val('cr-fact-comm'), margin: val('cr-fact-margin'), reservePct: val('cr-fact-reserve'), fixedFees: val('cr-fact-fixed') },
+                dailly: { margin: val('cr-dailly-margin'), advancePct: val('cr-dailly-advance'), feePerBatch: val('cr-dailly-fee'), batchesPerYear: val('cr-dailly-batches') },
+                rcf: { margin: val('cr-rcfc-margin'), commitmentPctOfMargin: val('cr-rcfc-commit'), line: val('cr-rcfc-line'), upfrontFeePct: val('cr-rcfc-upfront'), years: val('cr-rcfc-years') }
+            };
+            result = { ...Financial.bfrComparison(params), schedule: [] };
             break;
         case 'variable': {
             const str = id => document.getElementById(id)?.value || '';
@@ -1460,6 +1579,12 @@ function shareSimulation() {
 // ── Taux de marché (hint cliquable sous le champ taux) ──
 /** Taux variable : pré-remplit la trajectoire d'index avec l'Euribor 3M publié. */
 async function prefillIndexPath() {
+    const bfrIndex = document.getElementById('cr-bfr-index');
+    if (bfrIndex) {
+        const d = await Market.getRates();
+        const v = Market.rateValue(d, 'euribor_3m');
+        if (v != null && document.contains(bfrIndex)) bfrIndex.value = String(Math.round(v * 1000) / 1000);
+    }
     const input = document.getElementById('cr-index-path');
     if (!input) return;
     const data = await Market.getRates();

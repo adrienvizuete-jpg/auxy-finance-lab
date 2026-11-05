@@ -293,3 +293,26 @@ describe('Saisie au format français (parseNumber)', () => {
         assert.ok(Number.isNaN(Financial.parseNumber('abc')));
     });
 });
+
+describe('RCF saisonnier et comparatif BFR', () => {
+    test('profil de tirage mensuel : non-utilisation en % de la marge, paliers, clean-down', () => {
+        const r = Financial.revolving({ creditLine: 1e6, utilizationProfile: [0, 50, 100], annualRate: 4, commitmentFee: 35, commitmentMode: 'ofMargin', margin: 2, utilizationFees: [{ above: 66, fee: 0.2 }], upfrontFeePct: 0.5, durationMonths: 3 });
+        approx(r.commitmentRate, 0.7, 1e-12, '35 % de 2 % de marge');
+        approx(r.totalInterest, (0 + 5e5 + 1e6) * 0.04 / 12, 1e-6, 'intérêts sur le tiré');
+        approx(r.totalCommitment, (1e6 + 5e5 + 0) * 0.007 / 12, 1e-6, 'non-utilisation');
+        approx(r.totalUtilizationFee, 1e6 * 0.002 / 12, 1e-6, 'palier > 66 % seulement au mois 3');
+        approx(r.upfrontFee, 5000, 1e-9, 'frais de mise en place');
+        assert.equal(r.monthsAtZero, 1);
+    });
+
+    test('BFR : encours = CA × DSO / 365, coût affacturage = commission + financement', () => {
+        const r = Financial.bfrComparison({ turnover: 3.65e6, dso: 60, index: 3,
+            factoring: { commissionPct: 0.3, margin: 1, reservePct: 10 },
+            dailly: { margin: 1, advancePct: 100 }, rcf: { margin: 1.5, commitmentPctOfMargin: 35, line: 6e5 } });
+        approx(r.receivables, 600000, 1e-6, 'encours');
+        const f = r.solutions[0];
+        approx(f.financed, 540000, 1e-6, 'retenue 10 %');
+        approx(f.cost, 3.65e6 * 0.003 + 540000 * 0.04 * 365 / 360, 1e-6, 'coût affacturage');
+        approx(r.solutions[1].cost, 600000 * 0.04 * 365 / 360, 1e-6, 'Dailly');
+    });
+});
