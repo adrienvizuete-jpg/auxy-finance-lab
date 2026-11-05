@@ -70,6 +70,11 @@ import { LoanEngine } from './loanengine.js';
  * @property {boolean} [excludeBullet] Remboursements in fine exclus du DSCR (refinancés)
  * @property {CovMarket} [market]
  * @property {number} [ebitdaShock] Choc sur l'EBITDA (%, négatif = baisse), stress
+ * @property {{ pct?: number, grid?: Array<{ maxLeverage: number, pct: number }> }} [cashSweep]
+ *   Balayage de l'excess cash-flow (CFADS − service) : pct fixe, ou grille selon le
+ *   levier net de l'exercice précédent ; imputé sur les dernières échéances.
+ * @property {Array<{ maxLeverage: number, margin: number }>} [marginGrid]
+ *   Grille de marge (dettes variables) selon le levier net de l'exercice précédent.
  */
 
 export const CovenantEngine = {
@@ -135,12 +140,30 @@ export const CovenantEngine = {
     /**
      * @param {CovInput} input
      */
-    project({ years, ebitda, tax = [], capex = [], wcChange = [], openingCash = 0, debts, covenantDscr, covenantLeverage, dscrBasis = 'cfads', excludeBullet = true, market = {}, ebitdaShock = 0 }) {
+    project({ years, ebitda, tax = [], capex = [], wcChange = [], openingCash = 0, debts, covenantDscr, covenantLeverage, dscrBasis = 'cfads', excludeBullet = true, market = {}, ebitdaShock = 0, cashSweep = {}, marginGrid = [] }) {
         const profiles = debts.map(d => ({ debt: d, profile: this.debtAnnualProfile(d, years, market) }));
         const shockFactor = 1 + (ebitdaShock || 0) / 100;
         const rows = [];
         let cash = openingCash || 0;
         let refinanced = 0; // in fine supposés refinancés : la dette reste au bilan
+        let swept = 0;      // remboursements anticipés cumulés (cash sweep)
+        let prevLeverage = null;
+        let crdSchedStart = debts.reduce((s, d) => s + (d.amount || 0), 0);
+        const floatingDebts = profiles.filter(p => p.debt.rateType === 'floating');
+        const sweepPctAt = (/** @type {number | null} */ lev) => {
+            const grid = (cashSweep.grid || []).filter(g => isFinite(g.maxLeverage)).sort((a, b) => a.maxLeverage - b.maxLeverage);
+            if (grid.length && lev != null) {
+                const g = grid.find(x => lev <= x.maxLeverage);
+                return (g ? g.pct : grid[grid.length - 1].pct) / 100;
+            }
+            return (cashSweep.pct || 0) / 100;
+        };
+        const marginAt = (/** @type {number | null} */ lev) => {
+            const grid = (marginGrid || []).filter(g => isFinite(g.maxLeverage)).sort((a, b) => a.maxLeverage - b.maxLeverage);
+            if (!grid.length || lev == null) return null;
+            const g = grid.find(x => lev <= x.maxLeverage);
+            return g ? g.margin : grid[grid.length - 1].margin;
+        };
 
         for (let y = 0; y < years; y++) {
             // Le choc d'EBITDA se répercute intégralement sur le CFADS (IS, capex
@@ -152,23 +175,47 @@ export const CovenantEngine = {
             const cfads = e - t - cx - wc;
 
 
-            const interest = profiles.reduce((s, p) => s + p.profile[y].interest, 0);
-            const principal = profiles.reduce((s, p) => s + p.profile[y].principal, 0);
+            const schedInterest = profiles.reduce((s, p) => s + p.profile[y].interest, 0);
+            const schedPrincipal = profiles.reduce((s, p) => s + p.profile[y].principal, 0);
             const bullet = profiles.reduce((s, p) => s + p.profile[y].bullet, 0);
             if (excludeBullet) refinanced += bullet;
-            const crd = profiles.reduce((s, p) => s + p.profile[y].crd, 0) + refinanced;
+            const crdSched = profiles.reduce((s, p) => s + p.profile[y].crd, 0) + refinanced;
+
+            // Cash sweep : l'encours remboursé par anticipation ne porte plus
+            // intérêt (au taux moyen de l'échéancier) ; imputation sur les
+            // dernières échéances → l'amortissement contractuel est inchangé
+            // tant que le CRD le permet.
+            const avgRate = crdSchedStart > 0 ? schedInterest / crdSchedStart : 0;
+            const sweepSaving = Math.min(schedInterest, swept * avgRate);
+            // Grille de marge : écart à la marge contractuelle des dettes variables
+            const ratchet = marginAt(prevLeverage);
+            const floatingCrd = floatingDebts.reduce((s, p) => s + (y === 0 ? p.debt.amount : p.profile[y - 1].crd), 0);
+            const floatingMargin = floatingDebts.length ? floatingDebts.reduce((s, p) => s + p.debt.rate * p.debt.amount, 0) / Math.max(1e-9, floatingDebts.reduce((s, p) => s + p.debt.amount, 0)) : 0;
+            const marginDelta = ratchet == null ? 0 : ratchet - floatingMargin;
+            const interest = schedInterest - sweepSaving + Math.max(0, floatingCrd - swept) * marginDelta / 100;
+            const outstandingStart = Math.max(0, crdSchedStart - swept);
+            const principal = Math.min(schedPrincipal, outstandingStart);
 
             // Service testé : le remboursement in fine est, par convention bancaire,
             // supposé refinancé — il ne pèse ni sur le DSCR ni sur la trésorerie.
-            const testedPrincipal = excludeBullet ? principal - bullet : principal;
+            const testedPrincipal = Math.max(0, excludeBullet ? principal - bullet : principal);
             const service = interest + testedPrincipal;
             const numerator = dscrBasis === 'ebitda' ? e : cfads;
             const dscr = service > 0 ? numerator / service : null;
 
-            cash = cash + cfads - service;
+            // Excess cash-flow balayé, dans la limite de l'encours restant
+            const ecf = cfads - service;
+            const remaining = Math.max(0, crdSched - swept);
+            const sweep = Math.min(remaining, Math.max(0, ecf) * sweepPctAt(prevLeverage));
+            swept += sweep;
+            const crd = Math.max(0, crdSched - swept);
+
+            cash = cash + cfads - service - sweep;
             const netDebt = crd - Math.max(0, cash);
             const leverage = e > 0 ? Math.max(0, netDebt) / e : null;
             const icr = interest > 0 ? e / interest : null;
+            prevLeverage = leverage;
+            crdSchedStart = crdSched;
 
             const headroomDscr = (dscr != null && dscr > 0 && covenantDscr > 0) ? (1 - covenantDscr / dscr) * 100 : null;
             const headroomLev = (leverage != null && covenantLeverage > 0) ? (1 - leverage / covenantLeverage) * 100 : null;
@@ -177,11 +224,17 @@ export const CovenantEngine = {
                 || (e <= 0 && crd > 0);
             const minHeadroom = Math.min(headroomDscr ?? Infinity, headroomLev ?? Infinity);
             const status = breach ? 'breach' : (minHeadroom < 10 ? 'warning' : 'ok');
+            // Equity cure : apport qui rétablit les deux ratios (compté dans le
+            // CFADS pour le DSCR et en réduction de dette nette pour le levier)
+            const cureDscr = dscr != null && dscr < covenantDscr ? covenantDscr * service - numerator : 0;
+            const cureLev = leverage != null && leverage > covenantLeverage ? netDebt - covenantLeverage * e : 0;
+            const equityCure = Math.max(0, cureDscr, cureLev);
 
             rows.push({
                 year: y + 1, ebitda: e, tax: t, capex: cx, wcChange: wc, cfads,
                 service, interest, principal: testedPrincipal, bullet, crd,
-                cash, netDebt, dscr, leverage, icr, headroomDscr, headroomLev, status
+                cash, netDebt, dscr, leverage, icr, headroomDscr, headroomLev, status,
+                sweep, sweepSaving, marginDelta, equityCure
             });
         }
 
@@ -192,6 +245,37 @@ export const CovenantEngine = {
         const globalStatus = rows.some(r => r.status === 'breach') ? 'breach' : (rows.some(r => r.status === 'warning') ? 'warning' : 'ok');
 
         return { years, rows, minDscrRow, maxLevRow, globalStatus, profiles };
+    },
+
+    /**
+     * Dimensionnement inverse : dette senior maximale compatible avec un
+     * levier net d'entrée et un DSCR minimum sur tout l'horizon, pour une
+     * répartition donnée entre tranches (share en %).
+     * @param {Omit<CovInput, 'debts'> & { tranches: Array<CovDebt & { share: number }>, otherDebts?: CovDebt[], entryEbitda: number, entryNetOther?: number }} input
+     *   entryNetOther : autre dette nette à l'entrée (dette non refinancée − trésorerie)
+     */
+    maxDebt(input) {
+        const { tranches, otherDebts = [], entryEbitda, entryNetOther = 0, covenantDscr, covenantLeverage } = input;
+        const totalShare = tranches.reduce((s, t) => s + (t.share || 0), 0) || 100;
+        const debtsFor = (/** @type {number} */ amount) => [
+            ...tranches.map(t => ({ ...t, amount: amount * (t.share || 0) / totalShare })),
+            ...otherDebts
+        ];
+        const byLeverage = Math.max(0, covenantLeverage * entryEbitda - entryNetOther);
+        const dscrOk = (/** @type {number} */ amount) => this.project({ ...input, debts: debtsFor(amount), covenantLeverage: Infinity })
+            .rows.every(r => r.dscr == null || r.dscr >= covenantDscr);
+        let byDscr;
+        if (!dscrOk(0)) byDscr = 0;
+        else {
+            let lo = 0, hi = Math.max(1, entryEbitda) * 20;
+            if (dscrOk(hi)) byDscr = hi;
+            else {
+                for (let i = 0; i < 50; i++) { const mid = (lo + hi) / 2; if (dscrOk(mid)) lo = mid; else hi = mid; }
+                byDscr = lo;
+            }
+        }
+        const max = Math.min(byLeverage, byDscr);
+        return { byLeverage, byDscr, max, binding: byDscr < byLeverage ? 'dscr' : 'leverage' };
     },
 
     /**

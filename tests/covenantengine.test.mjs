@@ -98,3 +98,41 @@ describe('Covenants — taux variable et stress inversé', () => {
         assert.ok(/** @type {number} */ (CovenantEngine.breakevenIndexRise(input)) > 0);
     });
 });
+
+describe('Covenants LBO — cash sweep, grille de marge, equity cure, dimensionnement', () => {
+    const senior = { label: 'Senior', amount: 5000, rate: 5, durationYears: 5, amortType: 'degressif', frequency: 'annual' };
+    const input = { years: 5, ebitda: [2000, 2000, 2000, 2000, 2000], debts: [senior], covenantDscr: 1.2, covenantLeverage: 3.5 };
+
+    test('sweep 50 % : moitié de l\'excess cash-flow remboursée, CRD et intérêts réduits', () => {
+        const base = CovenantEngine.project(input);
+        const sw = CovenantEngine.project({ ...input, cashSweep: { pct: 50 } });
+        const ecf1 = base.rows[0].cfads - base.rows[0].service;
+        near(sw.rows[0].sweep, ecf1 * 0.5, 1e-6);
+        near(sw.rows[0].crd, base.rows[0].crd - ecf1 * 0.5, 1e-6);
+        assert.ok(sw.rows[1].interest < base.rows[1].interest, 'économie d\'intérêts l\'année suivante');
+        near(sw.rows[1].sweepSaving, ecf1 * 0.5 * 0.05, 1e-6);
+    });
+
+    test('grille de sweep selon le levier : 0 % sous 1,5x', () => {
+        const r = CovenantEngine.project({ ...input, cashSweep: { grid: [{ maxLeverage: 1.5, pct: 0 }, { maxLeverage: 99, pct: 75 }] } });
+        assert.ok(r.rows[0].sweep === 0, 'année 1 : pas de levier connu → grille non appliquée');
+        assert.ok(r.rows.some(x => x.sweep > 0), 'levier > 1,5x : sweep à 75 %');
+    });
+
+    test('equity cure : apport qui ramène le DSCR au covenant', () => {
+        const r = CovenantEngine.project({ ...input, ebitda: [1000, 1000, 1000, 1000, 1000] });
+        const row = r.rows[0];
+        assert.equal(row.status, 'breach');
+        near(row.equityCure, Math.max(1.2 * row.service - row.cfads, row.netDebt - 3.5 * row.ebitda), 1e-6);
+    });
+
+    test('dimensionnement inverse : contrainte de levier ou de DSCR', () => {
+        const tranches = [{ ...senior, amount: 0, share: 100 }];
+        const r = CovenantEngine.maxDebt({ ...input, tranches, entryEbitda: 2000 });
+        near(r.byLeverage, 7000, 1e-9);
+        // à la dette trouvée, le DSCR minimum vaut le covenant (à la précision près)
+        const at = CovenantEngine.project({ ...input, debts: [{ ...senior, amount: r.byDscr }], covenantLeverage: Infinity });
+        near(Math.min(...at.rows.map(x => x.dscr)), 1.2, 1e-4);
+        assert.equal(r.max, Math.min(r.byLeverage, r.byDscr));
+    });
+});

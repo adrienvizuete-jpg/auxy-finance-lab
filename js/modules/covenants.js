@@ -31,6 +31,18 @@ let excludeBullet = true; // in fine supposés refinancés : hors DSCR
 let indexPath = [];       // vide → Euribor 3M publié (rates.json)
 let swapRate = 2.8;
 let floorZero = true;
+// Mécanismes LBO : balayage de l'excess cash-flow et grille de marge
+let sweepPct = 0;          // % fixe de l'ECF
+let sweepGridText = '';    // ex. « 2,5:50 / 99:75 » (levier max : %)
+let marginGridText = '';   // ex. « 2:2,00 / 3:2,50 / 99:3,00 » (levier max : marge)
+
+/** « 2,5:50 / 99:75 » → [{ maxLeverage: 2.5, value: 50 }, …] */
+function parseGrid(text) {
+    return String(text || '').split(/[/;|]/).map(part => {
+        const [lev, val] = part.split(':').map(v => Financial.parseNumber(v));
+        return { maxLeverage: lev, value: val };
+    }).filter(g => isFinite(g.maxLeverage) && isFinite(g.value));
+}
 let debts = [
     { label: 'Tranche A', amount: 8225, rate: 3.5, durationYears: 6, amortType: 'constant', frequency: 'monthly' },
     { label: 'Tranche B', amount: 3525, rate: 4.5, durationYears: 7, amortType: 'constant', frequency: 'monthly' }
@@ -76,7 +88,9 @@ function covInput() {
         covenantLeverage,
         dscrBasis,
         excludeBullet,
-        market: { indexPath: indexPath.length ? indexPath : [marketIndex ?? 0], swapRate, floor: floorZero ? 0 : null }
+        market: { indexPath: indexPath.length ? indexPath : [marketIndex ?? 0], swapRate, floor: floorZero ? 0 : null },
+        cashSweep: { pct: sweepPct, grid: parseGrid(sweepGridText).map(g => ({ maxLeverage: g.maxLeverage, pct: g.value })) },
+        marginGrid: parseGrid(marginGridText).map(g => ({ maxLeverage: g.maxLeverage, margin: g.value }))
     };
 }
 
@@ -182,6 +196,9 @@ function renderResultsTable(c) {
                     <tr><td>Dette nette</td>${cell(fmtK, 'netDebt')}</tr>
                     <tr><td><strong>Levier net</strong> <span class="cov-covenant-ref">(covenant ≤ ${fmtX(covenantLeverage)})</span></td>${levCell}</tr>
                     <tr><td>Marge levier <span class="cov-covenant-ref">(baisse d'EBITDA supportable)</span></td>${levHeadroomCell}</tr>
+                    ${cols.some(r => r.sweep > 0) ? `<tr><td>Cash sweep (remboursement anticipé)</td>${cell(fmtK, 'sweep')}</tr>` : ''}
+                    ${cols.some(r => r.marginDelta) ? `<tr><td style="color:var(--text-muted)">Ajustement de marge (pts)</td>${cols.map(r => `<td class="number" style="color:var(--text-muted)">${r.marginDelta ? (r.marginDelta > 0 ? '+' : '') + Financial.formatNumber(r.marginDelta, 2) : '—'}</td>`).join('')}</tr>` : ''}
+                    ${cols.some(r => r.equityCure > 0) ? `<tr><td><strong>Equity cure nécessaire</strong> <span class="cov-covenant-ref">(apport pour rétablir les ratios)</span></td>${cols.map(r => `<td class="number" style="color:${r.equityCure > 0 ? 'var(--danger)' : 'var(--text-muted)'}">${r.equityCure > 0 ? fmtK(r.equityCure) : '—'}</td>`).join('')}</tr>` : ''}
                     <tr class="cov-sep"><td>Statut</td>${cols.map(r => `<td style="text-align:right">${STATUS_BADGE[r.status]}</td>`).join('')}</tr>
                 </tbody>
             </table>
@@ -233,6 +250,9 @@ function recalculate() {
             indexPath: [...indexPath],
             swapRate,
             floorZero,
+            sweepPct,
+            sweepGridText,
+            marginGridText,
             growthPct,
             covenantDscr,
             covenantLeverage,
@@ -318,7 +338,7 @@ function exportExcel() {
         [''],
         ['k€', ...c.rows.map(r => `Année ${r.year}`)]
     ];
-    const R = { ebitda: 9, tax: 10, capex: 11, wc: 12, cfads: 13, service: 14, interest: 15, dscr: 16, mDscr: 17, crd: 18, cash: 19, net: 20, lev: 21, mLev: 22, icr: 23, status: 24 };
+    const R = { ebitda: 9, tax: 10, capex: 11, wc: 12, cfads: 13, service: 14, interest: 15, dscr: 16, mDscr: 17, crd: 18, cash: 19, net: 20, lev: 21, mLev: 22, icr: 23, status: 24, sweep: 25, cure: 26 };
     const line = (label, fn) => [label, ...c.rows.map((r, i) => fn(r, i, col(i)))];
     const num1 = dscrBasis === 'ebitda' ? R.ebitda : R.cfads;
     rows.push(line('EBITDA', r => num(Math.round(r.ebitda))));
@@ -331,13 +351,15 @@ function exportExcel() {
     rows.push(line('DSCR', (r, i, L) => ratio(r.dscr, `IF(${L}${R.service}>0,${L}${num1}/${L}${R.service},"")`)));
     rows.push(line('Marge DSCR', (r, i, L) => pct((r.headroomDscr ?? 0) / 100, `IF(N(${L}${R.dscr})>0,1-$B$3/${L}${R.dscr},"")`)));
     rows.push(line('CRD fin d\'année', r => num(Math.round(r.crd))));
-    rows.push(line('Trésorerie fin d\'année', (r, i, L) => num(r.cash, `${i === 0 ? '$B$5' : `${col(i - 1)}${R.cash}`}+${L}${R.cfads}-${L}${R.service}`)));
+    rows.push(line('Trésorerie fin d\'année (après sweep)', (r, i, L) => num(r.cash, `${i === 0 ? '$B$5' : `${col(i - 1)}${R.cash}`}+${L}${R.cfads}-${L}${R.service}-${L}${R.sweep}`)));
     rows.push(line('Dette nette', (r, i, L) => num(r.netDebt, `${L}${R.crd}-MAX(0,${L}${R.cash})`)));
     rows.push(line('Levier net', (r, i, L) => ratio(r.leverage, `IF(${L}${R.ebitda}>0,MAX(0,${L}${R.net})/${L}${R.ebitda},"")`)));
     rows.push(line('Marge levier', (r, i, L) => pct((r.headroomLev ?? 0) / 100, `IF(N(${L}${R.lev})>0,1-${L}${R.lev}/$B$4,"")`)));
     rows.push(line('ICR (EBITDA / intérêts)', (r, i, L) => ratio(r.icr, `IF(${L}${R.interest}>0,${L}${R.ebitda}/${L}${R.interest},"")`)));
     rows.push(line('Statut', (r, i, L) => ({ t: 's', v: ({ ok: 'Conforme', warning: 'Tendu', breach: 'BRIS' })[r.status],
         f: `IF(OR(AND(ISNUMBER(${L}${R.dscr}),${L}${R.dscr}<$B$3),AND(ISNUMBER(${L}${R.lev}),${L}${R.lev}>$B$4)),"BRIS",IF(MIN(IF(ISNUMBER(${L}${R.mDscr}),${L}${R.mDscr},1),IF(ISNUMBER(${L}${R.mLev}),${L}${R.mLev},1))<0.1,"Tendu","Conforme"))` })));
+    rows.push(line('Cash sweep (remboursement anticipé)', r => num(Math.round(r.sweep || 0))));
+    rows.push(line('Equity cure nécessaire', (r, i, L) => num(r.equityCure || 0, `MAX(0,IF(AND(ISNUMBER(${L}${R.dscr}),${L}${R.dscr}<$B$3),$B$3*${L}${R.service}-${L}${num1},0),IF(AND(ISNUMBER(${L}${R.lev}),${L}${R.lev}>$B$4),${L}${R.net}-$B$4*${L}${R.ebitda},0))`)));
     rows.push(['']);
     rows.push(['Baisse d\'EBITDA supportable (%)', c.ebitdaDropToBreach]);
     rows.push(['Hausse de l\'Euribor supportable (pts)', c.rateRiseToBreach]);
@@ -479,6 +501,9 @@ function loadParams(p) {
     if (Array.isArray(p.indexPath)) indexPath = p.indexPath.map(v => parseFloat(v)).filter(v => isFinite(v));
     if (typeof p.swapRate === 'number') swapRate = p.swapRate;
     if (typeof p.floorZero === 'boolean') floorZero = p.floorZero;
+    if (typeof p.sweepPct === 'number') sweepPct = p.sweepPct;
+    if (typeof p.sweepGridText === 'string') sweepGridText = p.sweepGridText.slice(0, 200);
+    if (typeof p.marginGridText === 'string') marginGridText = p.marginGridText.slice(0, 200);
 }
 
 // ── Module ──
@@ -621,6 +646,26 @@ export const CovenantsModule = {
                     </div>
                 </div>
                 <p style="font-size:0.8rem;color:var(--text-muted);margin:4px 0 0">Pour une ligne « Variable », la colonne taux est la marge sur Euribor ; « Couvert » est la part de l'encours swappée au taux ci-dessus.</p>
+            </div>
+
+            <!-- Mécanismes LBO -->
+            <div class="card section">
+                <div class="card-title">Mécanismes de la documentation (LBO)</div>
+                <div class="form-row" style="margin-top:12px">
+                    <div class="form-group">
+                        <label class="form-label">Cash sweep (% de l'excess cash-flow)</label>
+                        <input type="number" class="form-input" id="cov-sweep-pct" value="${sweepPct}" min="0" max="100" step="5">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" title="Levier max : % balayé, séparés par / — appliqué selon le levier de l'exercice précédent">Grille de sweep (levier : %)</label>
+                        <input type="text" class="form-input" id="cov-sweep-grid" value="${escapeHtml(sweepGridText)}" placeholder="2,5:25 / 3,5:50 / 99:75">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" title="Levier max : marge (%) des dettes variables, selon le levier de l'exercice précédent">Grille de marge (levier : marge)</label>
+                        <input type="text" class="form-input" id="cov-margin-grid" value="${escapeHtml(marginGridText)}" placeholder="2:2,00 / 3:2,50 / 99:3,00">
+                    </div>
+                </div>
+                <p style="font-size:0.8rem;color:var(--text-muted);margin:4px 0 0">Excess cash-flow = CFADS − service de la dette ; le sweep est imputé sur les dernières échéances (l'amortissement contractuel reste inchangé). La grille de sweep, si elle est saisie, remplace le % fixe.</p>
             </div>
 
             <!-- KPIs -->
@@ -777,6 +822,9 @@ export const CovenantsModule = {
             swapRate = parseFloat(e.target.value) || 0;
             recalculate();
         });
+        document.getElementById('cov-sweep-pct')?.addEventListener('input', e => { sweepPct = Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)); recalculate(); });
+        document.getElementById('cov-sweep-grid')?.addEventListener('input', e => { sweepGridText = e.target.value.slice(0, 200); recalculate(); });
+        document.getElementById('cov-margin-grid')?.addEventListener('input', e => { marginGridText = e.target.value.slice(0, 200); recalculate(); });
         document.getElementById('cov-floor')?.addEventListener('change', e => {
             floorZero = e.target.value !== 'none';
             recalculate();
@@ -805,6 +853,10 @@ export const CovenantsModule = {
                 debts[i].customProfile = String(e.target.value).split(/[/;|]/).map(v => Financial.parseNumber(v)).filter(v => !isNaN(v));
             } else {
                 debts[i][field] = isText ? e.target.value : (parseFloat(e.target.value) || 0);
+            }
+            if (field === 'amortType' && debts[i].amortType === 'custom' && !(debts[i].customProfile || []).length) {
+                const n = Math.max(1, Math.round(debts[i].durationYears || 1));
+                debts[i].customProfile = Array.from({ length: n }, () => Math.round(100 / n * 10) / 10);
             }
             // Type de taux / amortissement : la ligne change de forme
             if (e.type === 'change' && (field === 'rateType' || field === 'amortType')) {
