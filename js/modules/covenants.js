@@ -1,11 +1,11 @@
 /**
  * Auxy Partners - Covenants & DSCR prévisionnel
- * EBITDA prévisionnel multi-années × dette consolidée → DSCR, levier,
- * headroom vs covenants bancaires, année par année.
- * Unités : k€ (cohérent avec le module Financement Structuré).
+ * EBITDA → cash-flow disponible (CFADS) multi-années × dette consolidée →
+ * DSCR, levier net, ICR et marges vs covenants bancaires, année par année.
+ * Calcul : js/utils/covenantengine.js. Unités : k€.
  */
 
-import { Financial } from '../utils/financial.js';
+import { CovenantEngine } from '../utils/covenantengine.js';
 import { Charts } from '../utils/charts.js';
 import { Export } from '../utils/export.js';
 import { Storage } from '../utils/storage.js';
@@ -17,7 +17,13 @@ let horizon = 5; // années
 let ebitdaYears = [3750, 3900, 4050, 4200, 4350]; // k€
 let growthPct = 4.0;
 let covenantDscr = 1.20;  // DSCR minimum
-let covenantLeverage = 3.50; // levier maximum (CRD / EBITDA)
+let covenantLeverage = 3.50; // levier net maximum (dette nette / EBITDA)
+// Passage EBITDA → CFADS (k€ par année), pré-rempli par ratios d'EBITDA
+let taxPct = 12, capexPct = 12, wcPct = 2;
+let taxYears = [], capexYears = [], wcYears = [];
+let openingCash = 0;      // trésorerie d'ouverture (k€)
+let dscrBasis = 'cfads';  // 'cfads' (définition bancaire) | 'ebitda' (approche simplifiée)
+let excludeBullet = true; // in fine supposés refinancés : hors DSCR
 let debts = [
     { label: 'Tranche A', amount: 8225, rate: 3.5, durationYears: 6, amortType: 'constant', frequency: 'monthly' },
     { label: 'Tranche B', amount: 3525, rate: 4.5, durationYears: 7, amortType: 'constant', frequency: 'monthly' }
@@ -29,6 +35,17 @@ const FREQ_OPTIONS = { monthly: 'Mensuel', quarterly: 'Trimestriel', semiannual:
 
 const fmtK = v => new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(v);
 const fmtX = v => (v == null || !isFinite(v)) ? '—' : new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v) + 'x';
+/** Complète les lignes IS / capex / BFR jusqu'à 10 ans à partir des ratios d'EBITDA. */
+function fillCashLines(force = false) {
+    for (let i = 0; i < 10; i++) {
+        const e = ebitdaYears[i] || 0;
+        if (force || taxYears[i] == null) taxYears[i] = Math.round(e * taxPct / 100);
+        if (force || capexYears[i] == null) capexYears[i] = Math.round(e * capexPct / 100);
+        if (force || wcYears[i] == null) wcYears[i] = Math.round(e * wcPct / 100);
+    }
+}
+fillCashLines();
+
 const fmtPct1 = v => (v == null || !isFinite(v)) ? '—' : new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(v) + ' %';
 
 const X_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
@@ -36,65 +53,22 @@ const PLUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 
 // ── Moteur de calcul ──
 
-/** Échéancier d'une dette, agrégé par année (service, intérêts, CRD fin d'année) */
-function debtAnnualProfile(debt, years) {
-    const params = {
-        principal: debt.amount,
-        annualRate: debt.rate,
-        durationMonths: Math.round(debt.durationYears * 12),
-        frequency: debt.frequency
-    };
-    let result;
-    if (debt.amortType === 'infine') result = Financial.inFine(params);
-    else if (debt.amortType === 'degressif') result = Financial.amortissableDegressif(params);
-    else result = Financial.amortissableConstant(params);
-
-    const ppy = Financial.getPeriodsPerYear(debt.frequency);
-    const schedule = result.schedule || [];
-    const profile = [];
-    for (let y = 1; y <= years; y++) {
-        const rows = schedule.slice((y - 1) * ppy, y * ppy);
-        const service = rows.reduce((s, r) => s + r.payment, 0);
-        const interest = rows.reduce((s, r) => s + r.interest, 0);
-        const lastRow = schedule[Math.min(y * ppy, schedule.length) - 1];
-        const crd = (y * ppy > schedule.length) ? 0 : (lastRow?.balance ?? 0);
-        profile.push({ service, interest, principal: service - interest, crd: Math.max(0, crd) });
-    }
-    return profile;
-}
+const debtAnnualProfile = (debt, years) => CovenantEngine.debtAnnualProfile(debt, years);
 
 function compute() {
-    const years = horizon;
-    const ebitda = ebitdaYears.slice(0, years);
-    const profiles = debts.map(d => ({ debt: d, profile: debtAnnualProfile(d, years) }));
-
-    const rows = [];
-    for (let y = 0; y < years; y++) {
-        const service = profiles.reduce((s, p) => s + p.profile[y].service, 0);
-        const interest = profiles.reduce((s, p) => s + p.profile[y].interest, 0);
-        const crd = profiles.reduce((s, p) => s + p.profile[y].crd, 0);
-        const e = ebitda[y] || 0;
-        const dscr = service > 0 ? e / service : null;
-        const leverage = e > 0 ? crd / e : null;
-        const headroomDscr = (dscr != null && covenantDscr > 0) ? (dscr / covenantDscr - 1) * 100 : null;
-        const headroomLev = (leverage != null && covenantLeverage > 0) ? (1 - leverage / covenantLeverage) * 100 : null;
-
-        const breach = (dscr != null && dscr < covenantDscr) || (leverage != null && leverage > covenantLeverage);
-        const minHeadroom = Math.min(headroomDscr ?? Infinity, headroomLev ?? Infinity);
-        const status = breach ? 'breach' : (minHeadroom < 10 ? 'warning' : 'ok');
-
-        rows.push({ year: y + 1, ebitda: e, service, interest, principal: service - interest, crd, dscr, leverage, headroomDscr, headroomLev, status });
-    }
-
-    const withService = rows.filter(r => r.dscr != null);
-    const minDscrRow = withService.length ? withService.reduce((a, b) => a.dscr <= b.dscr ? a : b) : null;
-    const withLev = rows.filter(r => r.leverage != null);
-    const maxLevRow = withLev.length ? withLev.reduce((a, b) => a.leverage >= b.leverage ? a : b) : null;
-    const anyBreach = rows.some(r => r.status === 'breach');
-    const anyWarning = rows.some(r => r.status === 'warning');
-    const globalStatus = anyBreach ? 'breach' : (anyWarning ? 'warning' : 'ok');
-
-    return { years, rows, minDscrRow, maxLevRow, globalStatus, profiles };
+    return CovenantEngine.project({
+        years: horizon,
+        ebitda: ebitdaYears.slice(0, horizon),
+        tax: taxYears.slice(0, horizon),
+        capex: capexYears.slice(0, horizon),
+        wcChange: wcYears.slice(0, horizon),
+        openingCash,
+        debts,
+        covenantDscr,
+        covenantLeverage,
+        dscrBasis,
+        excludeBullet
+    });
 }
 
 // ── Rendus partiels ──
@@ -108,6 +82,23 @@ function renderEbitdaInputs() {
     `).join('');
 }
 
+function renderCashInputs() {
+    const line = (label, kind, arr) => `
+        <tr>
+            <td>${label}</td>
+            ${arr.slice(0, horizon).map((v, i) => `<td style="text-align:right"><input class="er-input narrow cov-cf" type="number" data-kind="${kind}" data-year="${i}" value="${v ?? 0}" step="10" style="width:80px"></td>`).join('')}
+        </tr>`;
+    return `
+        <table class="er-table">
+            <thead><tr><th>k€</th>${Array.from({ length: horizon }, (_, i) => `<th style="text-align:right">Année ${i + 1}</th>`).join('')}</tr></thead>
+            <tbody>
+                ${line('IS décaissé', 'tax', taxYears)}
+                ${line('Capex', 'capex', capexYears)}
+                ${line('Variation de BFR (+ = besoin)', 'wc', wcYears)}
+            </tbody>
+        </table>`;
+}
+
 function renderDebtRows() {
     return debts.map((d, i) => {
         const profile = debtAnnualProfile(d, 1);
@@ -117,7 +108,7 @@ function renderDebtRows() {
             <td><input class="er-input" type="text" value="${escapeHtml(d.label)}" data-field="label"></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${d.amount}" data-field="amount" step="100" min="0"></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${d.rate}" data-field="rate" step="0.1" min="0" max="30" style="width:70px"></td>
-            <td style="text-align:right"><input class="er-input narrow" type="number" value="${d.durationYears}" data-field="durationYears" step="1" min="1" max="30" style="width:60px"></td>
+            <td style="text-align:right"><input class="er-input narrow" type="number" value="${d.durationYears}" data-field="durationYears" step="0.25" min="0.08" max="30" style="width:60px"></td>
             <td><select class="er-input" data-field="amortType" style="width:100px;font-size:0.75rem">${Object.entries(AMORT_OPTIONS).map(([k, v]) => `<option value="${k}" ${k === d.amortType ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
             <td><select class="er-input" data-field="frequency" style="width:100px;font-size:0.75rem">${Object.entries(FREQ_OPTIONS).map(([k, v]) => `<option value="${k}" ${k === d.frequency ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
             <td style="text-align:right" class="er-computed">${fmtK(annuity)}</td>
@@ -143,6 +134,13 @@ function renderResultsTable(c) {
         return `<td class="number" style="color:${color}">${fmtPct1(h)}</td>`;
     }).join('');
 
+    const levHeadroomCell = cols.map(r => {
+        const h = r.headroomLev;
+        const color = h == null ? 'var(--text-muted)' : (h < 0 ? 'var(--danger)' : (h < 10 ? 'var(--warning)' : 'var(--success)'));
+        return `<td class="number" style="color:${color}">${fmtPct1(h)}</td>`;
+    }).join('');
+    const basisLabel = dscrBasis === 'ebitda' ? 'EBITDA' : 'CFADS';
+
     return `
         <div class="table-container">
             <table class="data-table cov-table">
@@ -151,12 +149,19 @@ function renderResultsTable(c) {
                 </thead>
                 <tbody>
                     <tr><td>EBITDA</td>${cell(fmtK, 'ebitda')}</tr>
-                    <tr><td>Service de dette (P+I)</td>${cell(fmtK, 'service')}</tr>
+                    <tr><td style="padding-left:24px;color:var(--text-muted)">− IS, capex, ΔBFR</td>${cols.map(r => `<td class="number" style="color:var(--text-muted)">${fmtK(-(r.tax + r.capex + r.wcChange))}</td>`).join('')}</tr>
+                    <tr><td><strong>CFADS</strong></td>${cell(fmtK, 'cfads')}</tr>
+                    <tr class="cov-sep"><td>Service de dette testé (P+I)</td>${cell(fmtK, 'service')}</tr>
                     <tr><td style="padding-left:24px;color:var(--text-muted)">dont intérêts</td>${cell(fmtK, 'interest')}</tr>
-                    <tr class="cov-sep"><td><strong>DSCR</strong> <span class="cov-covenant-ref">(covenant ≥ ${fmtX(covenantDscr)})</span></td>${dscrCell}</tr>
-                    <tr><td>Headroom DSCR</td>${headroomCell}</tr>
+                    ${cols.some(r => r.bullet > 0) ? `<tr><td style="padding-left:24px;color:var(--text-muted)">In fine ${excludeBullet ? 'refinancé (hors DSCR)' : 'remboursé'}</td>${cell(fmtK, 'bullet')}</tr>` : ''}
+                    <tr class="cov-sep"><td><strong>DSCR</strong> <span class="cov-covenant-ref">(${basisLabel} / service, covenant ≥ ${fmtX(covenantDscr)})</span></td>${dscrCell}</tr>
+                    <tr><td>Marge DSCR <span class="cov-covenant-ref">(baisse de ${basisLabel} supportable)</span></td>${headroomCell}</tr>
+                    <tr><td>ICR <span class="cov-covenant-ref">(EBITDA / intérêts)</span></td>${cell(fmtX, 'icr')}</tr>
                     <tr class="cov-sep"><td>CRD fin d'année</td>${cell(fmtK, 'crd')}</tr>
-                    <tr><td><strong>Levier</strong> <span class="cov-covenant-ref">(covenant ≤ ${fmtX(covenantLeverage)})</span></td>${levCell}</tr>
+                    <tr><td>Trésorerie fin d'année</td>${cell(fmtK, 'cash')}</tr>
+                    <tr><td>Dette nette</td>${cell(fmtK, 'netDebt')}</tr>
+                    <tr><td><strong>Levier net</strong> <span class="cov-covenant-ref">(covenant ≤ ${fmtX(covenantLeverage)})</span></td>${levCell}</tr>
+                    <tr><td>Marge levier <span class="cov-covenant-ref">(baisse d'EBITDA supportable)</span></td>${levHeadroomCell}</tr>
                     <tr class="cov-sep"><td>Statut</td>${cols.map(r => `<td style="text-align:right">${STATUS_BADGE[r.status]}</td>`).join('')}</tr>
                 </tbody>
             </table>
@@ -193,6 +198,13 @@ function recalculate() {
         params: {
             horizon,
             ebitdaYears: ebitdaYears.slice(0, horizon),
+            taxYears: taxYears.slice(0, horizon),
+            capexYears: capexYears.slice(0, horizon),
+            wcYears: wcYears.slice(0, horizon),
+            taxPct, capexPct, wcPct,
+            openingCash,
+            dscrBasis,
+            excludeBullet,
             growthPct,
             covenantDscr,
             covenantLeverage,
@@ -271,13 +283,22 @@ function exportExcel() {
     debts.forEach(d => rows.push([d.label, d.amount, d.rate, d.durationYears, AMORT_OPTIONS[d.amortType], FREQ_OPTIONS[d.frequency]]));
     rows.push(['']);
     rows.push(['k€', ...c.rows.map(r => `Année ${r.year}`)]);
+    const n2 = v => (v != null && isFinite(v) ? Math.round(v * 100) / 100 : null);
     rows.push(['EBITDA', ...c.rows.map(r => Math.round(r.ebitda))]);
-    rows.push(['Service de dette', ...c.rows.map(r => Math.round(r.service))]);
+    rows.push(['IS décaissé', ...c.rows.map(r => -Math.round(r.tax))]);
+    rows.push(['Capex', ...c.rows.map(r => -Math.round(r.capex))]);
+    rows.push(['Variation de BFR', ...c.rows.map(r => -Math.round(r.wcChange))]);
+    rows.push(['CFADS', ...c.rows.map(r => Math.round(r.cfads))]);
+    rows.push(['Service de dette testé', ...c.rows.map(r => Math.round(r.service))]);
     rows.push(['dont intérêts', ...c.rows.map(r => Math.round(r.interest))]);
-    rows.push(['DSCR', ...c.rows.map(r => r.dscr != null ? Math.round(r.dscr * 100) / 100 : '—')]);
-    rows.push(['Headroom DSCR (%)', ...c.rows.map(r => r.headroomDscr != null ? Math.round(r.headroomDscr) : '—')]);
+    rows.push([`DSCR (${dscrBasis === 'ebitda' ? 'EBITDA' : 'CFADS'} / service)`, ...c.rows.map(r => n2(r.dscr))]);
+    rows.push(['Marge DSCR (%)', ...c.rows.map(r => n2(r.headroomDscr))]);
+    rows.push(['ICR (EBITDA / intérêts)', ...c.rows.map(r => n2(r.icr))]);
     rows.push(['CRD fin d\'année', ...c.rows.map(r => Math.round(r.crd))]);
-    rows.push(['Levier', ...c.rows.map(r => r.leverage != null ? Math.round(r.leverage * 100) / 100 : '—')]);
+    rows.push(['Trésorerie fin d\'année', ...c.rows.map(r => Math.round(r.cash))]);
+    rows.push(['Dette nette', ...c.rows.map(r => Math.round(r.netDebt))]);
+    rows.push(['Levier net', ...c.rows.map(r => n2(r.leverage))]);
+    rows.push(['Marge levier (%)', ...c.rows.map(r => n2(r.headroomLev))]);
     rows.push(['Statut', ...c.rows.map(r => ({ ok: 'Conforme', warning: 'Tendu', breach: 'BRIS' })[r.status])]);
 
     const ws = XLSX.utils.aoa_to_sheet(rows);
@@ -299,20 +320,27 @@ function exportPdf() {
             { label: 'Covenant Levier maximum', value: fmtX(covenantLeverage) },
             { label: 'DSCR minimum projeté', value: `${fmtX(c.dscrMin)} (année ${c.dscrMinYear ?? '—'})` },
             { label: 'Levier maximum projeté', value: `${fmtX(c.leverageMax)} (année ${c.leverageMaxYear ?? '—'})` },
-            { label: 'Statut global', value: ({ ok: 'Conforme', warning: 'Tendu (headroom < 10 %)', breach: 'BRIS DE COVENANT' })[c.globalStatus] }
+            { label: 'Statut global', value: ({ ok: 'Conforme', warning: 'Tendu (marge < 10 %)', breach: 'BRIS DE COVENANT' })[c.globalStatus] }
         ] },
+        { type: 'note', title: 'Définitions', text:
+            `DSCR = ${dscrBasis === 'ebitda' ? 'EBITDA' : 'CFADS (EBITDA − IS − capex − variation de BFR)'} / service de la dette (intérêts + amortissement contractuel${excludeBullet ? ', remboursements in fine supposés refinancés' : ''}). ` +
+            'Levier net = (CRD − trésorerie projetée) / EBITDA. Marge DSCR = baisse du numérateur supportable avant bris (1 − covenant / DSCR) ; marge levier = baisse d\'EBITDA supportable (1 − levier / covenant). ' +
+            'Test annuel sur l\'exercice ; les définitions contractuelles (EBITDA ajusté, LTM, IFRS 16) peuvent différer.' },
         { type: 'chart', canvasId: 'chart-covenants', title: 'Trajectoire EBITDA / Service de dette / DSCR' },
         { type: 'title', text: 'Projection annuelle (k€)' },
         { type: 'table',
             headers: ['', ...c.rows.map(r => `Année ${r.year}`)],
             rows: [
                 ['EBITDA', ...c.rows.map(r => fmtK(r.ebitda))],
-                ['Service de dette', ...c.rows.map(r => fmtK(r.service))],
+                ['CFADS', ...c.rows.map(r => fmtK(r.cfads))],
+                ['Service de dette testé', ...c.rows.map(r => fmtK(r.service))],
                 ['dont intérêts', ...c.rows.map(r => fmtK(r.interest))],
                 ['DSCR', ...c.rows.map(r => fmtX(r.dscr))],
-                ['Headroom DSCR', ...c.rows.map(r => fmtPct1(r.headroomDscr))],
-                ['CRD fin d\'année', ...c.rows.map(r => fmtK(r.crd))],
-                ['Levier', ...c.rows.map(r => fmtX(r.leverage))],
+                ['Marge DSCR', ...c.rows.map(r => fmtPct1(r.headroomDscr))],
+                ['ICR', ...c.rows.map(r => fmtX(r.icr))],
+                ['Dette nette', ...c.rows.map(r => fmtK(r.netDebt))],
+                ['Levier net', ...c.rows.map(r => fmtX(r.leverage))],
+                ['Marge levier', ...c.rows.map(r => fmtPct1(r.headroomLev))],
                 ['Statut', ...c.rows.map(r => ({ ok: 'Conforme', warning: 'Tendu', breach: 'BRIS' })[r.status])]
             ] },
         { type: 'title', text: 'Structure de dette (k€)' },
@@ -347,6 +375,21 @@ function loadParams(p) {
         while (ebitdaYears.length < 10) ebitdaYears.push(Math.round((ebitdaYears[ebitdaYears.length - 1] || 0)));
     }
     if (typeof p.growthPct === 'number') growthPct = p.growthPct;
+    const nums = a => (Array.isArray(a) ? a.map(v => parseFloat(v) || 0) : null);
+    if (typeof p.taxPct === 'number') taxPct = p.taxPct;
+    if (typeof p.capexPct === 'number') capexPct = p.capexPct;
+    if (typeof p.wcPct === 'number') wcPct = p.wcPct;
+    // Analyses antérieures (sans lignes de cash) : DSCR sur EBITDA conservé
+    // pour retrouver les mêmes chiffres qu'à la sauvegarde.
+    const legacy = Array.isArray(p.ebitdaYears) && !Array.isArray(p.taxYears);
+    taxYears = nums(p.taxYears) || [];
+    capexYears = nums(p.capexYears) || [];
+    wcYears = nums(p.wcYears) || [];
+    if (legacy) { taxYears = Array(10).fill(0); capexYears = Array(10).fill(0); wcYears = Array(10).fill(0); }
+    fillCashLines();
+    openingCash = parseFloat(p.openingCash) || 0;
+    dscrBasis = p.dscrBasis === 'ebitda' || legacy ? 'ebitda' : 'cfads';
+    excludeBullet = legacy ? false : p.excludeBullet !== false;
     if (typeof p.covenantDscr === 'number' && p.covenantDscr > 0) covenantDscr = p.covenantDscr;
     if (typeof p.covenantLeverage === 'number' && p.covenantLeverage > 0) covenantLeverage = p.covenantLeverage;
     if (Array.isArray(p.debts) && p.debts.length) {
@@ -354,7 +397,7 @@ function loadParams(p) {
             label: String(d.label ?? 'Dette'),
             amount: parseFloat(d.amount) || 0,
             rate: parseFloat(d.rate) || 0,
-            durationYears: Math.max(1, parseInt(d.durationYears) || 1),
+            durationYears: Math.max(1 / 12, parseFloat(d.durationYears) || 1),
             amortType: AMORT_OPTIONS[d.amortType] ? d.amortType : 'constant',
             frequency: FREQ_OPTIONS[d.frequency] ? d.frequency : 'monthly'
         }));
@@ -391,7 +434,7 @@ export const CovenantsModule = {
                         </div>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Covenant Levier maximum</label>
+                        <label class="form-label">Covenant Levier net maximum</label>
                         <div class="input-group">
                             <input type="number" class="form-input" id="cov-lev-max" value="${covenantLeverage}" min="0.5" max="10" step="0.25">
                             <span class="input-suffix">x</span>
@@ -413,6 +456,41 @@ export const CovenantsModule = {
                 </div>
                 <div class="form-row" id="cov-ebitda-inputs" style="margin-top:12px;flex-wrap:wrap">
                     ${renderEbitdaInputs()}
+                </div>
+            </div>
+
+            <!-- EBITDA → CFADS -->
+            <div class="card section">
+                <div class="card-header">
+                    <div class="card-title">Du EBITDA au cash-flow disponible (k€)</div>
+                    <div class="cov-growth-control">
+                        <span>IS</span><input type="number" class="form-input form-input-sm" id="cov-tax-pct" value="${taxPct}" step="1" style="width:60px">
+                        <span>Capex</span><input type="number" class="form-input form-input-sm" id="cov-capex-pct" value="${capexPct}" step="1" style="width:60px">
+                        <span>ΔBFR</span><input type="number" class="form-input form-input-sm" id="cov-wc-pct" value="${wcPct}" step="0.5" style="width:60px">
+                        <span>% EBITDA</span>
+                        <button class="btn btn-sm btn-outline" id="cov-apply-ratios">Appliquer</button>
+                    </div>
+                </div>
+                <div class="table-container" id="cov-cash-inputs" style="margin-top:12px">${renderCashInputs()}</div>
+                <div class="form-row" style="margin-top:12px">
+                    <div class="form-group">
+                        <label class="form-label">Trésorerie d'ouverture (k€)</label>
+                        <input type="number" class="form-input" id="cov-opening-cash" value="${openingCash}" step="100">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Numérateur du DSCR</label>
+                        <select class="form-select" id="cov-dscr-basis">
+                            <option value="cfads" ${dscrBasis === 'cfads' ? 'selected' : ''}>CFADS (définition bancaire)</option>
+                            <option value="ebitda" ${dscrBasis === 'ebitda' ? 'selected' : ''}>EBITDA (approche simplifiée)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Remboursements in fine</label>
+                        <select class="form-select" id="cov-bullet">
+                            <option value="exclude" ${excludeBullet ? 'selected' : ''}>Refinancés (hors DSCR)</option>
+                            <option value="include" ${!excludeBullet ? 'selected' : ''}>Remboursés sur le cash</option>
+                        </select>
+                    </div>
                 </div>
             </div>
 
@@ -448,11 +526,11 @@ export const CovenantsModule = {
                     <div class="kpi-value highlight" id="cov-kpi-dscr">—</div>
                 </div>
                 <div class="er-kpi-card">
-                    <div class="kpi-label">Levier maximum</div>
+                    <div class="kpi-label">Levier net maximum</div>
                     <div class="kpi-value highlight" id="cov-kpi-lev">—</div>
                 </div>
                 <div class="er-kpi-card">
-                    <div class="kpi-label">Headroom DSCR min</div>
+                    <div class="kpi-label">Marge DSCR minimale</div>
                     <div class="kpi-value" id="cov-kpi-headroom">—</div>
                 </div>
                 <div class="er-kpi-card">
@@ -494,6 +572,9 @@ export const CovenantsModule = {
             const wrap = document.getElementById('cov-ebitda-inputs');
             while (ebitdaYears.length < horizon) ebitdaYears.push(Math.round((ebitdaYears[ebitdaYears.length - 1] || 0) * (1 + growthPct / 100)));
             if (wrap) wrap.innerHTML = renderEbitdaInputs();
+            fillCashLines();
+            const cw = document.getElementById('cov-cash-inputs');
+            if (cw) cw.innerHTML = renderCashInputs();
             recalculate();
         });
         document.getElementById('cov-dscr-min')?.addEventListener('input', e => {
@@ -518,6 +599,38 @@ export const CovenantsModule = {
         });
         document.getElementById('cov-apply-growth')?.addEventListener('click', applyGrowth);
 
+        // EBITDA → CFADS
+        document.getElementById('cov-cash-inputs')?.addEventListener('input', e => {
+            const input = e.target.closest('.cov-cf');
+            if (!input) return;
+            const y = parseInt(input.dataset.year);
+            const arr = { tax: taxYears, capex: capexYears, wc: wcYears }[input.dataset.kind];
+            if (arr && !isNaN(y)) arr[y] = parseFloat(input.value) || 0;
+            recalculate();
+        });
+        const ratioInput = (id, setter) => document.getElementById(id)?.addEventListener('input', e => setter(parseFloat(e.target.value) || 0));
+        ratioInput('cov-tax-pct', v => { taxPct = v; });
+        ratioInput('cov-capex-pct', v => { capexPct = v; });
+        ratioInput('cov-wc-pct', v => { wcPct = v; });
+        document.getElementById('cov-apply-ratios')?.addEventListener('click', () => {
+            fillCashLines(true);
+            const wrap = document.getElementById('cov-cash-inputs');
+            if (wrap) wrap.innerHTML = renderCashInputs();
+            recalculate();
+        });
+        document.getElementById('cov-opening-cash')?.addEventListener('input', e => {
+            openingCash = parseFloat(e.target.value) || 0;
+            recalculate();
+        });
+        document.getElementById('cov-dscr-basis')?.addEventListener('change', e => {
+            dscrBasis = e.target.value === 'ebitda' ? 'ebitda' : 'cfads';
+            recalculate();
+        });
+        document.getElementById('cov-bullet')?.addEventListener('change', e => {
+            excludeBullet = e.target.value !== 'include';
+            recalculate();
+        });
+
         // Dettes
         const debtsBody = document.getElementById('cov-debts-body');
         const handleDebtInput = e => {
@@ -528,7 +641,7 @@ export const CovenantsModule = {
             if (isNaN(i) || !debts[i]) return;
             const isText = field === 'label' || e.target.tagName === 'SELECT';
             debts[i][field] = isText ? e.target.value : (parseFloat(e.target.value) || 0);
-            if (field === 'durationYears') debts[i].durationYears = Math.max(1, parseInt(e.target.value) || 1);
+            if (field === 'durationYears') debts[i].durationYears = Math.max(1 / 12, parseFloat(e.target.value) || 1);
             recalculate();
         };
         debtsBody?.addEventListener('input', handleDebtInput);
@@ -586,6 +699,14 @@ export const CovenantsModule = {
         if (g) g.value = growthPct;
         const eb = document.getElementById('cov-ebitda-inputs');
         if (eb) eb.innerHTML = renderEbitdaInputs();
+        const cw = document.getElementById('cov-cash-inputs');
+        if (cw) cw.innerHTML = renderCashInputs();
+        const oc = document.getElementById('cov-opening-cash');
+        if (oc) oc.value = String(openingCash);
+        const db2 = document.getElementById('cov-dscr-basis');
+        if (db2) db2.value = dscrBasis;
+        const bl = document.getElementById('cov-bullet');
+        if (bl) bl.value = excludeBullet ? 'exclude' : 'include';
         const db = document.getElementById('cov-debts-body');
         if (db) db.innerHTML = renderDebtRows();
     }

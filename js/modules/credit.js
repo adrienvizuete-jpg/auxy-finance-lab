@@ -1478,7 +1478,9 @@ function exportTranchingExcel() {
 // ── Load pending reload data ──
 function loadPendingReload() {
     const pending = window._pendingReload;
-    if (!pending) return;
+    // Ne consomme que les simulations de ce module (sinon une analyse
+    // Covenants restée en attente casserait le formulaire Crédit)
+    if (!pending || !CREDIT_TYPES.some(t => t.id === pending.type)) return;
     window._pendingReload = null;
 
     // Switch to correct type

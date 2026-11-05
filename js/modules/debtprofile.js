@@ -434,7 +434,8 @@ function sendToCovenants() {
             label: s.loan.label,
             amount: Math.round((s.crdAtAnalysis > 0 ? s.crdAtAnalysis : s.loan.amount) / 1000), // k€
             rate: s.loan.rate,
-            durationYears: Math.max(1, Math.round((s.sched.lastIdx - Math.max(aIdx, s.sched.firstIdx - 1)) / 12)),
+            // durée résiduelle exacte en mois, exprimée en années décimales
+            durationYears: Math.max(1 / 12, Math.round((s.sched.lastIdx - Math.max(aIdx, s.sched.firstIdx - 1)) / 12 * 100) / 100),
             amortType: s.loan.amortType,
             frequency: s.loan.frequency
         }))
@@ -446,7 +447,7 @@ function sendToCovenants() {
     }
     window._pendingReload = { type: 'covenants', params: { debts } };
     window.navigateTo?.('covenants');
-    window.showToast?.(`${debts.length} crédit${debts.length > 1 ? 's' : ''} transféré${debts.length > 1 ? 's' : ''} (CRD et durées résiduelles, arrondies à l'année) — renseignez l'EBITDA prévisionnel`, 'success');
+    window.showToast?.(`${debts.length} crédit${debts.length > 1 ? 's' : ''} transféré${debts.length > 1 ? 's' : ''} (CRD et durées résiduelles au mois près) — renseignez l'EBITDA prévisionnel`, 'success');
 }
 
 // ── Audit trail : justification des KPIs (« tout chiffre vérifiable ») ──

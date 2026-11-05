@@ -161,10 +161,10 @@ function reloadSimulation(id) {
     // Navigate to the appropriate page
     const PAGE_BY_TYPE = { structured: 'structured', covenants: 'covenants', debtprofile: 'debtprofile', immobilier: 'immobilier' };
     const page = PAGE_BY_TYPE[sim.type] || 'credit';
-    window.navigateTo?.(page);
 
-    // Store params to be loaded after navigation
+    // À poser AVANT la navigation : init() du module le lit de façon synchrone
     window._pendingReload = sim;
+    window.navigateTo?.(page);
     window.showToast?.('Simulation recharg\u00e9e \u2014 les param\u00e8tres ont \u00e9t\u00e9 restaur\u00e9s', 'success');
 }
 

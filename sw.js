@@ -2,7 +2,8 @@
  * Auxy Finance Lab - Service Worker (PWA)
  * Stratégies :
  *  - network-first : index.html, data/rates.json (toujours frais quand le réseau le permet)
- *  - stale-while-revalidate : assets locaux (js/css/images) et CDN (Chart.js, jsPDF, SheetJS, fonts)
+ *  - network-first : code de l'app (js/css) — jamais de mélange de versions entre modules
+ *  - stale-while-revalidate : images locales et CDN versionnés (Chart.js, jsPDF, SheetJS, fonts)
  * Incrémenter CACHE_VERSION à chaque évolution notable du front.
  */
 
@@ -25,6 +26,7 @@ const PRECACHE = [
     './js/modules/history.js',
     './js/utils/financial.js',
     './js/utils/debtengine.js',
+    './js/utils/covenantengine.js',
     './js/utils/charts.js',
     './js/utils/export.js',
     './js/utils/storage.js',
@@ -111,6 +113,13 @@ self.addEventListener('fetch', event => {
 
     // API Supabase : jamais mise en cache (données vivantes + auth)
     if (/(^|\.)supabase\.(co|in)$/.test(url.hostname)) {
+        return;
+    }
+
+    // Code de l'app : réseau d'abord (un correctif déployé s'applique au
+    // rechargement suivant, sans mélanger anciens et nouveaux modules)
+    if (sameOrigin && /\.(js|mjs|css)$/.test(url.pathname)) {
+        event.respondWith(networkFirst(request));
         return;
     }
 
