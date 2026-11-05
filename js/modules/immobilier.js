@@ -8,6 +8,7 @@ import { Financial } from '../utils/financial.js';
 import { Charts } from '../utils/charts.js';
 import { Export } from '../utils/export.js';
 import { Share } from '../utils/share.js';
+import { escapeHtml } from '../utils/sanitize.js';
 
 // =============================================
 // CONSTANTS
@@ -315,11 +316,11 @@ function getFormHTML() {
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">Nom du bien</label>
-                    <input type="text" class="form-input" value="${state.propertyName}" data-field="propertyName" placeholder="Ex: Immeuble Haussmann 75008">
+                    <input type="text" class="form-input" value="${escapeHtml(state.propertyName)}" data-field="propertyName" placeholder="Ex: Immeuble Haussmann 75008">
                 </div>
                 <div class="form-group">
                     <label class="form-label">Adresse</label>
-                    <input type="text" class="form-input" value="${state.propertyAddress}" data-field="propertyAddress" placeholder="Ex: 15 rue de la Paix, Paris">
+                    <input type="text" class="form-input" value="${escapeHtml(state.propertyAddress)}" data-field="propertyAddress" placeholder="Ex: 15 rue de la Paix, Paris">
                 </div>
             </div>
         </div>
@@ -803,7 +804,7 @@ function generateMemo() {
         <div class="memo-card">
             <h3 style="margin-bottom:16px;color:var(--text-primary);font-size:1rem">Note d'investissement — ${config.label}</h3>
             <div class="memo-section">
-                <p><strong>Bien :</strong> ${state.propertyName || 'N/A'} ${state.propertyAddress ? '— ' + state.propertyAddress : ''}</p>
+                <p><strong>Bien :</strong> ${escapeHtml(state.propertyName) || 'N/A'} ${state.propertyAddress ? '— ' + escapeHtml(state.propertyAddress) : ''}</p>
                 <p><strong>Valeur retenue :</strong> ${Financial.formatCurrency(r.propertyValue)} ${ltvSource === 'caprate' ? '(valorisation cap rate)' : '(valeur de marché)'}</p>
                 ${r.totalCost !== null ? `<p><strong>Coût total projet :</strong> ${Financial.formatCurrency(r.totalCost)}</p>` : ''}
             </div>

@@ -1165,7 +1165,7 @@ function saveSimulation() {
         <h2 style="margin-bottom:20px">Sauvegarder la simulation</h2>
         <div class="form-group" style="margin-bottom:16px">
             <label class="form-label">Nom de la simulation</label>
-            <input type="text" class="form-input" id="save-sim-name" value="${defaultName}" style="width:100%">
+            <input type="text" class="form-input" id="save-sim-name" value="${escapeHtml(defaultName)}" style="width:100%">
         </div>
         <div class="form-group" style="margin-bottom:24px">
             <label class="form-label">Notes (optionnel)</label>

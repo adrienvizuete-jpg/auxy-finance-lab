@@ -142,7 +142,7 @@ export const DashboardModule = {
                                 return `
                                     <div>
                                         <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:0.85rem">
-                                            <span>${typeLabels[type] || type}</span>
+                                            <span>${typeLabels[type] || escapeHtml(type)}</span>
                                             <span style="color:var(--text-muted)">${count} (${pct}%)</span>
                                         </div>
                                         <div class="progress-bar">

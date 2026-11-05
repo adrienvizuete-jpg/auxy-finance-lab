@@ -18,7 +18,7 @@ function renderHistory() {
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                 <h3>Aucune simulation sauvegard\u00e9e</h3>
                 <p>Vos simulations sauvegard\u00e9es appara\u00eetront ici</p>
-                <a href="#credit" class="btn btn-primary btn-sm" style="margin-top:16px" onclick="event.preventDefault(); window.navigateTo?.('credit')">Cr\u00e9er une simulation</a>
+                <a href="#credit" class="btn btn-primary btn-sm" style="margin-top:16px">Cr\u00e9er une simulation</a>
             </div>
         `;
     }
@@ -53,16 +53,16 @@ function renderHistory() {
                                     <td class="number">${Financial.formatCurrency(amount)}</td>
                                     <td>
                                         <div class="btn-group" style="justify-content:center">
-                                            <button class="btn btn-ghost btn-sm view-sim" data-id="${s.id}" title="Voir les d\u00e9tails">
+                                            <button class="btn btn-ghost btn-sm view-sim" data-id="${escapeHtml(s.id)}" title="Voir les d\u00e9tails">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                                             </button>
-                                            <button class="btn btn-ghost btn-sm reload-sim" data-id="${s.id}" title="Recharger dans le simulateur">
+                                            <button class="btn btn-ghost btn-sm reload-sim" data-id="${escapeHtml(s.id)}" title="Recharger dans le simulateur">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
                                             </button>
-                                            <button class="btn btn-ghost btn-sm export-sim" data-id="${s.id}" title="Exporter en Excel">
+                                            <button class="btn btn-ghost btn-sm export-sim" data-id="${escapeHtml(s.id)}" title="Exporter en Excel">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                                             </button>
-                                            <button class="btn btn-ghost btn-sm delete-sim" data-id="${s.id}" title="Supprimer" style="color:var(--danger)">
+                                            <button class="btn btn-ghost btn-sm delete-sim" data-id="${escapeHtml(s.id)}" title="Supprimer" style="color:var(--danger)">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
                                             </button>
                                         </div>
@@ -108,7 +108,7 @@ function showSimDetails(id) {
             if ((key === 'insuranceRate' || key === 'insuranceMode') && (!p.insuranceRate || p.insuranceRate === 0)) return;
             const label = t(key, PARAM_LABELS);
             const formatted = formatValue(key, value);
-            html += `<tr><td style="font-weight:600;color:var(--text-secondary)">${label}</td><td class="number" style="font-weight:600">${formatted}</td></tr>`;
+            html += `<tr><td style="font-weight:600;color:var(--text-secondary)">${escapeHtml(label)}</td><td class="number" style="font-weight:600">${escapeHtml(formatted)}</td></tr>`;
         });
         html += `</tbody></table></div>`;
     }
@@ -121,7 +121,7 @@ function showSimDetails(id) {
             if (typeof value === 'object' || key === 'schedule') return;
             const label = t(key, RESULT_LABELS);
             const formatted = formatValue(key, value);
-            html += `<div class="result-item"><div class="result-label">${label}</div><div class="result-value" style="font-size:1.1rem">${formatted}</div></div>`;
+            html += `<div class="result-item"><div class="result-label">${escapeHtml(label)}</div><div class="result-value" style="font-size:1.1rem">${escapeHtml(formatted)}</div></div>`;
         });
         html += `</div></div>`;
     }
