@@ -36,10 +36,10 @@ const DEFAULTS = {
     constant: { 'cr-principal': 500000, 'cr-rate': 4.5, 'cr-duration': 84, 'cr-insurance': 0, 'cr-insurance-rate': 0.30, 'cr-fees': 0, 'cr-frequency': 'monthly', 'cr-deferral': 0 },
     degressif: { 'cr-principal': 500000, 'cr-rate': 4.5, 'cr-duration': 84, 'cr-insurance': 0, 'cr-insurance-rate': 0.30, 'cr-fees': 0, 'cr-frequency': 'monthly', 'cr-deferral': 0 },
     infine: { 'cr-principal': 500000, 'cr-rate': 4.5, 'cr-duration': 84, 'cr-insurance': 0, 'cr-insurance-rate': 0.30, 'cr-fees': 0, 'cr-frequency': 'monthly' },
-    creditbail: { 'cr-principal': 500000, 'cr-deposit': 50000, 'cr-rate': 5.0, 'cr-duration': 60, 'cr-residual': 25000, 'cr-fees': 0 },
+    creditbail: { 'cr-principal': 500000, 'cr-deposit': 50000, 'cr-rate': 5.0, 'cr-duration': 60, 'cr-residual': 25000, 'cr-fees': 0, 'cr-timing': 'advance', 'cr-first-rent': 0 },
     revolving: { 'cr-principal': 1000000, 'cr-utilization': 60, 'cr-rate': 5.5, 'cr-commitment': 0.5, 'cr-duration': 12 },
     relais: { 'cr-principal': 300000, 'cr-salePrice': 450000, 'cr-rate': 5.0, 'cr-duration': 18, 'cr-capitalized': false, 'cr-fees': 0 },
-    mezzanine: { 'cr-principal': 2000000, 'cr-duration': 60, 'cr-rate': 8.0, 'cr-pikRate': 4.0, 'cr-kicker': 5.0, 'cr-fees': 0 },
+    mezzanine: { 'cr-principal': 2000000, 'cr-duration': 60, 'cr-rate': 8.0, 'cr-pikRate': 4.0, 'cr-kicker': 5.0, 'cr-fees': 0, 'cr-pik-compounding': 'annual' },
     tranching: {}
 };
 
@@ -120,6 +120,7 @@ function renderTranchingRows() {
             <td>
                 <select class="form-input form-input-sm" data-field="type">
                     <option value="constant" ${t.type === 'constant' ? 'selected' : ''}>Constant</option>
+                    <option value="degressif" ${t.type === 'degressif' ? 'selected' : ''}>Dégressif</option>
                     <option value="infine" ${t.type === 'infine' ? 'selected' : ''}>In Fine</option>
                 </select>
             </td>
@@ -225,27 +226,27 @@ function validateForm() {
 function getRequiredFields(type) {
     const base = [
         { id: 'cr-principal', label: 'Montant', min: 1 },
-        { id: 'cr-rate', label: 'Taux', min: 0.01 },
+        { id: 'cr-rate', label: 'Taux', min: 0 },
         { id: 'cr-duration', label: 'Durée', min: 1 }
     ];
     switch (type) {
         case 'creditbail':
             return [
                 { id: 'cr-principal', label: 'Valeur du bien', min: 1 },
-                { id: 'cr-rate', label: 'Taux', min: 0.01 },
+                { id: 'cr-rate', label: 'Taux', min: 0 },
                 { id: 'cr-duration', label: 'Durée', min: 1 }
             ];
         case 'revolving':
             return [
                 { id: 'cr-principal', label: 'Ligne de crédit', min: 1 },
-                { id: 'cr-rate', label: 'Taux', min: 0.01 },
+                { id: 'cr-rate', label: 'Taux', min: 0 },
                 { id: 'cr-duration', label: 'Durée', min: 1 }
             ];
         case 'relais':
             return [
                 { id: 'cr-principal', label: 'Montant du prêt', min: 1 },
                 { id: 'cr-salePrice', label: 'Prix de vente', min: 1 },
-                { id: 'cr-rate', label: 'Taux', min: 0.01 },
+                { id: 'cr-rate', label: 'Taux', min: 0 },
                 { id: 'cr-duration', label: 'Durée', min: 1 }
             ];
         default:
@@ -378,6 +379,22 @@ function getFormHTML(type) {
                         <div class="input-group">
                             <input type="number" class="form-input" id="cr-residual" value="25000" min="0" step="1">
                             <span class="input-suffix">€</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Paiement des loyers</label>
+                        <select class="form-select" id="cr-timing">
+                            <option value="advance">Terme à échoir (début de période)</option>
+                            <option value="arrears">Terme échu (fin de période)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Premier loyer majoré (% du bien)</label>
+                        <div class="input-group">
+                            <input type="number" class="form-input" id="cr-first-rent" value="0" min="0" max="50" step="1">
+                            <span class="input-suffix">%</span>
                         </div>
                     </div>
                 </div>
@@ -522,6 +539,13 @@ function getFormHTML(type) {
                             <span class="input-suffix">%</span>
                         </div>
                     </div>
+                    <div class="form-group">
+                        <label class="form-label">Capitalisation du PIK</label>
+                        <select class="form-select" id="cr-pik-compounding">
+                            <option value="annual">Annuelle</option>
+                            <option value="monthly">Mensuelle</option>
+                        </select>
+                    </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
@@ -568,7 +592,10 @@ function getFormHTML(type) {
 // Affichage TAEG : valeur, ou « n.c. » expliqué quand l'IRR ne converge pas
 function taegItem(result) {
     if (result.taeg != null) {
-        return `<div class="result-item"><div class="result-label">TAEG</div><div class="result-value">${result.taeg.toFixed(2)} %</div></div>`;
+        const teg = result.teg != null
+            ? `<div class="result-item"><div class="result-label" title="Taux de période × nombre de périodes : indicateur d'usage du crédit professionnel">TEG (proportionnel)</div><div class="result-value">${Financial.formatPercent(result.teg)}</div></div>`
+            : '';
+        return `${teg}<div class="result-item"><div class="result-label" title="Annualisation actuarielle : norme du crédit aux particuliers">TAEG (actuariel)</div><div class="result-value">${Financial.formatPercent(result.taeg)}</div></div>`;
     }
     return `<div class="result-item"><div class="result-label">TAEG</div><div class="result-value" title="TAEG non calculable : les flux de cette simulation n'admettent pas de taux actuariel unique" style="color:var(--text-muted)">n.c.</div></div>`;
 }
@@ -725,8 +752,9 @@ function getResultsHTML(type, result) {
                         <div class="result-value">${f(result.totalCost)}</div>
                     </div>
                     <div class="result-item">
-                        <div class="result-label">Taux effectif</div>
+                        <div class="result-label">Taux effectif (sur le tiré)</div>
                         <div class="result-value">${p(result.effectiveRate)}</div>
+                        <div class="result-sub">Coût rapporté à la ligne : ${p(result.lineCostRate)}</div>
                     </div>
                 </div>`;
 
@@ -790,7 +818,7 @@ function getResultsHTML(type, result) {
                         <div class="result-value">${f(result.equityKickerValue)}</div>
                     </div>
                     <div class="result-item">
-                        <div class="result-label">All-in cost</div>
+                        <div class="result-label">Coût moyen simple (non actuariel)</div>
                         <div class="result-value">${p(result.allInCost)}</div>
                     </div>
                     ${taegItem(result)}
@@ -834,7 +862,7 @@ function getResultsHTML(type, result) {
                             return `
                             <div class="card" style="padding:16px">
                                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-                                    <span class="badge badge-blue">${tr.type === 'infine' ? 'In Fine' : 'Constant'}</span>
+                                    <span class="badge badge-blue">${({ infine: 'In Fine', degressif: 'Dégressif' })[tr.type] || 'Constant'}</span>
                                     <span class="badge" style="background:var(--bg-secondary);color:var(--text-secondary);font-size:0.7rem">${freqLabels[trFreq]}</span>
                                     <strong>${escapeHtml(tr.name)}</strong>
                                 </div>
@@ -894,7 +922,7 @@ function runSimulation({ scroll = true } = {}) {
             result = Financial.inFine(params);
             break;
         case 'creditbail':
-            params = { assetValue: val('cr-principal'), deposit: val('cr-deposit'), annualRate: val('cr-rate'), durationMonths: val('cr-duration'), residualValue: val('cr-residual'), fees: val('cr-fees') };
+            params = { assetValue: val('cr-principal'), deposit: val('cr-deposit'), annualRate: val('cr-rate'), durationMonths: val('cr-duration'), residualValue: val('cr-residual'), fees: val('cr-fees'), paymentTiming: document.getElementById('cr-timing')?.value || 'advance', firstRentPct: val('cr-first-rent') };
             result = Financial.creditBail(params);
             break;
         case 'revolving':
@@ -906,7 +934,7 @@ function runSimulation({ scroll = true } = {}) {
             result = Financial.pretRelais(params);
             break;
         case 'mezzanine':
-            params = { principal: val('cr-principal'), cashRate: val('cr-rate'), pikRate: val('cr-pikRate'), durationMonths: val('cr-duration'), equityKicker: val('cr-kicker'), fees: val('cr-fees') };
+            params = { principal: val('cr-principal'), cashRate: val('cr-rate'), pikRate: val('cr-pikRate'), durationMonths: val('cr-duration'), equityKicker: val('cr-kicker'), fees: val('cr-fees'), pikCompounding: document.getElementById('cr-pik-compounding')?.value || 'annual' };
             result = Financial.detteMezzanine(params);
             break;
         case 'tranching':
@@ -918,6 +946,12 @@ function runSimulation({ scroll = true } = {}) {
     }
 
     lastResult = { type: currentType, params, results: result };
+
+    // Durée non multiple de la périodicité : le moteur arrondit au nombre de
+    // périodes le plus proche — on le dit plutôt que de le taire.
+    if (result.effectiveDurationMonths && params.durationMonths && result.effectiveDurationMonths !== Math.round(params.durationMonths)) {
+        window.showToast?.(`Durée modélisée : ${result.effectiveDurationMonths} mois (multiple de la périodicité) au lieu de ${params.durationMonths}`, 'warning');
+    }
 
     // Render results
     const resultsDiv = document.getElementById('credit-results');
@@ -949,6 +983,19 @@ function runSimulation({ scroll = true } = {}) {
                             <input type="number" class="form-input" id="ra-amount" value="100000" min="0" step="1">
                             <span class="input-suffix">€</span>
                         </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Indemnité (IRA)</label>
+                        <select class="form-select" id="ra-ira-mode">
+                            <option value="legal">Plafond légal : min(3 % CRD ; 6 mois)</option>
+                            <option value="pct">Forfait % du capital remboursé</option>
+                            <option value="months">N mois d'intérêts</option>
+                            <option value="none">Sans indemnité</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Paramètre IRA (% ou mois)</label>
+                        <input type="number" class="form-input" id="ra-ira-param" value="3" min="0" step="0.5">
                     </div>
                     <div class="form-group">
                         <label class="form-label">Stratégie</label>
@@ -1061,6 +1108,8 @@ function runPrepaymentAnalysis() {
     const period = parseInt(document.getElementById('ra-period')?.value) || 24;
     const amount = parseFloat(document.getElementById('ra-amount')?.value) || 100000;
     const strategy = document.getElementById('ra-strategy')?.value || 'reduceDuration';
+    const iraMode = document.getElementById('ra-ira-mode')?.value || 'legal';
+    const iraParam = parseFloat(document.getElementById('ra-ira-param')?.value);
 
     const analysis = Financial.prepaymentAnalysis({
         schedule: lastResult.results.schedule,
@@ -1073,6 +1122,9 @@ function runPrepaymentAnalysis() {
         insuranceMonthly: lastResult.params.insuranceMonthly,
         insuranceRate: lastResult.params.insuranceRate,
         insuranceMode: lastResult.params.insuranceMode,
+        iraMode,
+        iraPct: isNaN(iraParam) ? 3 : iraParam,
+        iraMonths: isNaN(iraParam) ? 6 : iraParam,
         type: currentType
     });
 
@@ -1102,7 +1154,12 @@ function runPrepaymentAnalysis() {
                 <div class="result-item">
                     <div class="result-label">IRA (indemnités)</div>
                     <div class="result-value" style="color:var(--danger)">${f(analysis.ira)}</div>
-                    <div class="result-sub">max(3% CRD = ${f(analysis.ira3pct)}, 6 mois int. = ${f(analysis.ira6mois)})</div>
+                    <div class="result-sub">${({
+                        legal: `min(3 % CRD = ${f(analysis.ira3pct)} ; 6 mois d'int. = ${f(analysis.ira6mois)})`,
+                        pct: 'forfait contractuel sur le capital remboursé',
+                        months: 'mois d\'intérêts sur le capital remboursé',
+                        none: 'aucune indemnité'
+                    })[analysis.iraMode] || ''}</div>
                 </div>
                 <div class="result-item">
                     <div class="result-label">Coût total du RA</div>
@@ -1424,7 +1481,7 @@ function exportTranchingExcel() {
         summaryData.push(['  Montant', Financial.formatCurrency(tr.amount)]);
         summaryData.push(['  Taux', tr.rate + ' %']);
         summaryData.push(['  Durée', tr.duration + ' mois']);
-        summaryData.push(['  Type', tr.type === 'infine' ? 'In Fine' : 'Constant']);
+        summaryData.push(['  Type', ({ infine: 'In Fine', degressif: 'Dégressif' })[tr.type] || 'Constant']);
         summaryData.push(['  Fréquence', freqLabelsExcel[tr.frequency || 'monthly']]);
         summaryData.push(['  Intérêts totaux', Financial.formatCurrency(tr.result.totalInterest)]);
         summaryData.push(['  Coût total', Financial.formatCurrency(tr.result.totalCost)]);
@@ -1516,8 +1573,16 @@ function loadPendingReload() {
             expectedSalePrice: 'cr-salePrice',
             capitalizedInterest: 'cr-capitalized',
             pikRate: 'cr-pikRate',
-            equityKicker: 'cr-kicker'
+            equityKicker: 'cr-kicker',
+            paymentTiming: 'cr-timing',
+            firstRentPct: 'cr-first-rent',
+            pikCompounding: 'cr-pik-compounding'
         };
+        // Simulations antérieures : conventions de l'époque (terme échu, PIK mensuel)
+        const legacy = { ...pending.params };
+        if (pending.type === 'creditbail' && legacy.paymentTiming == null) legacy.paymentTiming = 'arrears';
+        if (pending.type === 'mezzanine' && legacy.pikCompounding == null) legacy.pikCompounding = 'monthly';
+        pending.params = legacy;
 
         Object.entries(pending.params).forEach(([key, value]) => {
             if (key === 'insuranceMode') return; // handled below
