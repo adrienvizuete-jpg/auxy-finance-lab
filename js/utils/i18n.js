@@ -112,25 +112,93 @@ export function t(key, dict = null) {
     return PARAM_LABELS[key] || RESULT_LABELS[key] || key;
 }
 
+/** Unité de chaque clé connue — plus de format deviné d'après le nom du champ. */
+/** @type {Record<string, 'pct' | 'months' | 'eur' | 'keur' | 'x' | 'years' | 'count' | 'enum'>} */
+const KEY_FORMATS = {
+    // pourcentages
+    annualRate: 'pct', rate: 'pct', cashRate: 'pct', pikRate: 'pct', insuranceRate: 'pct', taeg: 'pct', teg: 'pct',
+    ltv: 'pct', utilization: 'pct', growthPct: 'pct', allInCost: 'pct', effectiveRate: 'pct', lineCostRate: 'pct',
+    commitmentFee: 'pct', equityKicker: 'pct', firstRentPct: 'pct', weightedRate: 'pct', pctFP: 'pct', pctSenior: 'pct',
+    taxPct: 'pct', capexPct: 'pct', wcPct: 'pct', carryingCostPct: 'pct', amortized3yPct: 'pct',
+    // durées
+    durationMonths: 'months', deferralMonths: 'months', finalRecoveryMonth: 'months', effectiveDurationMonths: 'months',
+    horizon: 'years', wal: 'years',
+    // ratios
+    dscrMin: 'x', leverageMax: 'x', covenantDscr: 'x', covenantLeverage: 'x', ratioLevier: 'x',
+    // montants en k€ (modules Structuré / Covenants)
+    ebitda: 'keur', fondsPropres: 'keur', tresorerieMin: 'keur', openingCash: 'keur', totalEmplois: 'keur',
+    totalDetteNonRef: 'keur', detteSenior: 'keur', detteFinClosing: 'keur', dfn: 'keur', veRetenue: 'keur', excesFP: 'keur',
+    // compteurs et libellés
+    dscrMinYear: 'count', leverageMaxYear: 'count', newCount: 'count',
+    frequency: 'enum', deferralType: 'enum', amortType: 'enum', paymentTiming: 'enum', pikCompounding: 'enum',
+    interestMode: 'enum', globalStatus: 'enum', dscrBasis: 'enum', strategy: 'enum', iraMode: 'enum'
+};
+
+/** @type {Record<string, string>} */
+const ENUM_LABELS = {
+    monthly: 'Mensuelle', quarterly: 'Trimestrielle', semiannual: 'Semestrielle', annual: 'Annuelle',
+    partial: 'Partiel (intérêts payés)', total: 'Total (intérêts capitalisés)',
+    constant: 'Échéances constantes', degressif: 'Amortissement constant', infine: 'In fine',
+    advance: 'Terme à échoir', arrears: 'Terme échu', periodic: 'Intérêts servis', capitalized: 'Intérêts capitalisés',
+    ok: 'Conforme', warning: 'Tendu', breach: 'Bris', cfads: 'CFADS', ebitda: 'EBITDA',
+    reduceDuration: 'Réduire la durée', reducePayment: 'Réduire les échéances',
+    legal: 'Plafond légal', pct: 'Forfait %', months: 'Mois d\u2019intérêts', none: 'Aucune'
+};
+
+const nf = (/** @type {number} */ d) => new Intl.NumberFormat('fr-FR', { minimumFractionDigits: d, maximumFractionDigits: d });
+
 /**
- * Formate une valeur selon son type d\u00e9tect\u00e9
- * @param {string} key Cl\u00e9 du param\u00e8tre/r\u00e9sultat (d\u00e9termine le format : %, mois, \u20ac)
- * @param {unknown} value Valeur brute (nombre, bool\u00e9en, cha\u00eene\u2026)
+ * Formate une valeur selon l'unité déclarée de sa clé (KEY_FORMATS).
+ * Tableaux et objets sont résumés plutôt qu'affichés « [object Object] ».
+ * @param {string} key Clé du paramètre/résultat
+ * @param {unknown} value Valeur brute (nombre, booléen, chaîne, tableau…)
  * @returns {string}
  */
 export function formatValue(key, value) {
+    if (value == null || (typeof value === 'number' && !isFinite(value))) return '\u2014';
     if (key === 'insuranceMode') return value === 'crd' ? 'Capital restant dû' : 'Capital emprunté';
     if (typeof value === 'boolean') return value ? 'Oui' : 'Non';
-    if (typeof value !== 'number') return String(value);
+    if (Array.isArray(value)) {
+        if (value.every(v => typeof v === 'number')) return value.map(v => nf(0).format(v)).join(' · ');
+        return `${value.length} ligne${value.length > 1 ? 's' : ''}`;
+    }
+    if (typeof value === 'object') return '\u2014';
+    const kind = KEY_FORMATS[key];
+    if (typeof value !== 'number') return kind === 'enum' ? (ENUM_LABELS[String(value)] || String(value)) : String(value);
 
-    // Detect percentages
-    if (key.toLowerCase().includes('rate') || key.toLowerCase().includes('taeg') || key.toLowerCase().includes('ltv') || key.toLowerCase().includes('kicker') || key.toLowerCase().includes('utilization') || key.toLowerCase().includes('growth') || key === 'allInCost' || key === 'effectiveRate') {
-        return new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value) + ' %';
+    switch (kind) {
+        case 'pct': return nf(2).format(value) + ' %';
+        case 'months': return nf(0).format(value) + ' mois';
+        case 'years': return nf(1).format(value) + ' ans';
+        case 'x': return nf(2).format(value) + 'x';
+        case 'keur': return nf(0).format(value) + ' k€';
+        case 'count': return nf(0).format(value);
+        default: return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 }).format(value);
     }
-    // Detect months - only keys that represent a duration in months
-    if (key === 'durationMonths') {
-        return value + ' mois';
-    }
-    // Default: currency
-    return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 }).format(value);
+}
+
+/**
+ * Unité affichable d'une clé (colonne « Unité » des exports Excel).
+ * @param {string} key
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function unitOf(key, value) {
+    if (typeof value !== 'number') return '';
+    /** @type {Record<string, string>} */
+    const units = { pct: '%', months: 'mois', years: 'ans', x: 'x', keur: 'k€', count: '', enum: '', eur: '€' };
+    return units[KEY_FORMATS[key] || 'eur'];
+}
+
+/**
+ * Valeur brute pour un export Excel : nombre conservé (pourcentages en
+ * fraction pour un format « % » natif), libellés traduits.
+ * @param {string} key
+ * @param {unknown} value
+ * @returns {string | number | null}
+ */
+export function excelValue(key, value) {
+    if (value == null || (typeof value === 'number' && !isFinite(value))) return null;
+    if (typeof value === 'number') return value;
+    return formatValue(key, value);
 }

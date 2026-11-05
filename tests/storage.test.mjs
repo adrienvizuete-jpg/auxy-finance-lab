@@ -52,3 +52,22 @@ test('migrate : une version future reste intacte (pas de rétrogradation)', () =
     Storage.migrate();
     assert.equal(Storage.get('schema_version'), SCHEMA_VERSION + 5);
 });
+
+test('getHistory : historique corrompu toléré (non-tableau, entrées nulles)', () => {
+    store.clear();
+    Storage.set('history', { pas: 'un tableau' });
+    assert.deepEqual(Storage.getHistory(), []);
+    Storage.set('history', [null, { id: 'abc123def' }, 'texte', { name: 'sans id' }]);
+    assert.deepEqual(Storage.getHistory().map(s => s.id), ['abc123def']);
+});
+
+test('suppression locale : tombe enregistrée pour propagation au cloud', () => {
+    store.clear();
+    Storage.set('history', [{ id: 'aaa111bbb' }, { id: 'ccc222ddd' }]);
+    Storage.deleteSimulation('aaa111bbb');
+    assert.deepEqual(Storage.getTombstones().map(t => t.id), ['aaa111bbb']);
+    Storage.clearHistory();
+    assert.deepEqual(Storage.getTombstones().map(t => t.id).sort(), ['aaa111bbb', 'ccc222ddd']);
+    Storage.clearTombstones(['aaa111bbb']);
+    assert.deepEqual(Storage.getTombstones().map(t => t.id), ['ccc222ddd']);
+});

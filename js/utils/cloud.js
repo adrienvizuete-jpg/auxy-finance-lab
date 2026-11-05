@@ -42,6 +42,8 @@ import { Storage } from './storage.js';
 /** @typedef {{ url: string, anonKey: string }} CloudConfigReady */
 
 const SESSION_KEY = 'cloud_session';
+/** Date de la version de chaque simulation déjà envoyée au cloud (id → date). */
+const PUSHED_KEY = 'cloud_pushed';
 /** @type {CloudConfig | null} */
 let config = null; // { url, anonKey } | null une fois chargé ({} si non configuré)
 
@@ -174,27 +176,38 @@ export const Cloud = {
 
     /**
      * Capte la session au retour d'un lien magique / d'invitation
-     * (#access_token=...&refresh_token=...). Retourne { email } en cas de
-     * succès, { error } si le lien est expiré/invalide, null sinon.
-     * @returns {{ email: string | null } | { error: string } | null}
+     * (#access_token=...&refresh_token=...). Le jeton est d'abord vérifié
+     * auprès de Supabase (GET /auth/v1/user) : un fragment forgé ne peut ni
+     * écraser la session en cours ni injecter un faux e-mail. Retourne
+     * { email } en cas de succès, { error } si le lien est expiré/invalide,
+     * null s'il n'y a rien à capter.
+     * @returns {Promise<{ email: string | null } | { error: string } | null>}
      */
-    captureSessionFromHash() {
+    async captureSessionFromHash() {
         const hash = window.location.hash.replace(/^#/, '');
         if (!hash.includes('access_token=') && !hash.includes('error_description=')) return null;
         const params = new URLSearchParams(hash);
         const errorDesc = params.get('error_description');
-        if (errorDesc) return { error: errorDesc.replace(/\+/g, ' ') };
+        if (errorDesc) return { error: errorDesc.replace(/\+/g, ' ').slice(0, 200) };
         const access_token = params.get('access_token');
         if (!access_token) return null;
+        await loadCloudConfig();
+        if (!isConfigured()) return { error: 'Cloud non configuré' };
         let email = null;
         try {
-            const payload = JSON.parse(atob(access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
-            email = payload.email || null;
-        } catch { /* JWT illisible : la session reste valide, e-mail inconnu */ }
+            const resp = await fetch(`${(/** @type {CloudConfigReady} */ (config)).url}/auth/v1/user`, {
+                headers: { apikey: (/** @type {CloudConfigReady} */ (config)).anonKey, Authorization: `Bearer ${access_token}` }
+            });
+            if (!resp.ok) return { error: 'Lien de connexion invalide ou expiré' };
+            const user = await resp.json();
+            email = isValidEmail(user?.email) ? user.email : null;
+        } catch {
+            return { error: 'Vérification du lien impossible (réseau)' };
+        }
         setSession({
             access_token,
             refresh_token: params.get('refresh_token'),
-            expires_at: Math.floor(Date.now() / 1000) + parseInt(params.get('expires_in') || '3600', 10),
+            expires_at: Math.floor(Date.now() / 1000) + (parseInt(params.get('expires_in') || '3600', 10) || 3600),
             email
         });
         return { email };
@@ -229,42 +242,83 @@ export const Cloud = {
     },
 
     /**
-     * Push : envoie les simulations locales vers le cloud (upsert par id —
-     * idempotent, n'efface jamais rien côté serveur).
-     * @returns {Promise<{ sent: number }>}
+     * Push : envoie vers le cloud les simulations locales créées ou modifiées
+     * depuis le dernier envoi (upsert par id), puis propage les suppressions
+     * locales (suppression logique `deleted_at`). Ne renvoie pas les dossiers
+     * d'associés inchangés : leur auteur et leur date restent intacts.
+     * @returns {Promise<{ sent: number, deleted: number }>}
      */
     async pushSimulations() {
-        const sims = Storage.getHistory();
-        if (!sims.length) return { sent: 0 };
         const session = await ensureFreshSession();
-        const rows = sims.map(sim => ({
-            id: sim.id,
-            name: sim.name || sim.typeLabel || sim.type || 'Simulation',
-            type: sim.type || 'inconnu',
-            payload: sim,
-            updated_at: new Date().toISOString(),
-            updated_by: session?.email || null
-        }));
-        await authFetch('/rest/v1/dossiers?on_conflict=id', {
-            method: 'POST',
-            headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-            body: JSON.stringify(rows)
-        });
-        return { sent: rows.length };
+        /** @type {Record<string, string>} */
+        const pushed = Storage.get(PUSHED_KEY, {}) || {};
+        const sims = Storage.getHistory().filter(s => pushed[String(s.id)] !== s.date);
+        if (sims.length) {
+            const rows = sims.map(sim => ({
+                id: sim.id,
+                name: sim.name || sim.typeLabel || sim.type || 'Simulation',
+                type: sim.type || 'inconnu',
+                payload: sim,
+                updated_at: new Date().toISOString(),
+                updated_by: session?.email || null
+            }));
+            await authFetch('/rest/v1/dossiers?on_conflict=id', {
+                method: 'POST',
+                headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+                body: JSON.stringify(rows)
+            });
+            for (const sim of sims) pushed[String(sim.id)] = sim.date || '';
+            Storage.set(PUSHED_KEY, pushed);
+        }
+
+        // Suppressions : nécessite la colonne deleted_at (migration de
+        // docs/CLOUD-SETUP.md). Absente → on garde les tombes pour plus tard.
+        const tombs = Storage.getTombstones();
+        let deleted = 0;
+        if (tombs.length) {
+            const ids = tombs.map(t => t.id).filter(id => SIM_ID_RE.test(id));
+            try {
+                if (ids.length) {
+                    await authFetch(`/rest/v1/dossiers?id=in.(${ids.join(',')})`, {
+                        method: 'PATCH',
+                        headers: { Prefer: 'return=minimal' },
+                        body: JSON.stringify({ deleted_at: new Date().toISOString() })
+                    });
+                }
+                Storage.clearTombstones(tombs.map(t => t.id));
+                deleted = ids.length;
+            } catch { /* migration non passée : nouvel essai au prochain envoi */ }
+        }
+        return { sent: sims.length, deleted };
     },
 
     /**
      * Pull : récupère les simulations du cabinet et les fusionne dans
-     * l'historique local (par id, la plus récente gagne).
+     * l'historique local (par id, la plus récente gagne). Les dossiers
+     * supprimés côté cloud (deleted_at) sont retirés localement.
      * @returns {Promise<{ fetched: number, added: number }>}
      */
     async pullSimulations() {
-        const resp = await authFetch('/rest/v1/dossiers?select=id,payload,updated_by&order=updated_at.desc&limit=500');
-        /** @type {Array<{ id: string, payload: Simulation, updated_by?: string | null }>} */
+        const resp = await authFetch('/rest/v1/dossiers?select=*&order=updated_at.desc&limit=500');
+        /** @type {Array<{ id: string, payload: Simulation, updated_by?: string | null, deleted_at?: string | null }>} */
         const rows = await resp.json();
-        const remote = rows.map(r => r.payload).filter(p => p && p.id);
-        const { merged, added } = mergeSimulations(Storage.getHistory(), remote);
-        if (added > 0) Storage.set('history', merged.slice(0, 200));
+        const list = Array.isArray(rows) ? rows : [];
+        const deletedIds = new Set(list.filter(r => r?.deleted_at).map(r => r.id));
+        // Une ligne n'est acceptée que si son payload est une simulation bien
+        // formée ET porte le même id que la ligne (sinon un compte pourrait
+        // remplacer le dossier d'un associé en réutilisant son payload.id).
+        const remote = list
+            .filter(r => !r?.deleted_at && isValidSimulation(r?.payload) && r.payload.id === r.id)
+            .map(r => r.payload);
+        const local = Storage.getHistory();
+        const kept = local.filter(s => !deletedIds.has(String(s.id)));
+        const { merged, added, updated } = mergeSimulations(kept, remote);
+        if (added > 0 || updated > 0 || kept.length !== local.length) Storage.set('history', merged.slice(0, 200));
+        // Ce qui vient du cloud n'est pas à renvoyer tant qu'il n'est pas modifié ici
+        /** @type {Record<string, string>} */
+        const pushed = Storage.get(PUSHED_KEY, {}) || {};
+        for (const sim of remote) pushed[String(sim.id)] = sim.date || '';
+        Storage.set(PUSHED_KEY, pushed);
         return { fetched: remote.length, added };
     }
 };
@@ -275,7 +329,7 @@ export const Cloud = {
  * Fonction pure — testée dans tests/cloud.test.mjs.
  * @param {Simulation[] | null | undefined} local
  * @param {Simulation[] | null | undefined} remote
- * @returns {{ merged: Simulation[], added: number }}
+ * @returns {{ merged: Simulation[], added: number, updated: number }}
  */
 export function mergeSimulations(local, remote) {
     /** @type {Map<string, Simulation>} */
@@ -283,7 +337,7 @@ export function mergeSimulations(local, remote) {
     for (const sim of local || []) {
         if (sim?.id) byId.set(sim.id, sim);
     }
-    let added = 0;
+    let added = 0, updated = 0;
     for (const sim of remote || []) {
         if (!sim?.id) continue;
         const existing = byId.get(sim.id);
@@ -292,8 +346,37 @@ export function mergeSimulations(local, remote) {
             added++;
         } else if (new Date(sim.date || 0) > new Date(existing.date || 0)) {
             byId.set(sim.id, sim);
+            updated++;
         }
     }
     const merged = [...byId.values()].sort((a, b) => /** @type {any} */ (new Date(b.date || 0)) - /** @type {any} */ (new Date(a.date || 0)));
-    return { merged, added };
+    return { merged, added, updated };
+}
+
+/** Identifiants générés par Storage.saveSimulation (base 36) — rien d'autre n'est accepté du cloud. */
+const SIM_ID_RE = /^[a-z0-9]{6,24}$/i;
+
+/**
+ * Garde de schéma minimale d'une simulation venue du cloud : objet, id au
+ * format interne, type et nom textuels, date lisible. Les chaînes restent à
+ * échapper au rendu ; ceci écarte les payloads forgés (id piégé, types
+ * inattendus) avant même qu'ils n'entrent dans l'historique.
+ * @param {unknown} p
+ * @returns {p is Simulation}
+ */
+export function isValidSimulation(p) {
+    if (!p || typeof p !== 'object' || Array.isArray(p)) return false;
+    const s = /** @type {Record<string, unknown>} */ (p);
+    if (typeof s.id !== 'string' || !SIM_ID_RE.test(s.id)) return false;
+    if (s.type != null && (typeof s.type !== 'string' || !/^[a-z]{2,24}$/i.test(s.type))) return false;
+    if (s.name != null && typeof s.name !== 'string') return false;
+    if (s.date != null && (typeof s.date !== 'string' || isNaN(Date.parse(s.date)))) return false;
+    if (s.params != null && (typeof s.params !== 'object' || Array.isArray(s.params))) return false;
+    return true;
+}
+
+/** @param {unknown} v
+ *  @returns {v is string} */
+function isValidEmail(v) {
+    return typeof v === 'string' && v.length <= 254 && /^[^\s@<>"'&]+@[^\s@<>"'&]+\.[a-z]{2,}$/i.test(v);
 }

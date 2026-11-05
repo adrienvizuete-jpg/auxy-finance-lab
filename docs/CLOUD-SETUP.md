@@ -63,6 +63,61 @@ create policy "cabinet update" on public.dossiers
 -- Pas de policy DELETE : aucune suppression possible depuis l'app.
 ```
 
+### 2 bis. Migration de durcissement (novembre 2026) — à exécuter une fois
+
+Remplace l'accès « tout le domaine » par une liste blanche nominative,
+impose côté serveur l'auteur et la date de modification (non falsifiables
+depuis le navigateur), lie l'id de la ligne à celui du payload et ajoute la
+suppression logique utilisée par l'app (`deleted_at`). Menu **SQL Editor** →
+coller tel quel → **Run** :
+
+```sql
+-- 1. Membres autorisés (ajouter / retirer un associé = une ligne ici)
+create table if not exists public.membres (email text primary key);
+alter table public.membres enable row level security; -- aucune policy : lecture serveur uniquement
+insert into public.membres (email) values
+  ('adrien.vizuete@auxy-partners.com'),
+  ('yannick.rousset@auxy-partners.com')
+on conflict do nothing;
+
+create or replace function public.est_membre() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.membres where email = lower(auth.jwt() ->> 'email'));
+$$;
+
+-- 2. Suppression logique + cohérence id / payload
+alter table public.dossiers add column if not exists deleted_at timestamptz;
+alter table public.dossiers drop constraint if exists dossiers_payload_id;
+alter table public.dossiers add constraint dossiers_payload_id
+  check (payload ->> 'id' = id) not valid;
+
+-- 3. Auteur et date imposés par le serveur
+create or replace function public.dossiers_audit() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  new.updated_by := lower(auth.jwt() ->> 'email');
+  new.updated_at := now();
+  return new;
+end $$;
+drop trigger if exists dossiers_audit on public.dossiers;
+create trigger dossiers_audit before insert or update on public.dossiers
+  for each row execute function public.dossiers_audit();
+
+-- 4. Policies : membres uniquement
+drop policy if exists "cabinet select" on public.dossiers;
+drop policy if exists "cabinet insert" on public.dossiers;
+drop policy if exists "cabinet update" on public.dossiers;
+create policy "membres select" on public.dossiers for select using (public.est_membre());
+create policy "membres insert" on public.dossiers for insert with check (public.est_membre());
+create policy "membres update" on public.dossiers for update
+  using (public.est_membre()) with check (public.est_membre());
+-- Toujours pas de policy DELETE : on efface par deleted_at, réversible.
+```
+
+L'app fonctionne avant comme après cette migration : tant que la colonne
+`deleted_at` n'existe pas, les suppressions locales sont mises de côté et
+propagées au premier envoi qui suit la migration.
+
 ## 3. Verrouiller les inscriptions et inviter les associés
 
 1. **Authentication → Sign In / Up** (ou *Providers* selon la version) :
@@ -121,5 +176,7 @@ deux secrets GitHub au dépôt (*Settings → Secrets and variables → Actions*
 Onglet **Historique** de l'app → carte « Synchronisation cabinet » :
 saisir son e-mail → *Recevoir un code* → saisir le code → connecté.
 Ensuite : **Envoyer vers le cloud** (push) / **Récupérer du cloud** (pull).
-La fusion se fait par identifiant, la version la plus récente gagne,
-rien n'est jamais effacé côté serveur depuis l'app.
+La fusion se fait par identifiant, la version la plus récente gagne.
+Seules les simulations créées ou modifiées localement depuis le dernier envoi
+partent au cloud ; une suppression locale marque le dossier `deleted_at`
+(réversible en SQL), et le pull le retire chez les autres associés.

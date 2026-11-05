@@ -11,6 +11,7 @@ import { PARAM_LABELS, RESULT_LABELS, t, formatValue } from '../utils/i18n.js';
 import { escapeHtml } from '../utils/sanitize.js';
 import { Share } from '../utils/share.js';
 import { Market } from '../utils/market.js';
+import { LoanEngine } from '../utils/loanengine.js';
 
 const CREDIT_TYPES = [
     { id: 'constant', label: 'Amortissable Constant', desc: 'Mensualités fixes' },
@@ -20,6 +21,8 @@ const CREDIT_TYPES = [
     { id: 'revolving', label: 'Revolving', desc: 'Ligne de crédit' },
     { id: 'relais', label: 'Prêt Relais', desc: 'Court terme, intérêts capitalisés' },
     { id: 'mezzanine', label: 'Dette Mezzanine', desc: 'Cash + PIK + equity kicker' },
+    { id: 'variable', label: 'Taux variable', desc: 'Euribor + marge, floor, couverture, Exact/360' },
+    { id: 'bfr', label: 'BFR : comparatif', desc: 'Affacturage, Dailly / escompte, RCF — coût du financement du poste clients' },
     { id: 'tranching', label: 'Tranching', desc: 'Financement multi-tranches (LBO)' }
 ];
 
@@ -36,10 +39,12 @@ const DEFAULTS = {
     constant: { 'cr-principal': 500000, 'cr-rate': 4.5, 'cr-duration': 84, 'cr-insurance': 0, 'cr-insurance-rate': 0.30, 'cr-fees': 0, 'cr-frequency': 'monthly', 'cr-deferral': 0 },
     degressif: { 'cr-principal': 500000, 'cr-rate': 4.5, 'cr-duration': 84, 'cr-insurance': 0, 'cr-insurance-rate': 0.30, 'cr-fees': 0, 'cr-frequency': 'monthly', 'cr-deferral': 0 },
     infine: { 'cr-principal': 500000, 'cr-rate': 4.5, 'cr-duration': 84, 'cr-insurance': 0, 'cr-insurance-rate': 0.30, 'cr-fees': 0, 'cr-frequency': 'monthly' },
-    creditbail: { 'cr-principal': 500000, 'cr-deposit': 50000, 'cr-rate': 5.0, 'cr-duration': 60, 'cr-residual': 25000, 'cr-fees': 0 },
+    creditbail: { 'cr-principal': 500000, 'cr-deposit': 50000, 'cr-rate': 5.0, 'cr-duration': 60, 'cr-residual': 25000, 'cr-fees': 0, 'cr-timing': 'advance', 'cr-first-rent': 0 },
     revolving: { 'cr-principal': 1000000, 'cr-utilization': 60, 'cr-rate': 5.5, 'cr-commitment': 0.5, 'cr-duration': 12 },
     relais: { 'cr-principal': 300000, 'cr-salePrice': 450000, 'cr-rate': 5.0, 'cr-duration': 18, 'cr-capitalized': false, 'cr-fees': 0 },
-    mezzanine: { 'cr-principal': 2000000, 'cr-duration': 60, 'cr-rate': 8.0, 'cr-pikRate': 4.0, 'cr-kicker': 5.0, 'cr-fees': 0 },
+    mezzanine: { 'cr-principal': 2000000, 'cr-duration': 60, 'cr-rate': 8.0, 'cr-pikRate': 4.0, 'cr-kicker': 5.0, 'cr-fees': 0, 'cr-pik-compounding': 'annual' },
+    variable: { 'cr-principal': 5000000, 'cr-duration': 84, 'cr-frequency': 'quarterly', 'cr-vamort': 'constant', 'cr-margin': 2.25, 'cr-upfront': 1.0 },
+    bfr: {},
     tranching: {}
 };
 
@@ -120,6 +125,7 @@ function renderTranchingRows() {
             <td>
                 <select class="form-input form-input-sm" data-field="type">
                     <option value="constant" ${t.type === 'constant' ? 'selected' : ''}>Constant</option>
+                    <option value="degressif" ${t.type === 'degressif' ? 'selected' : ''}>Dégressif</option>
                     <option value="infine" ${t.type === 'infine' ? 'selected' : ''}>In Fine</option>
                 </select>
             </td>
@@ -147,7 +153,10 @@ function refreshTranchingTotal() {
 
 function setupTranchingListeners() {
     const table = document.getElementById('tranching-table');
-    if (!table) return;
+    // Idempotent : init() et le rechargement d'une simulation l'appellent
+    // tous deux sur le même tableau (sinon « Ajouter » créait 2 tranches)
+    if (!table || table.dataset.bound === '1') return;
+    table.dataset.bound = '1';
 
     table.addEventListener('input', e => {
         const row = e.target.closest('tr');
@@ -225,27 +234,38 @@ function validateForm() {
 function getRequiredFields(type) {
     const base = [
         { id: 'cr-principal', label: 'Montant', min: 1 },
-        { id: 'cr-rate', label: 'Taux', min: 0.01 },
+        { id: 'cr-rate', label: 'Taux', min: 0 },
         { id: 'cr-duration', label: 'Durée', min: 1 }
     ];
     switch (type) {
         case 'creditbail':
             return [
                 { id: 'cr-principal', label: 'Valeur du bien', min: 1 },
-                { id: 'cr-rate', label: 'Taux', min: 0.01 },
+                { id: 'cr-rate', label: 'Taux', min: 0 },
                 { id: 'cr-duration', label: 'Durée', min: 1 }
             ];
         case 'revolving':
             return [
                 { id: 'cr-principal', label: 'Ligne de crédit', min: 1 },
-                { id: 'cr-rate', label: 'Taux', min: 0.01 },
+                { id: 'cr-rate', label: 'Taux', min: 0 },
+                { id: 'cr-duration', label: 'Durée', min: 1 }
+            ];
+        case 'bfr':
+            return [
+                { id: 'cr-principal', label: 'CA confié', min: 1 },
+                { id: 'cr-dso', label: 'Délai clients', min: 1 }
+            ];
+        case 'variable':
+            return [
+                { id: 'cr-principal', label: 'Montant', min: 1 },
+                { id: 'cr-margin', label: 'Marge', min: 0 },
                 { id: 'cr-duration', label: 'Durée', min: 1 }
             ];
         case 'relais':
             return [
                 { id: 'cr-principal', label: 'Montant du prêt', min: 1 },
                 { id: 'cr-salePrice', label: 'Prix de vente', min: 1 },
-                { id: 'cr-rate', label: 'Taux', min: 0.01 },
+                { id: 'cr-rate', label: 'Taux', min: 0 },
                 { id: 'cr-duration', label: 'Durée', min: 1 }
             ];
         default:
@@ -340,6 +360,108 @@ function getFormHTML(type) {
         case 'infine':
             return common;
 
+        case 'variable':
+            return `
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Montant emprunté (€)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-principal" value="5000000" min="0" step="1"><span class="input-suffix">€</span></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Durée (mois)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-duration" value="84" min="1" max="360" step="1"><span class="input-suffix">mois</span></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Date de tirage</label>
+                        <input type="date" class="form-input" id="cr-start" value="${new Date().toISOString().slice(0, 10)}">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Périodicité</label>
+                        <select class="form-select" id="cr-frequency">
+                            <option value="quarterly">Trimestrielle</option>
+                            <option value="monthly">Mensuelle</option>
+                            <option value="semiannual">Semestrielle</option>
+                            <option value="annual">Annuelle</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Amortissement</label>
+                        <select class="form-select" id="cr-vamort">
+                            <option value="constant">Échéances constantes</option>
+                            <option value="degressif">Amortissement constant</option>
+                            <option value="custom">Profil annuel libre</option>
+                            <option value="balloon">Avec ballon final</option>
+                            <option value="infine">In fine</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" title="% du nominal amorti chaque année, séparés par /">Profil (% par an)</label>
+                        <input type="text" class="form-input" id="cr-profile" value="10/15/20/25/30" placeholder="10/15/20/25/30">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Ballon final (% du nominal)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-balloon" value="30" min="0" max="100" step="5"><span class="input-suffix">%</span></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Différé (mois)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-deferral" value="0" min="0" max="60" step="1"><span class="input-suffix">mois</span></div>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Marge (%)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-margin" value="2.25" min="0" max="20" step="any"><span class="input-suffix">%</span></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" title="Une valeur par année, séparées par / ; la dernière est prolongée">Euribor par année (%)</label>
+                        <input type="text" class="form-input" id="cr-index-path" value="" placeholder="ex. 2,76 / 2,50 / 2,40">
+                        <div class="rate-hint" id="cr-index-hint"></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Floor de l'index</label>
+                        <select class="form-select" id="cr-floor">
+                            <option value="0">Floor à 0 %</option>
+                            <option value="none">Sans floor</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Base de calcul</label>
+                        <select class="form-select" id="cr-daycount">
+                            <option value="act/360">Exact/360 (Euribor)</option>
+                            <option value="act/365">Exact/365</option>
+                            <option value="30/360">30/360</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Couverture de taux</label>
+                        <select class="form-select" id="cr-hedge">
+                            <option value="none">Aucune</option>
+                            <option value="swap">Swap (payeur fixe)</option>
+                            <option value="cap">Cap</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Part couverte (%)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-hedge-pct" value="70" min="0" max="100" step="5"><span class="input-suffix">%</span></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Taux swap / strike cap (%)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-hedge-rate" value="2.80" min="-1" max="15" step="any"><span class="input-suffix">%</span></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Prime du cap (% du couvert)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-cap-premium" value="1.0" min="0" max="10" step="0.1"><span class="input-suffix">%</span></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Frais d'arrangement (%)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-upfront" value="1.0" min="0" max="10" step="any"><span class="input-suffix">%</span></div>
+                    </div>
+                </div>`;
+
         case 'creditbail':
             return `
                 <div class="form-row">
@@ -383,6 +505,22 @@ function getFormHTML(type) {
                 </div>
                 <div class="form-row">
                     <div class="form-group">
+                        <label class="form-label">Paiement des loyers</label>
+                        <select class="form-select" id="cr-timing">
+                            <option value="advance">Terme à échoir (début de période)</option>
+                            <option value="arrears">Terme échu (fin de période)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Premier loyer majoré (% du bien)</label>
+                        <div class="input-group">
+                            <input type="number" class="form-input" id="cr-first-rent" value="0" min="0" max="50" step="1">
+                            <span class="input-suffix">%</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
                         <label class="form-label">Frais (€)</label>
                         <div class="input-group">
                             <input type="number" class="form-input" id="cr-fees" value="0" min="0" step="1">
@@ -418,9 +556,19 @@ function getFormHTML(type) {
                         </div>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Commission d'engagement (%/an)</label>
+                        <label class="form-label">Commission de non-utilisation</label>
                         <div class="input-group">
-                            <input type="number" class="form-input" id="cr-commitment" value="0.5" min="0" max="5" step="0.1">
+                            <input type="number" class="form-input" id="cr-commitment" value="0.5" min="0" max="100" step="any">
+                            <select class="form-select" id="cr-commitment-mode" style="max-width:150px">
+                                <option value="flat">%/an du non tiré</option>
+                                <option value="ofMargin">% de la marge</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Marge (pour « % de la marge »)</label>
+                        <div class="input-group">
+                            <input type="number" class="form-input" id="cr-rcf-margin" value="1.5" min="0" max="20" step="any">
                             <span class="input-suffix">%</span>
                         </div>
                     </div>
@@ -431,6 +579,59 @@ function getFormHTML(type) {
                             <span class="input-suffix">mois</span>
                         </div>
                     </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:2">
+                        <label class="form-label" title="12 valeurs de janvier à décembre, séparées par / ; vide = taux d'utilisation constant">Profil de tirage mensuel (% de la ligne)</label>
+                        <input type="text" class="form-input" id="cr-rcf-profile" value="" placeholder="ex. 20/30/60/80/90/70/40/20/10/0/30/50">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" title="Au-delà de x % de tirage : +y %/an sur le tiré, ex. 33:0,10 / 66:0,20">Commission d'utilisation (paliers)</label>
+                        <input type="text" class="form-input" id="cr-rcf-tiers" value="" placeholder="33:0,10 / 66:0,20">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Frais de mise en place (% ligne)</label>
+                        <div class="input-group">
+                            <input type="number" class="form-input" id="cr-upfront" value="0" min="0" max="5" step="any">
+                            <span class="input-suffix">%</span>
+                        </div>
+                    </div>
+                </div>`;
+
+        case 'bfr':
+            return `
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">CA TTC confié / mobilisable (€/an)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-principal" value="12000000" min="0" step="10000"><span class="input-suffix">€</span></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Délai de paiement clients (jours)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-dso" value="60" min="0" max="365" step="5"><span class="input-suffix">j</span></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Euribor 3M (%)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-bfr-index" value="2.75" step="any"><span class="input-suffix">%</span></div>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label class="form-label">Affacturage : commission (% CA)</label><input type="number" class="form-input" id="cr-fact-comm" value="0.25" step="any" min="0"></div>
+                    <div class="form-group"><label class="form-label">Affacturage : marge (%)</label><input type="number" class="form-input" id="cr-fact-margin" value="1.20" step="any" min="0"></div>
+                    <div class="form-group"><label class="form-label">Retenue de garantie (%)</label><input type="number" class="form-input" id="cr-fact-reserve" value="10" step="1" min="0" max="50"></div>
+                    <div class="form-group"><label class="form-label">Frais fixes affacturage (€/an)</label><input type="number" class="form-input" id="cr-fact-fixed" value="3000" step="500" min="0"></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label class="form-label">Dailly : marge (%)</label><input type="number" class="form-input" id="cr-dailly-margin" value="1.00" step="any" min="0"></div>
+                    <div class="form-group"><label class="form-label">Quotité financée (%)</label><input type="number" class="form-input" id="cr-dailly-advance" value="80" step="5" min="0" max="100"></div>
+                    <div class="form-group"><label class="form-label">Frais par bordereau (€) × nb/an</label>
+                        <div style="display:flex;gap:4px"><input type="number" class="form-input" id="cr-dailly-fee" value="50" step="10" min="0"><input type="number" class="form-input" id="cr-dailly-batches" value="24" step="1" min="0"></div></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label class="form-label">RCF : marge (%)</label><input type="number" class="form-input" id="cr-rcfc-margin" value="1.50" step="any" min="0"></div>
+                    <div class="form-group"><label class="form-label">Non-utilisation (% de la marge)</label><input type="number" class="form-input" id="cr-rcfc-commit" value="35" step="5" min="0"></div>
+                    <div class="form-group"><label class="form-label">Taille de ligne (€)</label><input type="number" class="form-input" id="cr-rcfc-line" value="2500000" step="50000" min="0"></div>
+                    <div class="form-group"><label class="form-label">Frais de mise en place (%) / durée (ans)</label>
+                        <div style="display:flex;gap:4px"><input type="number" class="form-input" id="cr-rcfc-upfront" value="0.50" step="any" min="0"><input type="number" class="form-input" id="cr-rcfc-years" value="3" step="1" min="1"></div></div>
                 </div>`;
 
         case 'relais':
@@ -522,6 +723,13 @@ function getFormHTML(type) {
                             <span class="input-suffix">%</span>
                         </div>
                     </div>
+                    <div class="form-group">
+                        <label class="form-label">Capitalisation du PIK</label>
+                        <select class="form-select" id="cr-pik-compounding">
+                            <option value="annual">Annuelle</option>
+                            <option value="monthly">Mensuelle</option>
+                        </select>
+                    </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
@@ -568,7 +776,10 @@ function getFormHTML(type) {
 // Affichage TAEG : valeur, ou « n.c. » expliqué quand l'IRR ne converge pas
 function taegItem(result) {
     if (result.taeg != null) {
-        return `<div class="result-item"><div class="result-label">TAEG</div><div class="result-value">${result.taeg.toFixed(2)} %</div></div>`;
+        const teg = result.teg != null
+            ? `<div class="result-item"><div class="result-label" title="Taux de période × nombre de périodes : indicateur d'usage du crédit professionnel">TEG (proportionnel)</div><div class="result-value">${Financial.formatPercent(result.teg)}</div></div>`
+            : '';
+        return `${teg}<div class="result-item"><div class="result-label" title="Annualisation actuarielle : norme du crédit aux particuliers">TAEG (actuariel)</div><div class="result-value">${Financial.formatPercent(result.taeg)}</div></div>`;
     }
     return `<div class="result-item"><div class="result-label">TAEG</div><div class="result-value" title="TAEG non calculable : les flux de cette simulation n'admettent pas de taux actuariel unique" style="color:var(--text-muted)">n.c.</div></div>`;
 }
@@ -725,8 +936,19 @@ function getResultsHTML(type, result) {
                         <div class="result-value">${f(result.totalCost)}</div>
                     </div>
                     <div class="result-item">
-                        <div class="result-label">Taux effectif</div>
+                        <div class="result-label">Tiré moyen / pic</div>
+                        <div class="result-value">${f(result.avgUtilized)}</div>
+                        <div class="result-sub">pic ${f(result.peakUtilized)} · ${result.monthsAtZero > 0 ? `${result.monthsAtZero} mois à zéro (clean-down possible)` : 'aucun mois à zéro (clean-down non respecté)'}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-label">Commissions d'utilisation / frais</div>
+                        <div class="result-value">${f(result.totalUtilizationFee + result.upfrontFee)}</div>
+                        <div class="result-sub">non-utilisation au taux de ${p(result.commitmentRate)}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-label">Taux effectif (sur le tiré)</div>
                         <div class="result-value">${p(result.effectiveRate)}</div>
+                        <div class="result-sub">Coût rapporté à la ligne : ${p(result.lineCostRate)}</div>
                     </div>
                 </div>`;
 
@@ -790,8 +1012,51 @@ function getResultsHTML(type, result) {
                         <div class="result-value">${f(result.equityKickerValue)}</div>
                     </div>
                     <div class="result-item">
-                        <div class="result-label">All-in cost</div>
+                        <div class="result-label">Coût moyen simple (non actuariel)</div>
                         <div class="result-value">${p(result.allInCost)}</div>
+                    </div>
+                    ${taegItem(result)}
+                </div>`;
+
+        case 'bfr': {
+            const best = result.solutions.reduce((a, b) => ((b.ratePct ?? Infinity) < (a.ratePct ?? Infinity) ? b : a));
+            return `
+                <div class="results-grid">
+                    <div class="result-item"><div class="result-label">Encours clients moyen</div><div class="result-value">${f(result.receivables)}</div><div class="result-sub">CA TTC × délai / 365</div></div>
+                </div>
+                <div class="table-container" style="margin-top:12px">
+                    <table class="data-table">
+                        <thead><tr><th>Solution</th><th style="text-align:right">Financement moyen</th><th style="text-align:right">Coût annuel</th><th style="text-align:right">Coût / financement</th><th>Remarque</th></tr></thead>
+                        <tbody>${result.solutions.map(x => `<tr style="${x === best ? 'font-weight:700' : ''}"><td>${x.name}${x === best ? ' ★' : ''}</td><td class="number">${f(x.financed)}</td><td class="number">${f(x.cost)}</td><td class="number">${p(x.ratePct)}</td><td style="font-size:0.8rem;color:var(--text-muted)">${escapeHtml(x.note)}</td></tr>`).join('')}</tbody>
+                    </table>
+                </div>
+                <p style="font-size:0.8rem;color:var(--text-muted);margin-top:8px">Comparaison du seul coût financier (base Exact/360). L'affacturage finance moins (retenue de garantie) mais externalise le recouvrement et l'assurance-crédit : à intégrer dans l'arbitrage.</p>`;
+        }
+
+        case 'variable':
+            return `
+                <div class="results-grid">
+                    <div class="result-item">
+                        <div class="result-label">1re ${payLabel.toLowerCase()}</div>
+                        <div class="result-value">${f(result.periodicPayment)}</div>
+                        <div class="result-sub">taux tout compris ${p(result.firstRate)}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-label">Total intérêts</div>
+                        <div class="result-value">${f(result.totalInterest)}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-label">Couverture (net)</div>
+                        <div class="result-value">${f(result.totalHedge + result.hedgePremium)}</div>
+                        <div class="result-sub">${result.hedgePremium > 0 ? `dont prime ${f(result.hedgePremium)}` : '+ = coût, − = gain'}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-label">Frais d'arrangement</div>
+                        <div class="result-value">${f(result.upfrontFee)}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-label">Coût total</div>
+                        <div class="result-value">${f(result.totalCost)}</div>
                     </div>
                     ${taegItem(result)}
                 </div>`;
@@ -834,7 +1099,7 @@ function getResultsHTML(type, result) {
                             return `
                             <div class="card" style="padding:16px">
                                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-                                    <span class="badge badge-blue">${tr.type === 'infine' ? 'In Fine' : 'Constant'}</span>
+                                    <span class="badge badge-blue">${({ infine: 'In Fine', degressif: 'Dégressif' })[tr.type] || 'Constant'}</span>
                                     <span class="badge" style="background:var(--bg-secondary);color:var(--text-secondary);font-size:0.7rem">${freqLabels[trFreq]}</span>
                                     <strong>${escapeHtml(tr.name)}</strong>
                                 </div>
@@ -894,11 +1159,26 @@ function runSimulation({ scroll = true } = {}) {
             result = Financial.inFine(params);
             break;
         case 'creditbail':
-            params = { assetValue: val('cr-principal'), deposit: val('cr-deposit'), annualRate: val('cr-rate'), durationMonths: val('cr-duration'), residualValue: val('cr-residual'), fees: val('cr-fees') };
+            params = { assetValue: val('cr-principal'), deposit: val('cr-deposit'), annualRate: val('cr-rate'), durationMonths: val('cr-duration'), residualValue: val('cr-residual'), fees: val('cr-fees'), paymentTiming: document.getElementById('cr-timing')?.value || 'advance', firstRentPct: val('cr-first-rent') };
             result = Financial.creditBail(params);
             break;
         case 'revolving':
-            params = { creditLine: val('cr-principal'), utilization: val('cr-utilization'), annualRate: val('cr-rate'), commitmentFee: val('cr-commitment'), durationMonths: val('cr-duration') };
+            {
+                const list = txt => String(txt || '').split(/[/;|]/).map(v => Financial.parseNumber(v)).filter(v => !isNaN(v));
+                const tiers = String(document.getElementById('cr-rcf-tiers')?.value || '').split(/[/;|]/).map(part => {
+                    const [above, fee] = part.split(':').map(v => Financial.parseNumber(v));
+                    return { above, fee };
+                }).filter(t => isFinite(t.above) && isFinite(t.fee));
+                params = {
+                    creditLine: val('cr-principal'), utilization: val('cr-utilization'), annualRate: val('cr-rate'),
+                    commitmentFee: val('cr-commitment'), durationMonths: val('cr-duration'),
+                    commitmentMode: document.getElementById('cr-commitment-mode')?.value || 'flat',
+                    margin: val('cr-rcf-margin'),
+                    utilizationProfile: list(document.getElementById('cr-rcf-profile')?.value),
+                    utilizationFees: tiers,
+                    upfrontFeePct: val('cr-upfront')
+                };
+            }
             result = Financial.revolving(params);
             break;
         case 'relais':
@@ -906,9 +1186,53 @@ function runSimulation({ scroll = true } = {}) {
             result = Financial.pretRelais(params);
             break;
         case 'mezzanine':
-            params = { principal: val('cr-principal'), cashRate: val('cr-rate'), pikRate: val('cr-pikRate'), durationMonths: val('cr-duration'), equityKicker: val('cr-kicker'), fees: val('cr-fees') };
+            params = { principal: val('cr-principal'), cashRate: val('cr-rate'), pikRate: val('cr-pikRate'), durationMonths: val('cr-duration'), equityKicker: val('cr-kicker'), fees: val('cr-fees'), pikCompounding: document.getElementById('cr-pik-compounding')?.value || 'annual' };
             result = Financial.detteMezzanine(params);
             break;
+        case 'bfr':
+            params = {
+                turnover: val('cr-principal'), dso: val('cr-dso'), index: val('cr-bfr-index'),
+                factoring: { commissionPct: val('cr-fact-comm'), margin: val('cr-fact-margin'), reservePct: val('cr-fact-reserve'), fixedFees: val('cr-fact-fixed') },
+                dailly: { margin: val('cr-dailly-margin'), advancePct: val('cr-dailly-advance'), feePerBatch: val('cr-dailly-fee'), batchesPerYear: val('cr-dailly-batches') },
+                rcf: { margin: val('cr-rcfc-margin'), commitmentPctOfMargin: val('cr-rcfc-commit'), line: val('cr-rcfc-line'), upfrontFeePct: val('cr-rcfc-upfront'), years: val('cr-rcfc-years') }
+            };
+            result = { ...Financial.bfrComparison(params), schedule: [] };
+            break;
+        case 'variable': {
+            const str = id => document.getElementById(id)?.value || '';
+            const list = txt => String(txt).split(/[/;|]/).map(v => Financial.parseNumber(v)).filter(v => !isNaN(v));
+            const hedgeType = str('cr-hedge') || 'none';
+            const hedgeRate = val('cr-hedge-rate');
+            params = {
+                principal: val('cr-principal'),
+                durationMonths: val('cr-duration'),
+                frequency: str('cr-frequency') || 'quarterly',
+                amortType: str('cr-vamort') || 'constant',
+                customProfile: list(str('cr-profile')),
+                balloonPct: val('cr-balloon'),
+                deferralMonths: val('cr-deferral'),
+                rateType: 'floating',
+                margin: val('cr-margin'),
+                indexPath: list(str('cr-index-path')),
+                floor: str('cr-floor') === 'none' ? null : 0,
+                dayCount: str('cr-daycount') || 'act/360',
+                startDate: str('cr-start') || undefined,
+                hedge: { type: hedgeType, pct: val('cr-hedge-pct'), swapRate: hedgeRate, capStrike: hedgeRate, capPremiumPct: val('cr-cap-premium') },
+                upfrontFeePct: val('cr-upfront')
+            };
+            if (!params.indexPath.length) params.indexPath = [0];
+            const built = LoanEngine.build(params);
+            const first = built.rows[0];
+            result = {
+                ...built,
+                schedule: built.rows,
+                frequency: params.frequency,
+                periodicPayment: first ? first.payment : 0,
+                firstRate: first ? first.rate : null,
+                totalHedge: built.totalHedge
+            };
+            break;
+        }
         case 'tranching':
             params = { tranches: tranchingTranches.map(t => ({ ...t })) };
             result = Financial.tranching(tranchingTranches);
@@ -918,6 +1242,12 @@ function runSimulation({ scroll = true } = {}) {
     }
 
     lastResult = { type: currentType, params, results: result };
+
+    // Durée non multiple de la périodicité : le moteur arrondit au nombre de
+    // périodes le plus proche — on le dit plutôt que de le taire.
+    if (result.effectiveDurationMonths && params.durationMonths && result.effectiveDurationMonths !== Math.round(params.durationMonths)) {
+        window.showToast?.(`Durée modélisée : ${result.effectiveDurationMonths} mois (multiple de la périodicité) au lieu de ${params.durationMonths}`, 'warning');
+    }
 
     // Render results
     const resultsDiv = document.getElementById('credit-results');
@@ -949,6 +1279,19 @@ function runSimulation({ scroll = true } = {}) {
                             <input type="number" class="form-input" id="ra-amount" value="100000" min="0" step="1">
                             <span class="input-suffix">€</span>
                         </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Indemnité (IRA)</label>
+                        <select class="form-select" id="ra-ira-mode">
+                            <option value="legal">Plafond légal : min(3 % CRD ; 6 mois)</option>
+                            <option value="pct">Forfait % du capital remboursé</option>
+                            <option value="months">N mois d'intérêts</option>
+                            <option value="none">Sans indemnité</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Paramètre IRA (% ou mois)</label>
+                        <input type="number" class="form-input" id="ra-ira-param" value="3" min="0" step="0.5">
                     </div>
                     <div class="form-group">
                         <label class="form-label">Stratégie</label>
@@ -1016,6 +1359,9 @@ function renderScheduleTable(schedule) {
     const columns = [];
 
     if ('period' in first) columns.push({ key: 'period', label: periodLabel });
+    if ('date' in first) columns.push({ key: 'date', label: 'Date', format: 'date' });
+    if ('indexRate' in first) columns.push({ key: 'indexRate', label: 'Index', format: 'pct' });
+    if ('rate' in first) columns.push({ key: 'rate', label: 'Taux', format: 'pct' });
     if ('payment' in first) columns.push({ key: 'payment', label: payLabel, format: 'currency' });
     if ('cashPayment' in first) columns.push({ key: 'cashPayment', label: 'Cash', format: 'currency' });
     if ('principal' in first) columns.push({ key: 'principal', label: 'Capital', format: 'currency' });
@@ -1023,6 +1369,7 @@ function renderScheduleTable(schedule) {
     if ('pikInterest' in first) columns.push({ key: 'pikInterest', label: 'PIK', format: 'currency' });
     if ('insurance' in first && schedule.some(r => r.insurance > 0)) columns.push({ key: 'insurance', label: 'Assurance', format: 'currency' });
     if ('commitmentFee' in first) columns.push({ key: 'commitmentFee', label: 'Com.', format: 'currency' });
+    if ('hedgeFlow' in first && schedule.some(r => r.hedgeFlow)) columns.push({ key: 'hedgeFlow', label: 'Couverture', format: 'currency' });
     if ('balance' in first) columns.push({ key: 'balance', label: 'CRD', format: 'currency' });
 
     const displayCount = Math.min(schedule.length, 60);
@@ -1036,7 +1383,7 @@ function renderScheduleTable(schedule) {
                 </thead>
                 <tbody>
                     ${schedule.slice(0, displayCount).map(row => `
-                        <tr>${columns.map(c => `<td class="${c.format === 'currency' ? 'number' : ''}">${c.format === 'currency' ? Financial.formatCurrency(row[c.key], 2) : row[c.key]}</td>`).join('')}</tr>
+                        <tr>${columns.map(c => `<td class="${c.format && c.format !== 'date' ? 'number' : ''}">${c.format === 'currency' ? Financial.formatCurrency(row[c.key], 2) : c.format === 'pct' ? Financial.formatPercent(row[c.key], 3) : c.format === 'date' ? new Date(row[c.key]).toLocaleDateString('fr-FR', { timeZone: 'UTC' }) : escapeHtml(row[c.key])}</td>`).join('')}</tr>
                     `).join('')}
                 </tbody>
             </table>
@@ -1048,7 +1395,7 @@ function renderScheduleTable(schedule) {
         document.getElementById('show-all-schedule')?.addEventListener('click', function () {
             const tbody = document.querySelector('#amort-table tbody');
             tbody.innerHTML = schedule.map(row => `
-                <tr>${columns.map(c => `<td class="${c.format === 'currency' ? 'number' : ''}">${c.format === 'currency' ? Financial.formatCurrency(row[c.key], 2) : row[c.key]}</td>`).join('')}</tr>
+                <tr>${columns.map(c => `<td class="${c.format && c.format !== 'date' ? 'number' : ''}">${c.format === 'currency' ? Financial.formatCurrency(row[c.key], 2) : c.format === 'pct' ? Financial.formatPercent(row[c.key], 3) : c.format === 'date' ? new Date(row[c.key]).toLocaleDateString('fr-FR', { timeZone: 'UTC' }) : escapeHtml(row[c.key])}</td>`).join('')}</tr>
             `).join('');
             this.remove();
         });
@@ -1059,8 +1406,11 @@ function renderScheduleTable(schedule) {
 function runPrepaymentAnalysis() {
     if (!lastResult?.results?.schedule) return;
     const period = parseInt(document.getElementById('ra-period')?.value) || 24;
-    const amount = parseFloat(document.getElementById('ra-amount')?.value) || 100000;
+    const amount = parseFloat(document.getElementById('ra-amount')?.value);
+    if (!(amount > 0)) { window.showToast?.('Saisissez le montant remboursé', 'warning'); return; }
     const strategy = document.getElementById('ra-strategy')?.value || 'reduceDuration';
+    const iraMode = document.getElementById('ra-ira-mode')?.value || 'legal';
+    const iraParam = parseFloat(document.getElementById('ra-ira-param')?.value);
 
     const analysis = Financial.prepaymentAnalysis({
         schedule: lastResult.results.schedule,
@@ -1073,6 +1423,9 @@ function runPrepaymentAnalysis() {
         insuranceMonthly: lastResult.params.insuranceMonthly,
         insuranceRate: lastResult.params.insuranceRate,
         insuranceMode: lastResult.params.insuranceMode,
+        iraMode,
+        iraPct: isNaN(iraParam) ? 3 : iraParam,
+        iraMonths: isNaN(iraParam) ? 6 : iraParam,
         type: currentType
     });
 
@@ -1102,7 +1455,12 @@ function runPrepaymentAnalysis() {
                 <div class="result-item">
                     <div class="result-label">IRA (indemnités)</div>
                     <div class="result-value" style="color:var(--danger)">${f(analysis.ira)}</div>
-                    <div class="result-sub">max(3% CRD = ${f(analysis.ira3pct)}, 6 mois int. = ${f(analysis.ira6mois)})</div>
+                    <div class="result-sub">${({
+                        legal: `min(3 % CRD = ${f(analysis.ira3pct)} ; 6 mois d'int. = ${f(analysis.ira6mois)})`,
+                        pct: 'forfait contractuel sur le capital remboursé',
+                        months: 'mois d\'intérêts sur le capital remboursé',
+                        none: 'aucune indemnité'
+                    })[analysis.iraMode] || ''}</div>
                 </div>
                 <div class="result-item">
                     <div class="result-label">Coût total du RA</div>
@@ -1165,7 +1523,7 @@ function saveSimulation() {
         <h2 style="margin-bottom:20px">Sauvegarder la simulation</h2>
         <div class="form-group" style="margin-bottom:16px">
             <label class="form-label">Nom de la simulation</label>
-            <input type="text" class="form-input" id="save-sim-name" value="${defaultName}" style="width:100%">
+            <input type="text" class="form-input" id="save-sim-name" value="${escapeHtml(defaultName)}" style="width:100%">
         </div>
         <div class="form-group" style="margin-bottom:24px">
             <label class="form-label">Notes (optionnel)</label>
@@ -1219,6 +1577,29 @@ function shareSimulation() {
 }
 
 // ── Taux de marché (hint cliquable sous le champ taux) ──
+/** Taux variable : pré-remplit la trajectoire d'index avec l'Euribor 3M publié. */
+async function prefillIndexPath() {
+    const bfrIndex = document.getElementById('cr-bfr-index');
+    if (bfrIndex) {
+        const d = await Market.getRates();
+        const v = Market.rateValue(d, 'euribor_3m');
+        // seulement la valeur par défaut : une simulation rechargée garde son index
+        if (v != null && document.contains(bfrIndex) && bfrIndex.value === bfrIndex.defaultValue) bfrIndex.value = String(Math.round(v * 1000) / 1000);
+    }
+    const input = document.getElementById('cr-index-path');
+    if (!input) return;
+    const data = await Market.getRates();
+    if (!document.contains(input)) return;
+    const e3m = Market.rateValue(data, 'euribor_3m');
+    const e12m = Market.rateValue(data, 'euribor_12m');
+    const hint = document.getElementById('cr-index-hint');
+    if (e3m != null && !input.value) input.value = Financial.formatNumber(e3m, 3);
+    if (hint && (e3m != null || e12m != null)) {
+        const updated = Market.formatUpdatedAt(data);
+        hint.textContent = `Marché${updated ? ` (${updated})` : ''} : Euribor 3M ${e3m != null ? Financial.formatNumber(e3m, 3) + ' %' : 'n.d.'} · 12M ${e12m != null ? Financial.formatNumber(e12m, 3) + ' %' : 'n.d.'} — trajectoire à saisir par année (taux du jour prolongé par défaut)`;
+    }
+}
+
 async function setupRateHint() {
     const rateInput = document.getElementById('cr-rate');
     if (!rateInput) return;
@@ -1424,7 +1805,7 @@ function exportTranchingExcel() {
         summaryData.push(['  Montant', Financial.formatCurrency(tr.amount)]);
         summaryData.push(['  Taux', tr.rate + ' %']);
         summaryData.push(['  Durée', tr.duration + ' mois']);
-        summaryData.push(['  Type', tr.type === 'infine' ? 'In Fine' : 'Constant']);
+        summaryData.push(['  Type', ({ infine: 'In Fine', degressif: 'Dégressif' })[tr.type] || 'Constant']);
         summaryData.push(['  Fréquence', freqLabelsExcel[tr.frequency || 'monthly']]);
         summaryData.push(['  Intérêts totaux', Financial.formatCurrency(tr.result.totalInterest)]);
         summaryData.push(['  Coût total', Financial.formatCurrency(tr.result.totalCost)]);
@@ -1469,7 +1850,11 @@ function exportTranchingExcel() {
         }))];
         const ws = XLSX.utils.aoa_to_sheet(data);
         ws['!cols'] = headerLabels.map(() => ({ wch: 16 }));
-        XLSX.utils.book_append_sheet(wb, ws, tr.name.substring(0, 28));
+        // Nom d'onglet Excel : 31 caractères max, sans / \\ ? * [ ] :, et unique
+        const base = (String(tr.name || 'Tranche').replace(/[\\/?*[\]:]/g, ' ').trim() || 'Tranche').substring(0, 24);
+        let sheetName = base, n = 2;
+        while (wb.SheetNames.includes(sheetName)) sheetName = `${base} (${n++})`;
+        XLSX.utils.book_append_sheet(wb, ws, sheetName);
     });
 
     XLSX.writeFile(wb, `tranching_${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -1478,7 +1863,9 @@ function exportTranchingExcel() {
 // ── Load pending reload data ──
 function loadPendingReload() {
     const pending = window._pendingReload;
-    if (!pending) return;
+    // Ne consomme que les simulations de ce module (sinon une analyse
+    // Covenants restée en attente casserait le formulaire Crédit)
+    if (!pending || !CREDIT_TYPES.some(t => t.id === pending.type)) return;
     window._pendingReload = null;
 
     // Switch to correct type
@@ -1514,8 +1901,16 @@ function loadPendingReload() {
             expectedSalePrice: 'cr-salePrice',
             capitalizedInterest: 'cr-capitalized',
             pikRate: 'cr-pikRate',
-            equityKicker: 'cr-kicker'
+            equityKicker: 'cr-kicker',
+            paymentTiming: 'cr-timing',
+            firstRentPct: 'cr-first-rent',
+            pikCompounding: 'cr-pik-compounding'
         };
+        // Simulations antérieures : conventions de l'époque (terme échu, PIK mensuel)
+        const legacy = { ...pending.params };
+        if (pending.type === 'creditbail' && legacy.paymentTiming == null) legacy.paymentTiming = 'arrears';
+        if (pending.type === 'mezzanine' && legacy.pikCompounding == null) legacy.pikCompounding = 'monthly';
+        pending.params = legacy;
 
         Object.entries(pending.params).forEach(([key, value]) => {
             if (key === 'insuranceMode') return; // handled below
@@ -1529,6 +1924,48 @@ function loadPendingReload() {
                 el.value = value;
             }
         });
+
+        // RCF et comparatif BFR : champs propres (listes, paramètres imbriqués)
+        const setField = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = String(v); };
+        if (pending.type === 'revolving') {
+            const p = pending.params;
+            setField('cr-commitment-mode', p.commitmentMode);
+            setField('cr-rcf-margin', p.margin);
+            setField('cr-upfront', p.upfrontFeePct);
+            if (Array.isArray(p.utilizationProfile)) setField('cr-rcf-profile', p.utilizationProfile.join('/'));
+            if (Array.isArray(p.utilizationFees)) setField('cr-rcf-tiers', p.utilizationFees.map(t => `${t.above}:${Financial.formatNumber(t.fee, 2)}`).join(' / '));
+        }
+        if (pending.type === 'bfr') {
+            const p = pending.params;
+            setField('cr-principal', p.turnover); setField('cr-dso', p.dso); setField('cr-bfr-index', p.index);
+            setField('cr-fact-comm', p.factoring?.commissionPct); setField('cr-fact-margin', p.factoring?.margin);
+            setField('cr-fact-reserve', p.factoring?.reservePct); setField('cr-fact-fixed', p.factoring?.fixedFees);
+            setField('cr-dailly-margin', p.dailly?.margin); setField('cr-dailly-advance', p.dailly?.advancePct);
+            setField('cr-dailly-fee', p.dailly?.feePerBatch); setField('cr-dailly-batches', p.dailly?.batchesPerYear);
+            setField('cr-rcfc-margin', p.rcf?.margin); setField('cr-rcfc-commit', p.rcf?.commitmentPctOfMargin);
+            setField('cr-rcfc-line', p.rcf?.line); setField('cr-rcfc-upfront', p.rcf?.upfrontFeePct); setField('cr-rcfc-years', p.rcf?.years);
+        }
+
+        // Taux variable : champs propres (listes, couverture)
+        if (pending.type === 'variable') {
+            const p = pending.params;
+            const set = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = String(v); };
+            set('cr-vamort', p.amortType);
+            set('cr-margin', p.margin);
+            set('cr-balloon', p.balloonPct);
+            set('cr-daycount', p.dayCount);
+            set('cr-start', p.startDate);
+            set('cr-upfront', p.upfrontFeePct);
+            set('cr-floor', p.floor == null ? 'none' : '0');
+            if (Array.isArray(p.indexPath)) set('cr-index-path', p.indexPath.map(v => Financial.formatNumber(v, 3)).join(' / '));
+            if (Array.isArray(p.customProfile)) set('cr-profile', p.customProfile.join('/'));
+            if (p.hedge) {
+                set('cr-hedge', p.hedge.type);
+                set('cr-hedge-pct', p.hedge.pct);
+                set('cr-hedge-rate', p.hedge.type === 'cap' ? p.hedge.capStrike : p.hedge.swapRate);
+                set('cr-cap-premium', p.hedge.capPremiumPct);
+            }
+        }
 
         // Restore insurance toggle state
         const hasRate = pending.params.insuranceRate > 0;
@@ -1689,6 +2126,8 @@ export const CreditModule = {
             setupInsuranceToggle();
             setupDeferralToggle();
             setupRateHint();
+            prefillIndexPath();
+        prefillIndexPath();
             if (currentType === 'tranching') setupTranchingListeners();
         });
 
@@ -1716,12 +2155,18 @@ export const CreditModule = {
         setupInsuranceToggle();
         setupDeferralToggle();
         setupRateHint();
+        prefillIndexPath();
         if (currentType === 'tranching') setupTranchingListeners();
 
         // Lien de partage (#credit?s=...) : restaure les paramètres et relance le calcul
         const shared = Share.getPayload();
         if (shared?.type && shared?.params) {
             window._pendingReload = { type: shared.type, params: shared.params };
+        } else if (!window._pendingReload && lastResult && lastResult.type !== 'tranching' && CREDIT_TYPES.some(t => t.id === lastResult.type)) {
+            // Retour sur la page (navigation, changement de thème) : le formulaire
+            // reprend la dernière simulation au lieu des valeurs par défaut — sinon
+            // « Sauvegarder » enregistrait autre chose que ce qui est affiché.
+            window._pendingReload = { type: lastResult.type, params: lastResult.params };
         }
 
         // Handle pending reload from history (ou lien partagé)

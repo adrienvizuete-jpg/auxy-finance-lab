@@ -50,8 +50,8 @@ export const DashboardModule = {
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
                     </div>
                     <div class="kpi-content">
-                        <div class="kpi-label">Benchmarks</div>
-                        <div class="kpi-value">${stats.totalBenchmarks}</div>
+                        <div class="kpi-label">Analyses de structuration</div>
+                        <div class="kpi-value">${(stats.byType.structured || 0) + (stats.byType.covenants || 0) + (stats.byType.debtprofile || 0)}</div>
                     </div>
                 </div>
                 <div class="kpi-card">
@@ -142,7 +142,7 @@ export const DashboardModule = {
                                 return `
                                     <div>
                                         <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:0.85rem">
-                                            <span>${typeLabels[type] || type}</span>
+                                            <span>${typeLabels[type] || escapeHtml(type)}</span>
                                             <span style="color:var(--text-muted)">${count} (${pct}%)</span>
                                         </div>
                                         <div class="progress-bar">
@@ -164,7 +164,9 @@ export const DashboardModule = {
 
     init() {
         // Quick action links
-        document.querySelectorAll('a[href^="#"]').forEach(link => {
+        // Limité au contenu de la page : la barre latérale a ses propres
+        // écouteurs (sinon chaque visite du Dashboard en ajoutait un de plus)
+        document.querySelectorAll('#page-container a[href^="#"]').forEach(link => {
             link.addEventListener('click', e => {
                 e.preventDefault();
                 const page = link.getAttribute('href').slice(1);

@@ -14,3 +14,18 @@ pipeline/.env
 pipeline/data/*.db
 pipeline/data/reports/
 veille/.env
+
+# Secrets locaux (config MCP : identifiants Sellsy, WordPress, Semrush, Google)
+.mcp.json
+.env
+*.env
+
+# Livrables clients / prospects : jamais dans ce dépôt public (publié sur Pages)
+/*.xlsx
+/*.xls
+/*.docx
+/*.pdf
+pipeline/
+cac40/
+# Workflow qui publierait les leads en artefact (RGPD) — à garder dans un dépôt privé
+.github/workflows/prospecting.yml

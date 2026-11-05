@@ -3,14 +3,18 @@
  * Tableau Emplois-Ressources (Sources & Uses)
  */
 
-import { Financial } from '../utils/financial.js';
+import { CovenantEngine } from '../utils/covenantengine.js';
 import { Storage } from '../utils/storage.js';
 import { Share } from '../utils/share.js';
 import { escapeHtml } from '../utils/sanitize.js';
+import { DossierBar } from '../utils/dossierbar.js';
+import { Market } from '../utils/market.js';
+import { Dossier } from '../utils/dossier.js';
+import { Financial } from '../utils/financial.js';
 
 // ── State ──
 let emplois = [
-    { label: 'VT [Nom cible]', amount: 12700 },
+    { label: 'VT [Nom cible]', amount: 12700, kind: 'titres' },
     { label: 'Frais', amount: 250 }
 ];
 
@@ -24,6 +28,14 @@ let tranchesSenior = [
     { label: 'A', pct: 70, duration: 6, taux: 3.5, amortType: 'constant', frequency: 'mensuel' },
     { label: 'B', pct: 30, duration: 7, taux: 4.5, amortType: 'constant', frequency: 'mensuel' }
 ];
+
+// Autres financements (hors senior) : crédit vendeur, OC, Bpifrance, mezzanine…
+let autresFin = [];
+const AUTRE_TYPES = { vendeur: 'Crédit vendeur', oc: 'Obligations convertibles', bpi: 'Prêt Bpifrance', mezz: 'Mezzanine / PIK', unitranche: 'Unitranche', capex: 'Ligne capex' };
+
+// Dimensionnement de la dette (contraintes bancaires)
+let sizing = { maxLeverage: 3.5, minDscr: 1.2, horizon: 5, growth: 3, taxPct: 12, capexPct: 12, wcPct: 2, fpMinPct: 30 };
+let marketIndex = null; // Euribor 3M publié, pour les tranches à taux variable
 
 let ebitda = 3750;
 let fondsPropres = 1200;
@@ -42,24 +54,28 @@ const PLUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 function compute() {
     const totalEmplois = emplois.reduce((s, e) => s + e.amount, 0);
     const totalDetteNonRef = detteNonRef.reduce((s, d) => s + d.amount, 0);
-    const detteSenior = Math.max(0, totalEmplois - fondsPropres);
-    const pctFP = totalEmplois > 0 ? (fondsPropres / totalEmplois * 100) : 0;
+    const totalAutres = autresFin.reduce((s, a) => s + (a.amount || 0), 0);
+    const detteSenior = Math.max(0, totalEmplois - fondsPropres - totalAutres);
+    // Fonds propres au-delà du besoin : excédent signalé, ressources plafonnées aux emplois
+    const excesFP = Math.max(0, fondsPropres - totalEmplois);
+    const pctFP = totalEmplois > 0 ? (Math.min(fondsPropres, totalEmplois) / totalEmplois * 100) : 0;
     const pctSenior = totalEmplois > 0 ? (detteSenior / totalEmplois * 100) : 0;
-    const tranchesDetail = tranchesSenior.map(t => {
-        const amount = detteSenior * t.pct / 100;
-        return { ...t, amount };
-    });
-    const detteFinClosing = detteSenior + totalDetteNonRef;
+    const pctAutres = totalEmplois > 0 ? (totalAutres / totalEmplois * 100) : 0;
+    const tranchesDetail = tranchesSenior.map(t => ({ ...t, amount: trancheAmount(detteSenior, t) }));
+    const detteFinClosing = detteSenior + totalAutres + totalDetteNonRef;
     const dfn = detteFinClosing - tresorerieMin;
-    const ratioLevier = ebitda > 0 ? dfn / ebitda : 0;
-    // VE retenue = VT (1er emploi) + Dette non refinancée - Trésorerie min
-    const vt = emplois.length > 0 ? emplois[0].amount : 0;
+    // EBITDA ≤ 0 : levier non significatif (et non « 0,00x »)
+    const ratioLevier = ebitda > 0 ? dfn / ebitda : null;
+    // VE retenue = prix des titres + dette non refinancée − trésorerie. Le prix
+    // des titres est la ligne d'emplois marquée « titres » (à défaut la 1re).
+    const vtRow = emplois.find(e => e.kind === 'titres') || emplois[0];
+    const vt = vtRow ? vtRow.amount : 0;
     const veRetenue = vt + totalDetteNonRef - tresorerieMin;
 
     return {
-        totalEmplois, totalDetteNonRef, detteSenior,
+        totalEmplois, totalDetteNonRef, detteSenior, excesFP, totalAutres, pctAutres,
         pctFP, pctSenior, tranchesDetail,
-        detteFinClosing, dfn, ratioLevier, veRetenue
+        detteFinClosing, dfn, ratioLevier, veRetenue, vtLabel: vtRow?.label || ''
     };
 }
 
@@ -84,46 +100,130 @@ function renderDetteNonRefRows() {
     `).join('');
 }
 
-const FREQ_MAP = { mensuel: 12, trimestriel: 4, semestriel: 2, annuel: 1, infine: 1 };
-const AMORT_LABELS = { constant: 'Constant', degressif: 'Dégressif', infine: 'In Fine' };
+const AMORT_LABELS = { constant: 'Constant', degressif: 'Dégressif', infine: 'In Fine', custom: 'Profil libre', balloon: 'Ballon' };
+const RATE_LABELS = { fixed: 'Fixe', floating: 'Variable' };
 const FREQ_LABELS = { mensuel: 'Mensuel', trimestriel: 'Trimestriel', semestriel: 'Semestriel', annuel: 'Annuel', infine: 'In Fine' };
 
-function computeAnnuity(amount, taux, durationYears, amortType = 'constant', frequency = 'mensuel') {
-    if (amount <= 0 || !taux || taux <= 0 || durationYears <= 0) return 0;
+const FREQ_TO_ENGINE = { mensuel: 'monthly', trimestriel: 'quarterly', semestriel: 'semiannual', annuel: 'annual', infine: 'annual' };
 
-    const periodsPerYear = FREQ_MAP[frequency] || 12;
-    const periodicRate = taux / 100 / periodsPerYear;
-    const totalPeriods = durationYears * periodsPerYear;
+/** Part de la dette senior affectée à une tranche (les % sont normalisés
+ *  s'ils ne totalisent pas 100, pour que tranches et dette nette concordent). */
+function trancheAmount(detteSenior, t) {
+    const totalPct = tranchesSenior.reduce((s, x) => s + (x.pct || 0), 0);
+    return totalPct > 0 ? detteSenior * (t.pct || 0) / totalPct : 0;
+}
 
-    // In Fine frequency = interest only each year, principal at maturity
-    if (frequency === 'infine' || amortType === 'infine') {
-        // Annual interest only
-        return amount * taux / 100;
-    }
+/** Service de la dette de la 1re année (k€) — moteur commun (taux 0 admis). */
+/** Tranche (ou autre financement) au format moteur Covenants (k€). */
+function toEngineDebt(t, amount, label = t.label) {
+    const infine = t.frequency === 'infine' || t.amortType === 'infine';
+    return {
+        label,
+        amount,
+        rate: t.taux || 0,
+        durationYears: t.duration || 1,
+        amortType: infine ? 'infine' : (t.amortType || 'constant'),
+        frequency: FREQ_TO_ENGINE[t.frequency] || 'monthly',
+        rateType: t.rateType === 'floating' ? 'floating' : 'fixed',
+        customProfile: t.customProfile,
+        balloonPct: t.balloonPct
+    };
+}
 
-    if (amortType === 'degressif') {
-        // Degressive: constant principal + decreasing interest → first year annuity
-        const principalPerPeriod = amount / totalPeriods;
-        // Average annuity over first year (sum of first periodsPerYear payments)
-        let annuity = 0;
-        let balance = amount;
-        for (let p = 0; p < periodsPerYear; p++) {
-            const interest = balance * periodicRate;
-            annuity += principalPerPeriod + interest;
-            balance -= principalPerPeriod;
-        }
-        return annuity;
-    }
+const marketForEngine = () => ({ indexPath: [marketIndex ?? 0], floor: 0 });
 
-    // Constant (amortissable constant) - standard PMT
-    const periodicPayment = Financial.pmt(periodicRate, totalPeriods, -amount);
-    return periodicPayment * periodsPerYear;
+/** Service de la dette de la 1re année (k€) — moteur commun (taux 0 et variable admis). */
+function computeAnnuity(amount, taux, durationYears, amortType = 'constant', frequency = 'mensuel', t = {}) {
+    if (!(amount > 0) || !(durationYears > 0)) return 0;
+    const profile = CovenantEngine.debtAnnualProfile(toEngineDebt({ ...t, taux, duration: durationYears, amortType, frequency }, amount), 1, marketForEngine());
+    return profile[0]?.service || 0;
+}
+
+/** Dettes de la structure (senior + autres financements) au format moteur. */
+function structureDebts(c) {
+    return [
+        ...tranchesSenior.map(t => toEngineDebt(t, trancheAmount(c.detteSenior, t), `Senior ${t.label}`)),
+        ...autresFin.map(a => toEngineDebt(a, a.amount || 0, a.label || AUTRE_TYPES[a.type] || 'Financement'))
+    ].filter(d => d.amount > 0);
+}
+
+/** Annuités A1 des autres financements, mises à jour sans réécrire les lignes (focus conservé). */
+function refreshAutresComputed() {
+    document.querySelectorAll('#er-autres-body tr[data-section="autres"]').forEach((row, i) => {
+        const a = autresFin[i];
+        const cell = row.querySelector('.er-computed');
+        if (a && cell) cell.textContent = fmtK(computeAnnuity(a.amount || 0, a.taux || 0, a.duration || 1, a.amortType || 'infine', a.frequency || 'annuel', a));
+    });
+}
+
+function renderAutresRows() {
+    if (!autresFin.length) return '<tr><td colspan="9" style="color:var(--text-muted);font-size:0.85rem">Aucun — crédit vendeur, OC, prêt Bpifrance, mezzanine…</td></tr>';
+    return autresFin.map((a, i) => `
+        <tr data-section="autres" data-index="${i}">
+            <td><input class="er-input" type="text" value="${escapeHtml(a.label)}" data-field="label" style="width:120px"></td>
+            <td><select class="er-input" data-field="type" style="width:130px;font-size:0.75rem">${Object.entries(AUTRE_TYPES).map(([k, v]) => `<option value="${k}" ${k === a.type ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
+            <td style="text-align:right"><input class="er-input narrow" type="number" value="${a.amount || 0}" data-field="amount" step="50" min="0"></td>
+            <td><select class="er-input" data-field="rateType" style="width:80px;font-size:0.75rem">${Object.entries(RATE_LABELS).map(([k, v]) => `<option value="${k}" ${k === (a.rateType || 'fixed') ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
+            <td style="text-align:right"><input class="er-input narrow" type="number" value="${a.taux || 0}" data-field="taux" step="0.25" min="0" max="30" style="width:70px"></td>
+            <td style="text-align:right"><input class="er-input narrow" type="number" value="${a.duration || 1}" data-field="duration" step="1" min="1" style="width:60px"></td>
+            <td><select class="er-input" data-field="amortType" style="width:100px;font-size:0.75rem">${Object.entries(AMORT_LABELS).filter(([k]) => k !== 'custom' && k !== 'balloon').map(([k, v]) => `<option value="${k}" ${k === (a.amortType || 'infine') ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
+            <td style="text-align:right" class="er-computed">${fmtK(computeAnnuity(a.amount || 0, a.taux || 0, a.duration || 1, a.amortType || 'infine', a.frequency || 'annuel', a))}</td>
+            <td style="width:30px"><button class="er-remove-btn" data-action="remove">${X_SVG}</button></td>
+        </tr>`).join('');
+}
+
+/** Hypothèses de projection pour le dimensionnement : dossier actif sinon EBITDA LTM. */
+function sizingProjection() {
+    const d = Dossier.get();
+    const fc = d?.forecast;
+    const years = Math.max(1, Math.min(10, Math.round(sizing.horizon) || 5));
+    const ebitdaPath = Array.from({ length: years }, (_, i) => fc?.ebitda?.[i] ?? Math.round(ebitda * Math.pow(1 + sizing.growth / 100, i + 1)));
+    const pick = (arr, pct) => ebitdaPath.map((e, i) => (fc && arr?.[i] != null ? arr[i] : e * pct / 100));
+    return {
+        years,
+        ebitda: ebitdaPath,
+        tax: pick(fc?.tax, sizing.taxPct),
+        capex: pick(fc?.capex, sizing.capexPct),
+        wcChange: pick(fc?.wcChange, sizing.wcPct),
+        fromDossier: !!fc?.ebitda?.length
+    };
+}
+
+let lastSizing = null;
+function renderSizing(c) {
+    const el = document.getElementById('er-sizing-results');
+    if (!el) return;
+    const proj = sizingProjection();
+    const result = CovenantEngine.maxDebt({
+        ...proj,
+        openingCash: 0,
+        tranches: tranchesSenior.map(t => ({ ...toEngineDebt(t, 0, `Senior ${t.label}`), share: t.pct || 0 })),
+        otherDebts: autresFin.map(a => toEngineDebt(a, a.amount || 0, a.label)).filter(d => d.amount > 0),
+        entryEbitda: ebitda,
+        entryNetOther: c.totalAutres + c.totalDetteNonRef - tresorerieMin,
+        covenantDscr: sizing.minDscr,
+        covenantLeverage: sizing.maxLeverage,
+        market: marketForEngine(),
+        excludeBullet: true
+    });
+    // Plancher de fonds propres exigé par les prêteurs (% des emplois)
+    const byEquity = Math.max(0, c.totalEmplois * (1 - (sizing.fpMinPct || 0) / 100) - c.totalAutres);
+    if (byEquity < result.max) { result.max = byEquity; result.binding = 'equity'; }
+    lastSizing = result;
+    const fpRequired = Math.max(0, c.totalEmplois - c.totalAutres - result.max);
+    const card = (label, value, sub = '') => `<div class="er-kpi-card"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div>${sub ? `<div class="result-sub">${sub}</div>` : ''}</div>`;
+    el.innerHTML = [
+        card('Max. par le levier', `${fmtK(result.byLeverage)} k€`, `${fmtRatio(sizing.maxLeverage)} × EBITDA − autre dette nette`),
+        card('Max. par le DSCR', `${fmtK(result.byDscr)} k€`, `DSCR ≥ ${fmtRatio(sizing.minDscr)} sur ${proj.years} ans${proj.fromDossier ? ' (BP du dossier)' : ''}`),
+        card('Dette senior maximale', `<span style="color:var(--primary)">${fmtK(result.max)} k€</span>`, `contrainte liante : ${({ dscr: 'DSCR', leverage: 'levier', equity: `fonds propres ≥ ${sizing.fpMinPct} %` })[result.binding]} · actuelle ${fmtK(c.detteSenior)} k€`),
+        card('Fonds propres requis', `${fmtK(fpRequired)} k€`, `${c.totalEmplois > 0 ? fmtPct(fpRequired / c.totalEmplois * 100) : '—'} des emplois`)
+    ].join('');
 }
 
 function renderTranchesRows(c) {
     return tranchesSenior.map((t, i) => {
-        const amount = c.detteSenior * t.pct / 100;
-        const annuity = computeAnnuity(amount, t.taux || 0, t.duration || 1, t.amortType || 'constant', t.frequency || 'mensuel');
+        const amount = trancheAmount(c.detteSenior, t);
+        const annuity = computeAnnuity(amount, t.taux || 0, t.duration || 1, t.amortType || 'constant', t.frequency || 'mensuel', t);
         const selAmort = () => Object.entries(AMORT_LABELS).map(([k, v]) => `<option value="${k}" ${k === (t.amortType || 'constant') ? 'selected' : ''}>${v}</option>`).join('');
         const selFreq = () => Object.entries(FREQ_LABELS).map(([k, v]) => `<option value="${k}" ${k === (t.frequency || 'mensuel') ? 'selected' : ''}>${v}</option>`).join('');
         return `
@@ -131,11 +231,14 @@ function renderTranchesRows(c) {
             <td><input class="er-input" type="text" value="${escapeHtml(t.label)}" data-field="label" style="width:70px"></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${t.pct}" data-field="pct" step="5" min="0" max="100"></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${t.duration}" data-field="duration" step="1" min="1"></td>
-            <td style="text-align:right"><input class="er-input narrow" type="number" value="${t.taux || 0}" data-field="taux" step="0.1" min="0" max="50" style="width:70px"></td>
-            <td><select class="er-input" data-field="amortType" style="width:100px;font-size:0.75rem">${selAmort()}</select></td>
+            <td><select class="er-input" data-field="rateType" style="width:80px;font-size:0.75rem">${Object.entries(RATE_LABELS).map(([k, v]) => `<option value="${k}" ${k === (t.rateType || 'fixed') ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
+            <td style="text-align:right"><input class="er-input narrow" type="number" value="${t.taux || 0}" data-field="taux" step="0.05" min="0" max="50" style="width:70px" title="${t.rateType === 'floating' ? 'Marge sur Euribor 3M' : 'Taux fixe'}"></td>
+            <td><select class="er-input" data-field="amortType" style="width:100px;font-size:0.75rem">${selAmort()}</select>
+                ${t.amortType === 'custom' ? `<input class="er-input" type="text" data-field="customProfile" value="${escapeHtml((t.customProfile || []).join('/'))}" placeholder="10/15/20/25/30" style="width:100px;margin-top:4px" title="% du nominal amorti par année">` : ''}
+                ${t.amortType === 'balloon' ? `<input class="er-input narrow" type="number" data-field="balloonPct" value="${t.balloonPct ?? 30}" min="0" max="100" step="5" style="width:60px;margin-top:4px" title="Ballon final (% du nominal)">` : ''}</td>
             <td><select class="er-input" data-field="frequency" style="width:100px;font-size:0.75rem">${selFreq()}</select></td>
-            <td style="text-align:right" class="er-computed">${fmtK(amount)}</td>
-            <td style="text-align:right" class="er-computed">${fmtK(annuity)}</td>
+            <td style="text-align:right" class="er-computed" data-computed="amount">${fmtK(amount)}</td>
+            <td style="text-align:right" class="er-computed" data-computed="annuity">${fmtK(annuity)}</td>
             <td style="width:30px">${tranchesSenior.length > 1 ? `<button class="er-remove-btn" data-action="remove">${X_SVG}</button>` : ''}</td>
         </tr>
     `}).join('');
@@ -155,7 +258,11 @@ function recalculate() {
     const elSeniorPct = document.getElementById('er-senior-pct');
     const elTotalRessources = document.getElementById('er-total-ressources');
 
-    if (elFPPct) elFPPct.textContent = fmtPct(c.pctFP);
+    if (elFPPct) {
+        elFPPct.textContent = fmtPct(c.pctFP);
+        elFPPct.title = c.excesFP > 0 ? `Fonds propres supérieurs aux emplois de ${fmtK(c.excesFP)} k€ : aucune dette senior nécessaire` : '';
+        elFPPct.style.color = c.excesFP > 0 ? 'var(--warning)' : '';
+    }
     if (elSeniorAmount) elSeniorAmount.textContent = fmtK(c.detteSenior);
     if (elSeniorPct) elSeniorPct.textContent = fmtPct(c.pctSenior);
     if (elTotalRessources) elTotalRessources.textContent = fmtK(c.totalEmplois);
@@ -172,9 +279,23 @@ function recalculate() {
     }
 
     // Tranches amounts
+    // Mise à jour en place des cellules calculées : réécrire le tableau à
+    // chaque frappe faisait perdre le focus (impossible de taper « 3,75 »)
     const tbody = document.getElementById('er-tranches-body');
     if (tbody) {
-        tbody.innerHTML = renderTranchesRows(c);
+        const rows = tbody.querySelectorAll('tr[data-section="tranches"]');
+        if (rows.length !== tranchesSenior.length) {
+            tbody.innerHTML = renderTranchesRows(c);
+        } else {
+            rows.forEach((row, i) => {
+                const t = tranchesSenior[i];
+                const amount = trancheAmount(c.detteSenior, t);
+                const amountCell = row.querySelector('[data-computed="amount"]');
+                const annuityCell = row.querySelector('[data-computed="annuity"]');
+                if (amountCell) amountCell.textContent = fmtK(amount);
+                if (annuityCell) annuityCell.textContent = fmtK(computeAnnuity(amount, t.taux || 0, t.duration || 1, t.amortType || 'constant', t.frequency || 'mensuel', t));
+            });
+        }
     }
 
     // Tranches total % warning
@@ -182,7 +303,7 @@ function recalculate() {
     const pctWarn = document.getElementById('er-tranches-pct-warn');
     if (pctWarn) {
         pctWarn.style.display = totalPct !== 100 ? 'block' : 'none';
-        pctWarn.textContent = `⚠ Total = ${totalPct}% (doit être 100%)`;
+        pctWarn.textContent = `⚠ Total = ${totalPct}% — montants recalculés au prorata (vérifiez la répartition)`;
     }
 
     // Dette non refinancée sous-total
@@ -191,9 +312,16 @@ function recalculate() {
 
     // Annuité totale
     const totalAnnuity = tranchesSenior.reduce((sum, t) => {
-        const amount = c.detteSenior * t.pct / 100;
-        return sum + computeAnnuity(amount, t.taux || 0, t.duration || 1, t.amortType || 'constant', t.frequency || 'mensuel');
-    }, 0);
+        const amount = trancheAmount(c.detteSenior, t);
+        return sum + computeAnnuity(amount, t.taux || 0, t.duration || 1, t.amortType || 'constant', t.frequency || 'mensuel', t);
+    }, 0) + autresFin.reduce((sum, a) => sum + computeAnnuity(a.amount || 0, a.taux || 0, a.duration || 1, a.amortType || 'infine', a.frequency || 'annuel', a), 0);
+
+    // Autres financements : total et part des ressources
+    const elAutres = document.getElementById('er-autres-amount');
+    if (elAutres) elAutres.textContent = fmtK(c.totalAutres);
+    const elAutresPct = document.getElementById('er-autres-pct');
+    if (elAutresPct) elAutresPct.textContent = fmtPct(c.pctAutres);
+    renderSizing(c);
     const elAnnuityTotal = document.getElementById('er-annuity-total');
     if (elAnnuityTotal) elAnnuityTotal.textContent = fmtK(totalAnnuity);
 
@@ -202,13 +330,13 @@ function recalculate() {
     setKpi('kpi-ve', fmtK(c.veRetenue));
     setKpi('kpi-df-closing', fmtK(c.detteFinClosing));
     setKpi('kpi-dfn', fmtK(c.dfn));
-    setKpi('kpi-levier', fmtRatio(c.ratioLevier));
+    setKpi('kpi-levier', c.ratioLevier == null ? 'n.s.' : fmtRatio(c.ratioLevier));
     setKpi('kpi-annuity-total', fmtK(totalAnnuity));
 
     // Store last result
     lastResult = {
         type: 'structured',
-        params: { ebitda, fondsPropres, tresorerieMin, emplois: [...emplois], detteNonRef: [...detteNonRef], tranchesSenior: [...tranchesSenior] },
+        params: { ebitda, fondsPropres, tresorerieMin, emplois: [...emplois], detteNonRef: [...detteNonRef], tranchesSenior: tranchesSenior.map(t => ({ ...t })), autresFin: autresFin.map(a => ({ ...a })), sizing: { ...sizing } },
         results: { ...c }
     };
 }
@@ -229,9 +357,34 @@ function handleTableInput(e) {
     const isText = field === 'label' || isSelect;
     const val = isText ? input.value : (parseFloat(input.value) || 0);
 
-    if (section === 'emplois' && emplois[index]) emplois[index][field] = val;
-    else if (section === 'detteNonRef' && detteNonRef[index]) detteNonRef[index][field] = val;
-    else if (section === 'tranches' && tranchesSenior[index]) tranchesSenior[index][field] = val;
+    const parsed = field === 'customProfile'
+        ? String(input.value).split(/[/;|]/).map(v => Financial.parseNumber(v)).filter(v => !isNaN(v))
+        : val;
+    if (section === 'emplois' && emplois[index]) emplois[index][field] = parsed;
+    else if (section === 'detteNonRef' && detteNonRef[index]) detteNonRef[index][field] = parsed;
+    else if (section === 'tranches' && tranchesSenior[index]) tranchesSenior[index][field] = parsed;
+    else if (section === 'autres' && autresFin[index]) autresFin[index][field] = parsed;
+
+    // Profil libre sans profil saisi : répartition linéaire par défaut (sinon
+    // tout tomberait à l'échéance, comme un in fine)
+    if (field === 'amortType' && parsed === 'balloon') {
+        const target = section === 'tranches' ? tranchesSenior[index] : null;
+        if (target && target.balloonPct == null) target.balloonPct = 30;
+    }
+    if (field === 'amortType' && parsed === 'custom') {
+        const target = section === 'tranches' ? tranchesSenior[index] : section === 'autres' ? autresFin[index] : null;
+        if (target && !(target.customProfile || []).length) {
+            const n = Math.max(1, Math.round(target.duration || 1));
+            target.customProfile = Array.from({ length: n }, () => Math.round(100 / n * 10) / 10);
+        }
+    }
+
+    // Changement de nature de taux / d'amortissement : la ligne change de forme
+    if (e.type === 'change' && (field === 'rateType' || field === 'amortType')) {
+        const body = row.parentElement;
+        if (section === 'tranches' && body) body.innerHTML = renderTranchesRows(compute());
+        if (section === 'autres' && body) body.innerHTML = renderAutresRows();
+    }
 
     recalculate();
 }
@@ -254,6 +407,9 @@ function handleRemove(e) {
         document.getElementById('er-dnr-body').innerHTML = renderDetteNonRefRows();
     } else if (section === 'tranches' && tranchesSenior.length > 1) {
         tranchesSenior.splice(index, 1);
+    } else if (section === 'autres') {
+        autresFin.splice(index, 1);
+        document.getElementById('er-autres-body').innerHTML = renderAutresRows();
     }
 
     recalculate();
@@ -273,7 +429,7 @@ function saveSimulation() {
         <h2 style="margin-bottom:20px">Sauvegarder la simulation</h2>
         <div class="form-group" style="margin-bottom:16px">
             <label class="form-label">Nom de la simulation</label>
-            <input type="text" class="form-input" id="save-sf-name" value="${defaultName}" style="width:100%">
+            <input type="text" class="form-input" id="save-sf-name" value="${escapeHtml(defaultName)}" style="width:100%">
         </div>
         <div class="form-group" style="margin-bottom:24px">
             <label class="form-label">Notes (optionnel)</label>
@@ -343,6 +499,7 @@ function exportExcel() {
     // RESSOURCES
     rows.push(['RESSOURCES (Sources)', 'Montant', '%']);
     rows.push(['Fonds Propres', fondsPropres, c.pctFP / 100]);
+    rows.push(['Autres financements', c.totalAutres, c.pctAutres / 100]);
     rows.push(['Dette Senior', c.detteSenior, c.pctSenior / 100]);
     rows.push(['TOTAL RESSOURCES', c.totalEmplois, 1]);
     rows.push([]);
@@ -350,10 +507,18 @@ function exportExcel() {
     // Tranches
     rows.push(['TRANCHES DETTE SENIOR', '% Senior', 'Durée (ans)', 'Taux (%)', 'Amortissement', 'Fréquence', 'Montant', 'Annuité']);
     c.tranchesDetail.forEach(t => {
-        const annuity = computeAnnuity(t.amount, t.taux || 0, t.duration || 1, t.amortType || 'constant', t.frequency || 'mensuel');
+        const annuity = computeAnnuity(t.amount, t.taux || 0, t.duration || 1, t.amortType || 'constant', t.frequency || 'mensuel', t);
         rows.push([`Tranche ${t.label}`, t.pct / 100, t.duration, (t.taux || 0) / 100, AMORT_LABELS[t.amortType] || 'Constant', FREQ_LABELS[t.frequency] || 'Mensuel', t.amount, annuity]);
     });
     rows.push([]);
+
+    // Autres financements
+    if (autresFin.length) {
+        rows.push(['AUTRES FINANCEMENTS', 'Nature', 'Montant', 'Taux / marge (%)', 'Durée (ans)', 'Amortissement', 'Annuité A1']);
+        autresFin.forEach(a => rows.push([a.label, AUTRE_TYPES[a.type] || '', a.amount || 0, a.taux || 0, a.duration || 1, AMORT_LABELS[a.amortType] || 'In Fine',
+            computeAnnuity(a.amount || 0, a.taux || 0, a.duration || 1, a.amortType || 'infine', a.frequency || 'annuel', a)]));
+        rows.push([]);
+    }
 
     // Dette non refinancée
     rows.push(['DETTE NON REFINANCÉE']);
@@ -362,7 +527,7 @@ function exportExcel() {
     rows.push([]);
 
     // Trésorerie
-    rows.push(['Trésorerie Minimum au Closing', `(${fmtK(tresorerieMin)})`]);
+    rows.push(['Trésorerie Minimum au Closing', -tresorerieMin]);
     rows.push([]);
 
     // KPIs
@@ -370,7 +535,18 @@ function exportExcel() {
     rows.push(['VE retenue (VT + DNR - Tréso)', c.veRetenue]);
     rows.push(['Dette Financière au Closing', c.detteFinClosing]);
     rows.push(['DFN (Dette Fin. Nette)', c.dfn]);
-    rows.push(['Ratio Levier Net (DFN / EBITDA)', c.ratioLevier]);
+    rows.push(['Ratio Levier Net (DFN / EBITDA)', c.ratioLevier ?? 'n.s.']);
+    if (lastSizing) {
+        rows.push([]);
+        rows.push(['--- CAPACITÉ D\'ENDETTEMENT SENIOR ---']);
+        rows.push(['Hypothèses', `levier net ≤ ${sizing.maxLeverage}x, DSCR ≥ ${sizing.minDscr}x sur ${sizing.horizon} ans, fonds propres ≥ ${sizing.fpMinPct} % des emplois`]);
+        rows.push(['Max. par le levier', Math.round(lastSizing.byLeverage)]);
+        rows.push(['Max. par le DSCR', Math.round(lastSizing.byDscr)]);
+        rows.push(['Dette senior maximale', Math.round(lastSizing.max)]);
+        rows.push(['Contrainte liante', ({ dscr: 'DSCR', leverage: 'Levier', equity: 'Fonds propres minimum' })[lastSizing.binding]]);
+    }
+    rows.push([]);
+    rows.push(['Document de travail — simulation indicative, ne constitue pas un engagement de financement. Montants en k€.']);
 
     const ws = XLSX.utils.aoa_to_sheet(rows);
 
@@ -378,7 +554,7 @@ function exportExcel() {
     ws['!cols'] = [{ wch: 32 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }];
 
     XLSX.utils.book_append_sheet(wb, ws, 'Emplois-Ressources');
-    XLSX.writeFile(wb, 'Emplois_Ressources.xlsx');
+    XLSX.writeFile(wb, `emplois_ressources_${new Date().toISOString().slice(0, 10)}.xlsx`);
     window.showToast?.('Export Excel téléchargé', 'success');
 }
 
@@ -393,9 +569,15 @@ function loadFromHistory() {
         if (p.ebitda !== undefined) ebitda = p.ebitda;
         if (p.fondsPropres !== undefined) fondsPropres = p.fondsPropres;
         if (p.tresorerieMin !== undefined) tresorerieMin = p.tresorerieMin;
-        if (Array.isArray(p.emplois)) emplois = p.emplois.map(e => ({ ...e }));
-        if (Array.isArray(p.detteNonRef)) detteNonRef = p.detteNonRef.map(d => ({ ...d }));
-        if (Array.isArray(p.tranchesSenior)) tranchesSenior = p.tranchesSenior.map(t => ({ ...t }));
+        // Champs numériques convertis : un lien partagé ne peut pas injecter de
+        // texte dans les attributs value="…" des lignes
+        const n = v => (isFinite(parseFloat(v)) ? parseFloat(v) : 0);
+        const nums = arr => (Array.isArray(arr) ? arr.map(n) : undefined);
+        if (Array.isArray(p.emplois)) emplois = p.emplois.map(e => ({ ...e, label: String(e.label ?? ''), amount: n(e.amount) }));
+        if (Array.isArray(p.detteNonRef)) detteNonRef = p.detteNonRef.map(d => ({ ...d, label: String(d.label ?? ''), amount: n(d.amount) }));
+        if (Array.isArray(p.tranchesSenior)) tranchesSenior = p.tranchesSenior.map(t => ({ ...t, label: String(t.label ?? ''), pct: n(t.pct), duration: n(t.duration) || 1, taux: n(t.taux), balloonPct: t.balloonPct != null ? n(t.balloonPct) : undefined, customProfile: nums(t.customProfile) }));
+        if (Array.isArray(p.autresFin)) autresFin = p.autresFin.map(a => ({ ...a, label: String(a.label ?? ''), amount: n(a.amount), duration: n(a.duration) || 1, taux: n(a.taux) }));
+        if (p.sizing && typeof p.sizing === 'object') sizing = { ...sizing, ...p.sizing };
     }
 
     // Re-render dynamic parts
@@ -409,6 +591,11 @@ function loadFromHistory() {
 
     document.getElementById('er-emplois-body').innerHTML = renderEmploisRows();
     document.getElementById('er-dnr-body').innerHTML = renderDetteNonRefRows();
+    const tranchesBody = document.getElementById('er-tranches-body');
+    if (tranchesBody) tranchesBody.innerHTML = renderTranchesRows(compute());
+    const autresBody = document.getElementById('er-autres-body');
+    if (autresBody) autresBody.innerHTML = renderAutresRows();
+    document.querySelectorAll('.er-sizing').forEach(inp => { inp.value = sizing[inp.dataset.field]; });
 
     recalculate();
 }
@@ -423,6 +610,7 @@ export const StructuredModule = {
                 <h1>Financement Structuré</h1>
                 <p>Tableau Emplois-Ressources — Modélisation Sources & Uses</p>
             </div>
+            ${DossierBar.html('structured')}
 
             <!-- Données de référence -->
             <div class="card section">
@@ -468,7 +656,12 @@ export const StructuredModule = {
                                 <td style="text-align:right" class="er-pct" id="er-fp-pct">${fmtPct(c.pctFP)}</td>
                             </tr>
                             <tr>
-                                <td>Dette Senior</td>
+                                <td>Autres financements</td>
+                                <td style="text-align:right" class="er-computed" id="er-autres-amount">${fmtK(c.totalAutres)}</td>
+                                <td style="text-align:right" class="er-pct" id="er-autres-pct">${fmtPct(c.pctAutres)}</td>
+                            </tr>
+                            <tr>
+                                <td>Dette Senior <span style="font-size:0.75rem;color:var(--text-muted)">(solde)</span></td>
                                 <td style="text-align:right" class="er-computed" id="er-senior-amount">${fmtK(c.detteSenior)}</td>
                                 <td style="text-align:right" class="er-pct" id="er-senior-pct">${fmtPct(c.pctSenior)}</td>
                             </tr>
@@ -503,7 +696,8 @@ export const StructuredModule = {
                                 <th>Tranche</th>
                                 <th style="text-align:right">% Senior</th>
                                 <th style="text-align:right">Durée (ans)</th>
-                                <th style="text-align:right">Taux (%)</th>
+                                <th>Taux</th>
+                                <th style="text-align:right">Taux / marge (%)</th>
                                 <th>Amortissement</th>
                                 <th>Fréquence</th>
                                 <th style="text-align:right">Montant (k€)</th>
@@ -516,7 +710,7 @@ export const StructuredModule = {
                         </tbody>
                         <tfoot>
                             <tr class="er-total-row">
-                                <td colspan="7">Total</td>
+                                <td colspan="8">Total (senior + autres financements)</td>
                                 <td style="text-align:right" id="er-annuity-total">—</td>
                                 <td></td>
                             </tr>
@@ -524,6 +718,40 @@ export const StructuredModule = {
                     </table>
                 </div>
                 <div id="er-tranches-pct-warn" style="color:var(--warning);font-size:0.8rem;margin:8px 12px;display:none"></div>
+            </div>
+
+            <!-- Autres financements -->
+            <div class="card section">
+                <div class="card-header">
+                    <div class="card-title">Autres financements (hors senior)</div>
+                    <button class="btn btn-sm btn-outline" id="er-add-autre">${PLUS_SVG} Ajouter</button>
+                </div>
+                <div class="table-container" style="margin-top:12px">
+                    <table class="er-table">
+                        <thead><tr><th>Libellé</th><th>Nature</th><th style="text-align:right">Montant (k€)</th><th>Taux</th><th style="text-align:right">Taux / marge (%)</th><th style="text-align:right">Durée (ans)</th><th>Amortissement</th><th style="text-align:right">Annuité A1 (k€)</th><th></th></tr></thead>
+                        <tbody id="er-autres-body">${renderAutresRows()}</tbody>
+                    </table>
+                </div>
+                <p style="font-size:0.8rem;color:var(--text-muted);margin:8px 12px 0">Ces financements réduisent la dette senior (solde des emplois) et entrent dans la dette nette et le service de la dette. Les OC sont traitées comme de la dette tant qu'elles ne sont pas converties.</p>
+            </div>
+
+            <!-- Dimensionnement de la dette -->
+            <div class="card section">
+                <div class="card-title">Capacité d'endettement senior</div>
+                <div class="form-row" style="margin-top:12px;flex-wrap:wrap">
+                    <div class="form-group"><label class="form-label">Levier net max à l'entrée (x)</label><input type="number" class="form-input er-sizing" data-field="maxLeverage" value="${sizing.maxLeverage}" step="0.25"></div>
+                    <div class="form-group"><label class="form-label">DSCR minimum (x)</label><input type="number" class="form-input er-sizing" data-field="minDscr" value="${sizing.minDscr}" step="0.05"></div>
+                    <div class="form-group"><label class="form-label">Fonds propres min. (% emplois)</label><input type="number" class="form-input er-sizing" data-field="fpMinPct" value="${sizing.fpMinPct}" step="5" min="0" max="100"></div>
+                    <div class="form-group"><label class="form-label">Horizon (ans)</label><input type="number" class="form-input er-sizing" data-field="horizon" value="${sizing.horizon}" min="1" max="10" step="1"></div>
+                    <div class="form-group"><label class="form-label">Croissance EBITDA (%/an)</label><input type="number" class="form-input er-sizing" data-field="growth" value="${sizing.growth}" step="0.5"></div>
+                    <div class="form-group"><label class="form-label">IS / capex / ΔBFR (% EBITDA)</label>
+                        <div style="display:flex;gap:4px"><input type="number" class="form-input er-sizing" data-field="taxPct" value="${sizing.taxPct}" step="1" style="width:64px"><input type="number" class="form-input er-sizing" data-field="capexPct" value="${sizing.capexPct}" step="1" style="width:64px"><input type="number" class="form-input er-sizing" data-field="wcPct" value="${sizing.wcPct}" step="0.5" style="width:64px"></div></div>
+                </div>
+                <div class="er-kpi-grid" id="er-sizing-results" style="margin-top:12px"></div>
+                <div class="btn-group" style="margin-top:8px;justify-content:flex-start">
+                    <button class="btn btn-sm btn-outline" id="er-apply-sizing">Retenir cette dette senior (ajuste les fonds propres)</button>
+                </div>
+                <p style="font-size:0.8rem;color:var(--text-muted);margin:8px 0 0">Dette senior maximale répartie selon les tranches ci-dessus, telle que le levier net d'entrée et le DSCR (CFADS / service, autres financements compris) respectent les seuils sur tout l'horizon. Prévisionnel du dossier actif s'il existe, sinon EBITDA LTM × croissance.</p>
             </div>
 
             <!-- Dette non refinancée -->
@@ -577,7 +805,7 @@ export const StructuredModule = {
                     </div>
                     <div class="er-kpi-card">
                         <div class="kpi-label">Ratio Levier Net</div>
-                        <div class="kpi-value highlight" id="kpi-levier">${fmtRatio(c.ratioLevier)}</div>
+                        <div class="kpi-value highlight" id="kpi-levier">${c.ratioLevier == null ? 'n.s.' : fmtRatio(c.ratioLevier)}</div>
                     </div>
                     <div class="er-kpi-card">
                         <div class="kpi-label">Annuité Totale</div>
@@ -610,6 +838,26 @@ export const StructuredModule = {
     },
 
     init() {
+        // Dossier client : EBITDA de référence, trésorerie, dette senior → Covenants
+        DossierBar.bind({
+            toDossier: () => {
+                const c = compute();
+                return {
+                    ebitdaLtm: ebitda,
+                    netCash: tresorerieMin,
+                    debts: structureDebts(c).map(d => ({ ...d, amount: Math.round(d.amount) })),
+                    source: 'module Financement Structuré'
+                };
+            },
+            fromDossier: d => {
+                window._pendingReload = { type: 'structured', params: {
+                    ...(d.ebitdaLtm != null ? { ebitda: d.ebitdaLtm } : {}),
+                    ...(d.netCash != null ? { tresorerieMin: d.netCash } : {})
+                } };
+                loadFromHistory();
+            }
+        });
+
         // ── Direct inputs ──
         const bindInput = (id, setter) => {
             document.getElementById(id)?.addEventListener('input', e => {
@@ -643,6 +891,38 @@ export const StructuredModule = {
             tranchesSenior.push({ label: String.fromCharCode(65 + tranchesSenior.length), pct: 0, duration: 5, taux: 3.0, amortType: 'constant', frequency: 'mensuel' });
             recalculate();
         });
+
+        // ── Autres financements ──
+        const autresBody = document.getElementById('er-autres-body');
+        autresBody?.addEventListener('input', e => { handleTableInput(e); refreshAutresComputed(); });
+        autresBody?.addEventListener('change', e => { handleTableInput(e); refreshAutresComputed(); });
+        autresBody?.addEventListener('click', handleRemove);
+        document.getElementById('er-add-autre')?.addEventListener('click', () => {
+            autresFin.push({ label: 'Crédit vendeur', type: 'vendeur', amount: 1000, taux: 4.0, duration: 5, amortType: 'infine', frequency: 'annuel', rateType: 'fixed' });
+            autresBody.innerHTML = renderAutresRows();
+            recalculate();
+        });
+
+        // ── Dimensionnement ──
+        document.querySelectorAll('.er-sizing').forEach(inp => inp.addEventListener('input', e => {
+            sizing[e.target.dataset.field] = parseFloat(e.target.value) || 0;
+            recalculate();
+        }));
+        document.getElementById('er-apply-sizing')?.addEventListener('click', () => {
+            if (!lastSizing) return;
+            const c = compute();
+            fondsPropres = Math.round(Math.max(0, c.totalEmplois - c.totalAutres - lastSizing.max));
+            const fp = document.getElementById('er-fp-amount');
+            if (fp) fp.value = String(fondsPropres);
+            recalculate();
+            window.showToast?.(`Dette senior retenue : ${fmtK(lastSizing.max)} k€ — fonds propres ajustés à ${fmtK(fondsPropres)} k€`, 'success');
+        });
+
+        // Euribor publié pour les tranches à taux variable
+        Market.getRates().then(data => {
+            marketIndex = Market.rateValue(data, 'euribor_3m');
+            recalculate();
+        }).catch(() => {});
 
         // ── Dette non refinancée table ──
         const dnrBody = document.getElementById('er-dnr-body');

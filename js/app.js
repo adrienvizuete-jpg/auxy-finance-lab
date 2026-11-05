@@ -88,7 +88,12 @@ function showToast(message, type = 'info') {
 
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
-    toast.innerHTML = `${icons[type] || icons.info}<span>${message}</span>`;
+    // L'icône est une constante ; le message passe en textContent : il peut
+    // contenir des données externes (fragment d'URL, réponse serveur).
+    toast.innerHTML = icons[type] || icons.info;
+    const text = document.createElement('span');
+    text.textContent = String(message);
+    toast.appendChild(text);
     container.appendChild(toast);
 
     setTimeout(() => {
@@ -277,13 +282,16 @@ function init() {
     // Retour d'un lien de connexion cloud (#access_token=...) : capte la
     // session AVANT le routeur, nettoie l'URL et atterrit sur l'Historique.
     if (location.hash.includes('access_token=') || location.hash.includes('error_description=')) {
-        const result = Cloud.captureSessionFromHash();
+        const pending = Cloud.captureSessionFromHash();
         history.replaceState(null, '', location.pathname + '#history');
-        if (result?.email) {
-            setTimeout(() => showToast(`Connecté : ${result.email}`, 'success'), 400);
-        } else if (result?.error) {
-            setTimeout(() => showToast(`Connexion impossible : ${result.error}`, 'error'), 400);
-        }
+        pending.then(result => {
+            if (result && 'email' in result) {
+                showToast(result.email ? `Connecté : ${result.email}` : 'Connecté', 'success');
+                if (currentPage === 'history') navigateTo('history');
+            } else if (result?.error) {
+                showToast(`Connexion impossible : ${result.error}`, 'error');
+            }
+        });
     }
 
     // Initial page from hash (la partie avant '?' — un payload de partage peut suivre)

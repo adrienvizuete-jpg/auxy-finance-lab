@@ -102,8 +102,12 @@ export const CalculatorModule = {
                     <div class="card-title">Ratios Financiers</div>
                     <div class="form-row" style="margin-top:12px">
                         <div class="form-group">
-                            <label class="form-label">EBIT / R\u00e9sultat op. (\u20ac)</label>
-                            <input type="number" class="form-input" id="calc-ratio-ebit" value="500000" step="10000">
+                            <label class="form-label">Cash-flow disponible \u2013 CFADS (\u20ac/an)</label>
+                            <input type="number" class="form-input" id="calc-ratio-ebit" value="500000" step="10000" title="EBITDA \u2212 IS \u2212 capex \u2212 variation de BFR (m\u00eame d\u00e9finition que le module Covenants)">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">EBITDA (\u20ac/an)</label>
+                            <input type="number" class="form-input" id="calc-ratio-ebitda" value="650000" step="10000">
                         </div>
                         <div class="form-group">
                             <label class="form-label">Service de la dette (\u20ac/an)</label>
@@ -175,8 +179,11 @@ export const CalculatorModule = {
         // NPV
         document.getElementById('calc-npv-btn')?.addEventListener('click', () => {
             const rate = parseFloat(document.getElementById('calc-npv-rate').value) / 100;
-            const flows = document.getElementById('calc-npv-flows').value.split('\n').map(v => parseFloat(v.trim())).filter(v => !isNaN(v));
-            if (flows.length < 2) return;
+            // Une ligne par flux, format français admis (« -1 000 000 », « 250 000,50 »)
+            const lines = document.getElementById('calc-npv-flows').value.split('\n').filter(v => v.trim());
+            const flows = lines.map(v => Financial.parseNumber(v)).filter(v => !isNaN(v));
+            if (flows.length < lines.length) window.showToast?.(`${lines.length - flows.length} ligne(s) illisible(s) ignorée(s)`, 'warning');
+            if (flows.length < 2) { window.showToast?.('Saisissez au moins deux flux (un par ligne)', 'warning'); return; }
             const npv = flows[0] + Financial.npv(rate, flows.slice(1));
             document.getElementById('calc-npv-result').style.display = 'block';
             document.getElementById('calc-npv-result').innerHTML = `
@@ -189,9 +196,17 @@ export const CalculatorModule = {
 
         // IRR
         document.getElementById('calc-irr-btn')?.addEventListener('click', () => {
-            const flows = document.getElementById('calc-irr-flows').value.split('\n').map(v => parseFloat(v.trim())).filter(v => !isNaN(v));
-            if (flows.length < 2) return;
-            const irr = Financial.irr(flows) * 100;
+            const lines = document.getElementById('calc-irr-flows').value.split('\n').filter(v => v.trim());
+            const flows = lines.map(v => Financial.parseNumber(v)).filter(v => !isNaN(v));
+            if (flows.length < lines.length) window.showToast?.(`${lines.length - flows.length} ligne(s) illisible(s) ignorée(s)`, 'warning');
+            if (flows.length < 2) { window.showToast?.('Saisissez au moins deux flux (un par ligne)', 'warning'); return; }
+            let irr;
+            try {
+                irr = Financial.irr(flows) * 100;
+            } catch {
+                window.showToast?.('TRI non calculable : ces flux n\u2019admettent pas de taux unique (vérifiez les signes)', 'error');
+                return;
+            }
             document.getElementById('calc-irr-result').style.display = 'block';
             document.getElementById('calc-irr-result').innerHTML = `
                 <div class="results-grid">
@@ -221,24 +236,26 @@ export const CalculatorModule = {
 
         // Ratios
         document.getElementById('calc-ratio-btn')?.addEventListener('click', () => {
-            const ebit = parseFloat(document.getElementById('calc-ratio-ebit').value);
+            const cfads = parseFloat(document.getElementById('calc-ratio-ebit').value);
+            const ebitdaVal = parseFloat(document.getElementById('calc-ratio-ebitda').value);
             const ds = parseFloat(document.getElementById('calc-ratio-ds').value);
             const interest = parseFloat(document.getElementById('calc-ratio-interest').value);
             const loan = parseFloat(document.getElementById('calc-ratio-loan').value);
             const asset = parseFloat(document.getElementById('calc-ratio-asset').value);
 
-            const dscr = Financial.dscr(ebit, ds);
-            const icr = Financial.icr(ebit, interest);
+            // Définitions alignées sur Covenants : DSCR = CFADS / service, ICR = EBITDA / intérêts
+            const dscr = Financial.dscr(cfads, ds);
+            const icr = Financial.icr(ebitdaVal, interest);
             const ltv = Financial.ltv(loan, asset);
 
-            const dscrColor = dscr >= 1.3 ? 'var(--success)' : dscr >= 1.0 ? 'var(--warning)' : 'var(--danger)';
+            const dscrColor = dscr >= 1.2 ? 'var(--success)' : dscr >= 1.0 ? 'var(--warning)' : 'var(--danger)';
             const icrColor = icr >= 3 ? 'var(--success)' : icr >= 1.5 ? 'var(--warning)' : 'var(--danger)';
             const ltvColor = ltv <= 60 ? 'var(--success)' : ltv <= 80 ? 'var(--warning)' : 'var(--danger)';
 
             document.getElementById('calc-ratio-result').style.display = 'block';
             document.getElementById('calc-ratio-result').innerHTML = `
                 <div class="results-grid">
-                    <div class="result-item"><div class="result-label">DSCR</div><div class="result-value" style="color:${dscrColor}">${dscr.toFixed(2)}x</div><div class="result-sub">${dscr >= 1.3 ? 'Confortable' : dscr >= 1.0 ? 'Limite' : 'Insuffisant'}</div></div>
+                    <div class="result-item"><div class="result-label">DSCR</div><div class="result-value" style="color:${dscrColor}">${dscr.toFixed(2)}x</div><div class="result-sub">${dscr >= 1.2 ? 'Au-dessus du covenant usuel (1,20x)' : dscr >= 1.0 ? 'Sous le covenant usuel' : 'Insuffisant'}</div></div>
                     <div class="result-item"><div class="result-label">ICR</div><div class="result-value" style="color:${icrColor}">${icr.toFixed(2)}x</div><div class="result-sub">${icr >= 3 ? 'Solide' : icr >= 1.5 ? 'Acceptable' : 'Risqu\u00e9'}</div></div>
                     <div class="result-item"><div class="result-label">LTV</div><div class="result-value" style="color:${ltvColor}">${ltv.toFixed(1)}%</div><div class="result-sub">${ltv <= 60 ? 'Conservateur' : ltv <= 80 ? 'Mod\u00e9r\u00e9' : '\u00c9lev\u00e9'}</div></div>
                 </div>
@@ -527,6 +544,9 @@ export const StressTestModule = {
 
             Charts.destroy('chart-stress-line');
             const ctxLine = document.getElementById('chart-stress-line');
+            // Graphique créé hors du registre Charts : on libère l'instance
+            // précédente du canvas, sinon elles s'empilent à chaque calcul
+            if (ctxLine) /** @type {any} */ (window).Chart?.getChart?.(ctxLine)?.destroy();
             if (ctxLine) {
                 const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
                 const theme = {

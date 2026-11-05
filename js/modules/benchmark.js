@@ -220,8 +220,10 @@ function runBenchmark() {
         // 3. Overlay insurance on each period
         let totalInsurance = 0;
         schedule.forEach(row => {
-            const insP1 = computePersonInsurance(loan.insP1, loan.principal, row.balance, ppy);
-            const insP2 = computePersonInsurance(loan.insP2, loan.principal, row.balance, ppy);
+            // Assiette CRD = capital restant dû en DÉBUT de période (avant l'échéance)
+            const crdStart = row.balance + (row.principal || 0);
+            const insP1 = computePersonInsurance(loan.insP1, loan.principal, crdStart, ppy);
+            const insP2 = computePersonInsurance(loan.insP2, loan.principal, crdStart, ppy);
             const periodIns = insP1 + insP2;
             row.insurance = periodIns;
             row.payment = (row.payment || 0) + periodIns;
@@ -237,16 +239,11 @@ function runBenchmark() {
         const totalPayment = loan.principal + totalCost;
 
         // 5. Compute TAEG with insurance + guarantee
-        let taeg = null;
-        try {
-            const cashflows = [-(loan.principal - (loan.fees || 0) - guaranteeAmount)];
-            schedule.forEach(row => {
-                cashflows.push(row.payment);
-            });
-            taeg = Financial.taeg(cashflows, ppy);
-        } catch (e) {
-            taeg = sim.taeg || null;
-        }
+        const cashflows = [-(loan.principal - (loan.fees || 0) - guaranteeAmount)];
+        schedule.forEach(row => cashflows.push(row.payment));
+        const rates = Financial._effectiveRates(cashflows, ppy);
+        const taeg = rates.taeg ?? sim.taeg ?? null;
+        const teg = rates.teg ?? sim.teg ?? null;
 
         return {
             ...loan,
@@ -259,7 +256,8 @@ function runBenchmark() {
             totalCost,
             totalPayment,
             schedule,
-            taeg
+            taeg,
+            teg
         };
     });
 
@@ -277,16 +275,20 @@ function renderComparison() {
     const bestInterest = Math.min(...results.map(r => r.totalInterest));
     const bestInsurance = Math.min(...results.map(r => r.totalInsurance));
 
-    // Scoring
-    const maxCost = Math.max(...results.map(r => r.totalCost));
-    const maxPayment = Math.max(...results.map(r => r.monthlyPayment));
-    const maxRate = Math.max(...results.map(r => r.rate));
+    // Scoring — tout est rapporté au montant emprunté pour comparer des offres
+    // de montants différents. La recommandation suit le TAEG tout compris
+    // (intérêts, frais, assurance, garantie) ; les sous-scores éclairent le choix.
+    const costRatio = r => (r.principal > 0 ? r.totalCost / r.principal : 0);
+    const paymentRatio = r => (r.principal > 0 ? r.monthlyPayment / r.principal : 0);
+    const maxCostRatio = Math.max(...results.map(costRatio));
+    const maxPaymentRatio = Math.max(...results.map(paymentRatio));
+    const maxTaeg = Math.max(...results.map(r => r.taeg ?? r.rate));
     const maxDuration = Math.max(...results.map(r => r.duration));
 
     const scoredLoans = results.map(r => {
-        const costScore = maxCost > 0 ? 10 * (1 - r.totalCost / maxCost) : 5;
-        const paymentScore = maxPayment > 0 ? 10 * (1 - r.monthlyPayment / maxPayment) : 5;
-        const rateScore = maxRate > 0 ? 10 * (1 - r.rate / maxRate) : 5;
+        const costScore = maxCostRatio > 0 ? 10 * (1 - costRatio(r) / maxCostRatio) : 5;
+        const paymentScore = maxPaymentRatio > 0 ? 10 * (1 - paymentRatio(r) / maxPaymentRatio) : 5;
+        const rateScore = maxTaeg > 0 ? 10 * (1 - (r.taeg ?? r.rate) / maxTaeg) : 5;
         const flexScore = r.type === 'constant' ? 6 : r.type === 'degressif' ? 7 : 5;
         const durationScore = maxDuration > 0 ? 10 * (1 - r.duration / maxDuration) : 5;
 
@@ -303,7 +305,7 @@ function renderComparison() {
         };
     });
 
-    const winner = scoredLoans.reduce((best, r) => r.totalScore > best.totalScore ? r : best, scoredLoans[0]);
+    const winner = scoredLoans.reduce((best, r) => ((r.taeg ?? Infinity) < (best.taeg ?? Infinity) ? r : best), scoredLoans[0]);
 
     const hasInsurance = results.some(r => r.totalInsurance > 0);
     const hasGuarantee = results.some(r => r.guaranteeAmount > 0);
@@ -371,15 +373,19 @@ function renderComparison() {
                             <td><strong>Coût total</strong></td>
                             ${results.map(r => `<td class="number" style="${r.totalCost === bestCost ? 'color:var(--success)' : ''}">${Financial.formatCurrency(r.totalCost)}</td>`).join('')}
                         </tr>
+                        ${results.some(r => r.teg) ? `<tr>
+                            <td>TEG (proportionnel)</td>
+                            ${results.map(r => `<td class="number">${r.teg ? Financial.formatPercent(r.teg) : '—'}</td>`).join('')}
+                        </tr>` : ''}
                         ${results.some(r => r.taeg) ? `<tr>
-                            <td>TAEG</td>
+                            <td>TAEG (actuariel)</td>
                             ${results.map(r => `<td class="number">${r.taeg ? Financial.formatPercent(r.taeg) : '—'}</td>`).join('')}
                         </tr>` : ''}
                     </tbody>
                 </table>
             </div>
             ${winner ? `<div style="margin-top:16px;padding:12px 16px;background:var(--success-bg);border-radius:var(--radius-md);font-size:0.9rem">
-                <strong style="color:var(--success)">Recommandation :</strong> ${escapeHtml(winner.name)} offre le meilleur rapport global (score: ${winner.totalScore.toFixed(1)}/50)
+                <strong style="color:var(--success)">Offre la moins chère :</strong> ${escapeHtml(winner.name)} — TAEG tout compris ${Financial.formatPercent(winner.taeg)} (TEG ${Financial.formatPercent(winner.teg)}), coût total ${Financial.formatPercent(winner.principal > 0 ? winner.totalCost / winner.principal * 100 : null)} du montant emprunté. À pondérer selon la souplesse (différé, remboursement anticipé, garanties).
             </div>` : ''}
         </div>
 
@@ -435,16 +441,20 @@ function renderComparison() {
     Charts.multiLineComparison('chart-bench-balance', datasets, labels);
 
     // Export handlers
-    document.getElementById('bench-export-pdf')?.addEventListener('click', () => Export.benchmarkPdf(results));
-    document.getElementById('bench-export-excel')?.addEventListener('click', () => {
+    // onclick (et non addEventListener) : un seul export par clic même après
+    // plusieurs comparaisons successives
+    const pdfBtn = document.getElementById('bench-export-pdf');
+    if (pdfBtn) pdfBtn.onclick = () => Export.benchmarkPdf(results);
+    const xlsBtn = document.getElementById('bench-export-excel');
+    if (xlsBtn) xlsBtn.onclick = () => {
         if (typeof XLSX === 'undefined') return;
         const wb = XLSX.utils.book_new();
         const data = [
-            ['Prêt', 'Montant', 'Taux', 'Durée', 'Type', 'Mensualité', 'Ass./mois', 'Total Int.', 'Coût Ass.', 'Garantie', 'Coût Total', 'TAEG'],
+            ['Prêt', 'Montant (€)', 'Taux (%)', 'Durée (mois)', 'Type', 'Mensualité (€)', 'Ass./mois (€)', 'Total Int. (€)', 'Coût Ass. (€)', 'Garantie (€)', 'Coût Total (€)', 'TEG (%)', 'TAEG (%)'],
             ...results.map(r => [
                 r.name,
                 r.principal,
-                r.rate + '%',
+                r.rate,
                 r.duration,
                 r.type === 'constant' ? 'Amortissable' : r.type === 'degressif' ? 'Dégressif' : 'In Fine',
                 Math.round(r.monthlyPayment * 100) / 100,
@@ -453,14 +463,15 @@ function renderComparison() {
                 Math.round(r.totalInsurance),
                 Math.round(r.guaranteeAmount),
                 Math.round(r.totalCost),
-                r.taeg ? r.taeg.toFixed(2) + '%' : '—'
+                r.teg != null ? Math.round(r.teg * 1000) / 1000 : null,
+                r.taeg != null ? Math.round(r.taeg * 1000) / 1000 : null
             ])
         ];
         const ws = XLSX.utils.aoa_to_sheet(data);
         ws['!cols'] = data[0].map(() => ({ wch: 16 }));
         XLSX.utils.book_append_sheet(wb, ws, 'Benchmark');
         XLSX.writeFile(wb, `benchmark_${new Date().toISOString().slice(0, 10)}.xlsx`);
-    });
+    };
 
     document.querySelectorAll('.bench-output').forEach(el => el.classList.remove('hidden'));
 }

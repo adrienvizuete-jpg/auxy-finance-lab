@@ -169,18 +169,91 @@ describe('Tranching consolidé', () => {
 
 // ─────────────────────────────────────────────
 describe('Remboursement anticipé (IRA)', () => {
-    test('IRA = max(3 % CRD ; 6 mois d\'intérêts sur le montant remboursé)', () => {
-        const sim = Financial.amortissableConstant({ principal: 500000, annualRate: 4.5, durationMonths: 84 });
-        const a = Financial.prepaymentAnalysis({
-            schedule: sim.schedule, principal: 500000, annualRate: 4.5,
-            prepaymentPeriod: 24, prepaymentAmount: 100000, strategy: 'reduceDuration'
-        });
+    const sim = Financial.amortissableConstant({ principal: 500000, annualRate: 4.5, durationMonths: 84 });
+    const base = { schedule: sim.schedule, principal: 500000, annualRate: 4.5, prepaymentPeriod: 24, prepaymentAmount: 100000, strategy: 'reduceDuration' };
+
+    test('règle par défaut : plafond = min(3 % CRD ; 6 mois d\'intérêts sur le capital remboursé)', () => {
+        const a = Financial.prepaymentAnalysis(base);
         const crd24 = sim.schedule[23].balance;
         approx(a.ira3pct, crd24 * 0.03, 0.01, '3 % CRD');
         approx(a.ira6mois, 100000 * (0.045 / 12) * 6, 0.01, '6 mois intérêts');
-        approx(a.ira, Math.max(a.ira3pct, a.ira6mois), 1e-9, 'max des deux');
+        approx(a.ira, Math.min(a.ira3pct, a.ira6mois), 1e-9, 'min des deux');
         assert.ok(a.comparison.savings.interest > 0, 'RA réduit les intérêts');
         assert.ok(a.comparison.after.duration < a.comparison.before.duration, 'durée réduite');
+    });
+
+    test('clauses contractuelles : forfait % du remboursé, n mois d\'intérêts, aucune', () => {
+        approx(Financial.prepaymentAnalysis({ ...base, iraMode: 'pct', iraPct: 3 }).ira, 3000, 1e-9, '3 % de 100 k€');
+        approx(Financial.prepaymentAnalysis({ ...base, iraMode: 'months', iraMonths: 3 }).ira, 100000 * 0.045 / 12 * 3, 1e-9, '3 mois');
+        assert.equal(Financial.prepaymentAnalysis({ ...base, iraMode: 'none' }).ira, 0);
+    });
+});
+
+describe('TEG proportionnel', () => {
+    test('TEG = taux de période × périodes ; TAEG actuariel ≥ TEG', () => {
+        const r = Financial.amortissableConstant({ principal: 1e6, annualRate: 4.5, durationMonths: 84, fees: 10000, frequency: 'quarterly' });
+        approx(r.taeg, 4.882765724, 1e-6, 'TAEG (recalcul Python indépendant)');
+        approx(r.teg, 4.795824512, 1e-6, 'TEG (recalcul Python indépendant)');
+    });
+
+    test('durée non multiple de la périodicité signalée', () => {
+        const r = Financial.inFine({ principal: 1e6, annualRate: 6, durationMonths: 13, frequency: 'quarterly' });
+        assert.equal(r.effectiveDurationMonths, 12);
+    });
+});
+
+describe('Tranching consolidé', () => {
+    test('CRD entre deux échéances = montant tiré tant qu\'aucune échéance n\'est tombée', () => {
+        const tr = Financial.tranching([
+            { name: 'A', amount: 6e6, rate: 4.5, duration: 84, frequency: 'semiannual' },
+            { name: 'B', amount: 4e6, rate: 5.25, duration: 96, type: 'infine', frequency: 'quarterly' }
+        ]);
+        approx(tr.consolidated.schedule[0].balance, 10e6, 1e-6, 'mois 1');
+        approx(tr.consolidated.schedule[5].balance, tr.tranches[0].result.schedule[0].balance + 4e6, 1e-6, 'mois 6 : après la 1re échéance semestrielle');
+    });
+});
+
+describe('Revolving et crédit-bail', () => {
+    test('RCF non tiré : pas de taux infini, coût rapporté à la ligne', () => {
+        const r = Financial.revolving({ creditLine: 5e6, utilization: 0, annualRate: 4, commitmentFee: 0.35, durationMonths: 12 });
+        assert.equal(r.effectiveRate, null);
+        approx(r.lineCostRate, 0.35, 1e-9, 'commission de non-utilisation seule');
+    });
+
+    test('crédit-bail à terme à échoir : loyer = loyer échu / (1 + r)', () => {
+        const p = { assetValue: 500000, deposit: 50000, annualRate: 5, durationMonths: 60, residualValue: 5000 };
+        approx(Financial.creditBail(p).monthlyRent, 8418.532304918, 1e-6, 'terme échu (Python)');
+        const adv = Financial.creditBail({ ...p, paymentTiming: 'advance' });
+        approx(adv.monthlyRent, 8383.600635603, 1e-6, 'terme à échoir (Python)');
+        approx(adv.schedule[adv.schedule.length - 1].balance, 5000, 1e-4, 'solde = valeur résiduelle');
+    });
+});
+
+describe('Mezzanine', () => {
+    test('PIK capitalisé annuellement (Python : 12 653 190 €, TAEG 10,718 %)', () => {
+        const r = Financial.detteMezzanine({ principal: 1e7, cashRate: 6, pikRate: 4, durationMonths: 72, fees: 200000, pikCompounding: 'annual' });
+        approx(r.finalRepayment, 12653190.18496, 1e-3, 'remboursement final');
+        approx(r.taeg, 10.718467764, 1e-6, 'TAEG');
+        assert.ok(r.totalCost > 0, 'coût positif (le nominal n\'est plus retranché)');
+    });
+});
+
+describe('Waterfall (structuredFinance)', () => {
+    const tranches = [{ name: 'Senior', amount: 8e6, rate: 5, priority: 1 }, { name: 'Mezz', amount: 2e6, rate: 10, priority: 2 }];
+
+    test('intérêts de toutes les tranches avant tout capital : TRI mezz = taux contractuel', () => {
+        const wf = Financial.structuredFinance({ tranches, projectCashflows: Array(120).fill(120000), durationMonths: 120 });
+        const mezz = wf.tranches.find(t => t.name === 'Mezz');
+        approx(/** @type {number} */ (mezz.irr), 10, 1e-6, 'TRI nominal mezz');
+        assert.ok(wf.waterfall[0].allocations[1].interest > 0, 'mezz servie dès le 1er mois');
+    });
+
+    test('insuffisance de cash : intérêts impayés capitalisés, pas effacés', () => {
+        const wf = Financial.structuredFinance({ tranches, projectCashflows: Array(12).fill(30000), durationMonths: 12 });
+        const senior = wf.tranches.find(t => t.name === 'Senior');
+        const mezz = wf.tranches.find(t => t.name === 'Mezz');
+        assert.ok(senior.balance > 8e6, 'senior : arriérés capitalisés');
+        assert.ok(mezz.capitalizedInterest > 16000 * 12, 'mezz : intérêts courus capitalisés');
     });
 });
 
@@ -207,5 +280,64 @@ describe('Analyse de sensibilité', () => {
         approx(grid[1][1].monthlyPayment, 6950.08, 0.02, 'case centrale = base');
         assert.ok(grid[2][1].monthlyPayment > grid[1][1].monthlyPayment, 'taux + → mensualité +');
         assert.ok(grid[1][2].monthlyPayment < grid[1][1].monthlyPayment, 'durée + → mensualité -');
+    });
+});
+
+describe('Saisie au format français (parseNumber)', () => {
+    test('espaces, virgule décimale, symboles', () => {
+        assert.equal(Financial.parseNumber('-1 000 000'), -1000000);
+        assert.equal(Financial.parseNumber('250 000,50'), 250000.5);
+        assert.equal(Financial.parseNumber('1.000,50'), 1000.5);
+        assert.equal(Financial.parseNumber('4,5 %'), 4.5);
+        assert.equal(Financial.parseNumber('12 000 €'), 12000);
+        assert.ok(Number.isNaN(Financial.parseNumber('abc')));
+    });
+});
+
+describe('RCF saisonnier et comparatif BFR', () => {
+    test('profil de tirage mensuel : non-utilisation en % de la marge, paliers, clean-down', () => {
+        const r = Financial.revolving({ creditLine: 1e6, utilizationProfile: [0, 50, 100], annualRate: 4, commitmentFee: 35, commitmentMode: 'ofMargin', margin: 2, utilizationFees: [{ above: 66, fee: 0.2 }], upfrontFeePct: 0.5, durationMonths: 3 });
+        approx(r.commitmentRate, 0.7, 1e-12, '35 % de 2 % de marge');
+        approx(r.totalInterest, (0 + 5e5 + 1e6) * 0.04 / 12, 1e-6, 'intérêts sur le tiré');
+        approx(r.totalCommitment, (1e6 + 5e5 + 0) * 0.007 / 12, 1e-6, 'non-utilisation');
+        approx(r.totalUtilizationFee, 1e6 * 0.002 / 12, 1e-6, 'palier > 66 % seulement au mois 3');
+        approx(r.upfrontFee, 5000, 1e-9, 'frais de mise en place');
+        assert.equal(r.monthsAtZero, 1);
+    });
+
+    test('BFR : encours = CA × DSO / 365, coût affacturage = commission + financement', () => {
+        const r = Financial.bfrComparison({ turnover: 3.65e6, dso: 60, index: 3,
+            factoring: { commissionPct: 0.3, margin: 1, reservePct: 10 },
+            dailly: { margin: 1, advancePct: 100 }, rcf: { margin: 1.5, commitmentPctOfMargin: 35, line: 6e5 } });
+        approx(r.receivables, 600000, 1e-6, 'encours');
+        const f = r.solutions[0];
+        approx(f.financed, 540000, 1e-6, 'retenue 10 %');
+        approx(f.cost, 3.65e6 * 0.003 + 540000 * 0.04 * 365 / 360, 1e-6, 'coût affacturage');
+        approx(r.solutions[1].cost, 600000 * 0.04 * 365 / 360, 1e-6, 'Dailly');
+    });
+});
+
+describe('Crédit-bail immobilier vs emprunt', () => {
+    test('structure du comparatif et cohérence des flux', () => {
+        const r = Financial.cbiVsLoan({ price: 2e6, landPct: 20, notaryPct: 7.5, isRate: 25, buildingDepYears: 30, discountRate: 5,
+            loan: { rate: 4, durationYears: 15, apportPct: 20 }, cbi: { rate: 4.5, durationYears: 15, avancePct: 10, residualPct: 1 } });
+        assert.equal(r.rows.length, 30, 'horizon = amortissement du bâti (économie d\'IS après le terme du prêt)');
+        assert.ok(r.rows[20].loanTaxSaving > 0 && r.rows[20].loanService === 0);
+        approx(r.apport, 2e6 * 0.2 + 150000, 1e-6, 'apport + frais de notaire');
+        approx(r.rows[14].cbiOption, 20000, 1e-6, 'levée d\'option au terme');
+        // économie d'IS du crédit-bail = 25 % des loyers hors quote-part terrain
+        approx(r.rows[0].cbiTaxSaving, r.rows[0].cbiRents * 0.8 * 0.25, 1e-6);
+        assert.ok(['cbi', 'loan'].includes(r.cheaper));
+        approx(r.advantage, r.npvLoan - r.npvCbi, 1e-9);
+    });
+});
+
+describe('parseNumber — séparateurs de milliers', () => {
+    test('1.000, 1.000.000, 1,000,000, signe moins typographique', () => {
+        assert.equal(Financial.parseNumber('1.000'), 1000);
+        assert.equal(Financial.parseNumber('1.000.000'), 1000000);
+        assert.equal(Financial.parseNumber('1,000,000'), 1000000);
+        assert.equal(Financial.parseNumber('\u22125'), -5);
+        assert.equal(Financial.parseNumber('1,000.50'), 1000.5);
     });
 });

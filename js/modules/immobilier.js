@@ -8,6 +8,8 @@ import { Financial } from '../utils/financial.js';
 import { Charts } from '../utils/charts.js';
 import { Export } from '../utils/export.js';
 import { Share } from '../utils/share.js';
+import { escapeHtml } from '../utils/sanitize.js';
+import { LoanEngine } from '../utils/loanengine.js';
 
 // =============================================
 // CONSTANTS
@@ -64,8 +66,17 @@ const NATURE_CONFIG = {
 const AMORT_OPTIONS = [
     { value: 'constant', label: 'Amortissable Constant' },
     { value: 'degressif', label: 'Amortissable Dégressif' },
+    { value: 'balloon', label: 'Amortissement partiel + ballon' },
     { value: 'infine', label: 'In Fine' }
 ];
+
+// Frais d'acquisition par régime (ordre de grandeur, % du prix) — à affiner
+// avec l'office notarial : droits de mutation, émoluments, débours.
+const NOTARY_REGIMES = {
+    ancien: { label: 'Ancien (~7,5 %)', pct: 7.5 },
+    neuf: { label: 'Neuf / VEFA (~2,5 %)', pct: 2.5 },
+    marchand: { label: 'Marchand de biens, engagement de revendre (~3 %)', pct: 3.0 }
+};
 
 const FREQ_OPTIONS = [
     { value: 'monthly', label: 'Mensuel' },
@@ -92,6 +103,20 @@ const state = {
     acquisitionCost: 2000000,
     travauxCost: 0,
     fraisNotaire: 150000,
+    notaryRegime: 'ancien',
+    balloonPct: 30,
+    noiGrowthPct: 1.5,     // indexation annuelle des loyers nets
+    valueGrowthPct: 1.0,   // revalorisation annuelle du bien
+    // Comparaison crédit-bail immobilier / emprunt (SCI à l'IS)
+    cbiEnabled: 'non',
+    cbiRate: 4.5,
+    cbiDurationYears: 15,
+    cbiAvancePct: 10,
+    cbiResidualPct: 1,
+    landPct: 20,
+    isRate: 25,
+    depYears: 30,
+    discountRate: 5,
     fraisDivers: 0,
     grossRent: 120000,
     taxeFonciere: 8000,
@@ -136,7 +161,7 @@ function computeNOI() {
 
 function computeValuation() {
     const noi = computeNOI();
-    return state.capRate > 0 ? noi / (state.capRate / 100) : 0;
+    return state.capRate > 0 ? noi / (state.capRate / 100) : 0; // 0 = non valorisable (LTV non calculée)
 }
 
 function computePropertyValue() {
@@ -160,7 +185,7 @@ function computeTVAAmount() {
 
 function computeLTV() {
     const value = computePropertyValue();
-    return value > 0 ? (state.loanAmount / value) * 100 : 0;
+    return value > 0 ? (state.loanAmount / value) * 100 : null; // null = valeur inconnue, pas « 0 % »
 }
 
 function computeLTC() {
@@ -176,7 +201,12 @@ function computeDSCR(annualDebtService) {
 function computeSensitivityTable() {
     const noi = computeNOI();
     const rows = [];
-    for (let cr = state.capRateMin; cr <= state.capRateMax + 0.001; cr += state.capRateStep) {
+    // Garde-fous : pas > 0 (sinon boucle infinie), taux > 0 (sinon valeur
+    // infinie), au plus 60 lignes quelle que soit la saisie.
+    const step = state.capRateStep > 0 ? state.capRateStep : 0.25;
+    const min = Math.max(0.25, state.capRateMin || 0);
+    const max = Math.max(min, state.capRateMax || 0);
+    for (let cr = min, i = 0; cr <= max + 0.001 && i < 60; cr += step, i++) {
         const crRound = Math.round(cr * 100) / 100;
         const val = noi / (crRound / 100);
         const ltv = val > 0 ? (state.loanAmount / val) * 100 : 0;
@@ -197,11 +227,19 @@ function computeAmortization() {
     switch (state.amortType) {
         case 'degressif': return Financial.amortissableDegressif(params);
         case 'infine': return Financial.inFine(params);
+        case 'balloon': {
+            // Amortissement partiel avec ballon final : moteur générique
+            const b = LoanEngine.build({ principal: state.loanAmount, durationMonths: state.durationMonths, frequency: state.frequency, amortType: 'balloon', balloonPct: state.balloonPct, fixedRate: state.annualRate });
+            let cum = 0;
+            const schedule = b.rows.map(r => { cum += r.interest; return { period: r.period, payment: r.payment, principal: r.principal, interest: r.interest, insurance: 0, balance: r.balance, totalInterest: cum }; });
+            return { schedule, totalInterest: b.totalInterest, totalPayment: b.totalPayment + (state.fees || 0), monthlyPayment: schedule[0] ? schedule[0].payment / (12 / Financial.getPeriodsPerYear(state.frequency)) : 0, taeg: b.taeg, teg: b.teg };
+        }
         default: return Financial.amortissableConstant(params);
     }
 }
 
 function ltvBadge(value) {
+    if (value == null) return '<span class="kpi-badge kpi-badge-orange">Valeur à renseigner</span>';
     if (value > 80) return '<span class="kpi-badge kpi-badge-red">Élevé</span>';
     if (value > 70) return '<span class="kpi-badge kpi-badge-orange">Modéré</span>';
     return '<span class="kpi-badge kpi-badge-green">Bon</span>';
@@ -212,6 +250,9 @@ function dscrBadge(value) {
     if (value < 1.2) return '<span class="kpi-badge kpi-badge-orange">Limite</span>';
     return '<span class="kpi-badge kpi-badge-green">Confortable</span>';
 }
+
+/** @param {number | null} v */
+const fmtLtv = v => (v == null || !isFinite(v) ? 'n.c.' : v.toFixed(1).replace('.', ',') + ' %');
 
 function sensitivityColor(ltv) {
     if (ltv > 80) return 'var(--danger-bg, #fde8e8)';
@@ -253,9 +294,31 @@ function runCalculation() {
         taeg = sim.taeg || null;
     }
 
+    // ICR et LTV dans le temps : loyers nets indexés, bien revalorisé
+    const ratiosByYear = [];
+    const nYears = Math.min(30, Math.ceil(schedule.length / ppy));
+    for (let y = 1; y <= nYears; y++) {
+        const rows = schedule.slice((y - 1) * ppy, y * ppy);
+        const interest = rows.reduce((t, r) => t + (r.interest || 0), 0);
+        const service = rows.reduce((t, r) => t + (r.payment || 0), 0);
+        const noiY = noi * Math.pow(1 + (state.noiGrowthPct || 0) / 100, y - 1);
+        const valueY = propertyValue * Math.pow(1 + (state.valueGrowthPct || 0) / 100, y);
+        const crd = rows.length ? rows[rows.length - 1].balance : 0;
+        ratiosByYear.push({ year: y, noi: noiY, interest, service, icr: interest > 0 ? noiY / interest : null, dscr: service > 0 ? noiY / service : null, crd, value: valueY, ltv: valueY > 0 ? crd / valueY * 100 : null });
+    }
+
+    // Crédit-bail immobilier vs emprunt (natures patrimoniales)
+    const cbi = config.showRevenue && state.cbiEnabled === 'oui' ? Financial.cbiVsLoan({
+        price: (state.acquisitionCost || 0) + (state.travauxCost || 0),
+        landPct: state.landPct, notaryPct: NOTARY_REGIMES[state.notaryRegime]?.pct ?? 7.5,
+        isRate: state.isRate, buildingDepYears: state.depYears, discountRate: state.discountRate,
+        loan: { rate: state.annualRate, durationYears: state.durationMonths / 12, apportPct: state.acquisitionCost > 0 ? Math.max(0, 100 - state.loanAmount / ((state.acquisitionCost || 0) + (state.travauxCost || 0)) * 100) : 0 },
+        cbi: { rate: state.cbiRate, durationYears: state.cbiDurationYears, avancePct: state.cbiAvancePct, residualPct: state.cbiResidualPct }
+    }) : null;
+
     lastResult = {
         noi, ltv, ltc, dscr, valuation, propertyValue, totalCost,
-        annualDebtService, sensitivity, schedule, taeg,
+        annualDebtService, sensitivity, schedule, taeg, ratiosByYear, cbi,
         monthlyPayment: sim.monthlyPayment || sim.firstPayment || 0,
         totalInterest: sim.totalInterest || 0,
         totalPayment: sim.totalPayment || 0
@@ -315,11 +378,11 @@ function getFormHTML() {
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">Nom du bien</label>
-                    <input type="text" class="form-input" value="${state.propertyName}" data-field="propertyName" placeholder="Ex: Immeuble Haussmann 75008">
+                    <input type="text" class="form-input" value="${escapeHtml(state.propertyName)}" data-field="propertyName" placeholder="Ex: Immeuble Haussmann 75008">
                 </div>
                 <div class="form-group">
                     <label class="form-label">Adresse</label>
-                    <input type="text" class="form-input" value="${state.propertyAddress}" data-field="propertyAddress" placeholder="Ex: 15 rue de la Paix, Paris">
+                    <input type="text" class="form-input" value="${escapeHtml(state.propertyAddress)}" data-field="propertyAddress" placeholder="Ex: 15 rue de la Paix, Paris">
                 </div>
             </div>
         </div>
@@ -341,7 +404,8 @@ function getFormHTML() {
                         <input type="number" class="form-input" value="${state.travauxCost}" data-field="travauxCost" min="0" step="5000">
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Frais notaire (€) <button class="btn btn-ghost btn-xs" id="immo-auto-notaire" title="7.5% du prix d'acquisition" style="font-size:0.65rem;padding:1px 6px">auto</button></label>
+                        <label class="form-label">Frais notaire (€) <button class="btn btn-ghost btn-xs" id="immo-auto-notaire" title="${NOTARY_REGIMES[state.notaryRegime]?.pct ?? 7.5} % du prix d'acquisition (régime ci-dessous)" style="font-size:0.65rem;padding:1px 6px">auto</button></label>
+                        <select class="form-select" data-field="notaryRegime" style="margin-bottom:4px;font-size:0.8rem">${Object.entries(NOTARY_REGIMES).map(([k, v]) => `<option value="${k}" ${state.notaryRegime === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select>
                         <input type="number" class="form-input" value="${state.fraisNotaire}" data-field="fraisNotaire" min="0" step="1000">
                     </div>
                     <div class="form-group">
@@ -475,7 +539,34 @@ function getFormHTML() {
                     <label class="form-label">Frais de dossier (€)</label>
                     <input type="number" class="form-input" value="${state.fees}" data-field="fees" min="0" step="100">
                 </div>
+                ${state.amortType === 'balloon' ? `<div class="form-group">
+                    <label class="form-label">Ballon final (% du prêt)</label>
+                    <input type="number" class="form-input" value="${state.balloonPct}" data-field="balloonPct" min="0" max="100" step="5">
+                </div>` : ''}
             </div>
+            ${config.showRevenue ? `<div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Indexation des loyers nets (%/an)</label>
+                    <input type="number" class="form-input" value="${state.noiGrowthPct}" data-field="noiGrowthPct" step="any">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Revalorisation du bien (%/an)</label>
+                    <input type="number" class="form-input" value="${state.valueGrowthPct}" data-field="valueGrowthPct" step="any">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Comparer avec un crédit-bail immobilier</label>
+                    <select class="form-select" data-field="cbiEnabled"><option value="non" ${state.cbiEnabled !== 'oui' ? 'selected' : ''}>Non</option><option value="oui" ${state.cbiEnabled === 'oui' ? 'selected' : ''}>Oui</option></select>
+                </div>
+            </div>
+            ${state.cbiEnabled === 'oui' ? `<div class="form-row">
+                <div class="form-group"><label class="form-label">Taux du crédit-bail (%)</label><input type="number" class="form-input" value="${state.cbiRate}" data-field="cbiRate" step="any"></div>
+                <div class="form-group"><label class="form-label">Durée (ans)</label><input type="number" class="form-input" value="${state.cbiDurationYears}" data-field="cbiDurationYears" min="1" max="30" step="1"></div>
+                <div class="form-group"><label class="form-label">Avance preneur (% du bien)</label><input type="number" class="form-input" value="${state.cbiAvancePct}" data-field="cbiAvancePct" min="0" max="50" step="any"></div>
+                <div class="form-group"><label class="form-label">Valeur résiduelle (%)</label><input type="number" class="form-input" value="${state.cbiResidualPct}" data-field="cbiResidualPct" min="0" max="50" step="any"></div>
+                <div class="form-group"><label class="form-label">Quote-part terrain (%)</label><input type="number" class="form-input" value="${state.landPct}" data-field="landPct" min="0" max="90" step="any"></div>
+                <div class="form-group"><label class="form-label">Taux d'IS / amort. bâti (ans) / actualisation (%)</label>
+                    <div style="display:flex;gap:4px"><input type="number" class="form-input" value="${state.isRate}" data-field="isRate" step="any" style="width:64px"><input type="number" class="form-input" value="${state.depYears}" data-field="depYears" step="1" style="width:64px"><input type="number" class="form-input" value="${state.discountRate}" data-field="discountRate" step="any" style="width:64px"></div></div>
+            </div>` : ''}` : ''}
         </div>
     `;
 
@@ -620,6 +711,37 @@ function renderFinancingPlanHTML(r) {
     `;
 }
 
+function renderRatiosOverTime(r) {
+    const f = v => Financial.formatCurrency(v, 0);
+    const x = v => (v == null ? '—' : Financial.formatNumber(v, 2) + 'x');
+    const shown = r.ratiosByYear.filter((y, i) => i < 10 || i === r.ratiosByYear.length - 1);
+    return `
+        <div class="card section" style="margin-top:16px">
+            <div class="card-title">ICR, DSCR et LTV dans le temps</div>
+            <div class="table-container" style="margin-top:8px">
+                <table class="data-table">
+                    <thead><tr><th>Année</th><th style="text-align:right">NOI</th><th style="text-align:right">Intérêts</th><th style="text-align:right">ICR</th><th style="text-align:right">DSCR</th><th style="text-align:right">CRD fin</th><th style="text-align:right">Valeur</th><th style="text-align:right">LTV</th></tr></thead>
+                    <tbody>${shown.map(y => `<tr><td>${y.year}</td><td class="number">${f(y.noi)}</td><td class="number">${f(y.interest)}</td><td class="number">${x(y.icr)}</td><td class="number">${x(y.dscr)}</td><td class="number">${f(y.crd)}</td><td class="number">${f(y.value)}</td><td class="number">${fmtLtv(y.ltv)}</td></tr>`).join('')}</tbody>
+                </table>
+            </div>
+            <p style="font-size:0.8rem;color:var(--text-muted);margin:6px 0 0">Loyers nets indexés de ${Financial.formatNumber(state.noiGrowthPct, 1)} %/an, valeur revalorisée de ${Financial.formatNumber(state.valueGrowthPct, 1)} %/an. ICR = NOI / intérêts ; DSCR = NOI / service.</p>
+        </div>`;
+}
+
+function renderCbiComparison(c) {
+    const f = v => Financial.formatCurrency(v, 0);
+    return `
+        <div class="card section" style="margin-top:16px">
+            <div class="card-title">Crédit-bail immobilier vs emprunt (SCI à l'IS)</div>
+            <div class="results-grid" style="margin-top:8px">
+                <div class="result-item"><div class="result-label">Coût net actualisé — emprunt</div><div class="result-value">${f(c.npvLoan)}</div><div class="result-sub">apport + frais ${f(c.apport)}</div></div>
+                <div class="result-item"><div class="result-label">Coût net actualisé — crédit-bail</div><div class="result-value">${f(c.npvCbi)}</div><div class="result-sub">avance preneur ${f(c.avance)} · loyer ${f(c.cbiRent)}/mois</div></div>
+                <div class="result-item"><div class="result-label">Solution la moins chère</div><div class="result-value" style="color:var(--success)">${c.cheaper === 'cbi' ? 'Crédit-bail' : 'Emprunt'}</div><div class="result-sub">écart ${f(Math.abs(c.advantage))} (actualisé à ${Financial.formatNumber(state.discountRate, 1)} %)</div></div>
+            </div>
+            <p style="font-size:0.8rem;color:var(--text-muted);margin:6px 0 0">Coûts nets d'IS (${Financial.formatNumber(state.isRate, 0)} %) : emprunt (amortissable à échéances constantes, taux et durée du financement ci-dessus) = service − économie d'IS sur intérêts et amortissement du bâti (${state.depYears} ans) ; crédit-bail = loyers − économie d'IS hors quote-part terrain (${Financial.formatNumber(state.landPct, 0)} %) + levée d'option. Approche simplifiée — réintégrations et traitement des frais à valider avec l'expert-comptable.</p>
+        </div>`;
+}
+
 function renderResults() {
     const container = document.getElementById('immo-results');
     if (!container || !lastResult) return;
@@ -634,7 +756,7 @@ function renderResults() {
         <div class="results-grid">
             <div class="result-item">
                 <div class="result-label">LTV</div>
-                <div class="result-value">${r.ltv.toFixed(1)} %</div>
+                <div class="result-value">${fmtLtv(r.ltv)}</div>
                 <div class="result-sub">${ltvBadge(r.ltv)} Loan-to-Value</div>
             </div>
             ${r.ltc !== null ? `
@@ -693,6 +815,8 @@ function renderResults() {
             </div>` : ''}
         </div>
         ${r.financingPlan ? renderFinancingPlanHTML(r) : ''}
+        ${config.showRevenue && r.ratiosByYear?.length ? renderRatiosOverTime(r) : ''}
+        ${r.cbi ? renderCbiComparison(r.cbi) : ''}
     `;
 
     // Sensitivity table
@@ -763,9 +887,12 @@ function renderResults() {
     }
 
     // Bind export + memo buttons
-    document.getElementById('immo-export-pdf')?.addEventListener('click', exportPdf);
-    document.getElementById('immo-export-excel')?.addEventListener('click', exportExcel);
-    document.getElementById('immo-generate-memo')?.addEventListener('click', generateMemo);
+    // Affectation (et non addEventListener) : ces boutons sont statiques et
+    // renderResults() est rappelé à chaque frappe — un seul export par clic.
+    const bind = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = fn; };
+    bind('immo-export-pdf', exportPdf);
+    bind('immo-export-excel', exportExcel);
+    bind('immo-generate-memo', generateMemo);
 }
 
 // =============================================
@@ -781,10 +908,10 @@ function generateMemo() {
 
     let recommendation = '';
     let recClass = '';
-    if (r.ltv <= 70 && (r.dscr === null || r.dscr >= 1.2)) {
+    if (r.ltv != null && r.ltv <= 70 && (r.dscr === null || r.dscr >= 1.2)) {
         recommendation = 'Le profil de risque est favorable. Les ratios sont dans les normes bancaires avec une marge de sécurité confortable.';
         recClass = 'memo-positive';
-    } else if (r.ltv <= 80 && (r.dscr === null || r.dscr >= 1.0)) {
+    } else if (r.ltv != null && r.ltv <= 80 && (r.dscr === null || r.dscr >= 1.0)) {
         recommendation = 'Le profil est acceptable mais les ratios sont proches des limites. Une attention particulière doit être portée à la sensibilité des hypothèses.';
         recClass = 'memo-neutral';
     } else {
@@ -803,7 +930,7 @@ function generateMemo() {
         <div class="memo-card">
             <h3 style="margin-bottom:16px;color:var(--text-primary);font-size:1rem">Note d'investissement — ${config.label}</h3>
             <div class="memo-section">
-                <p><strong>Bien :</strong> ${state.propertyName || 'N/A'} ${state.propertyAddress ? '— ' + state.propertyAddress : ''}</p>
+                <p><strong>Bien :</strong> ${escapeHtml(state.propertyName) || 'N/A'} ${state.propertyAddress ? '— ' + escapeHtml(state.propertyAddress) : ''}</p>
                 <p><strong>Valeur retenue :</strong> ${Financial.formatCurrency(r.propertyValue)} ${ltvSource === 'caprate' ? '(valorisation cap rate)' : '(valeur de marché)'}</p>
                 ${r.totalCost !== null ? `<p><strong>Coût total projet :</strong> ${Financial.formatCurrency(r.totalCost)}</p>` : ''}
             </div>
@@ -821,7 +948,7 @@ function generateMemo() {
             <div class="memo-section">
                 <table class="data-table" style="max-width:400px;font-size:0.85rem">
                     <tbody>
-                        <tr><td>LTV</td><td class="number">${r.ltv.toFixed(1)} %</td><td>${ltvBadge(r.ltv)}</td></tr>
+                        <tr><td>LTV</td><td class="number">${fmtLtv(r.ltv)}</td><td>${ltvBadge(r.ltv)}</td></tr>
                         ${r.ltc !== null ? `<tr><td>LTC</td><td class="number">${r.ltc.toFixed(1)} %</td><td>${ltvBadge(r.ltc)}</td></tr>` : ''}
                         ${r.dscr !== null ? `<tr><td>DSCR</td><td class="number">${r.dscr.toFixed(2)}x</td><td>${dscrBadge(r.dscr)}</td></tr>` : ''}
                     </tbody>
@@ -877,7 +1004,7 @@ function exportPdf() {
     ]});
     sections.push({ type: 'separator' });
 
-    const ratioItems = [{ label: 'LTV', value: r.ltv.toFixed(1) + ' %' }];
+    const ratioItems = [{ label: 'LTV', value: fmtLtv(r.ltv) }];
     if (r.ltc !== null) ratioItems.push({ label: 'LTC', value: r.ltc.toFixed(1) + ' %' });
     if (r.dscr !== null) ratioItems.push({ label: 'DSCR', value: r.dscr.toFixed(2) + 'x' });
     if (r.noi && config.showRevenue) ratioItems.push({ label: 'NOI', value: Financial.formatCurrency(r.noi) });
@@ -942,7 +1069,7 @@ function exportExcel() {
         ['FINANCEMENT'], ['Montant du prêt', state.loanAmount], ['Taux', state.annualRate + '%'], ['Durée (mois)', state.durationMonths],
         ['Mensualité', Math.round(r.monthlyPayment * 100) / 100], ['Total intérêts', Math.round(r.totalInterest)],
         ...(r.taeg != null ? [['TAEG', r.taeg.toFixed(2) + '%']] : []), [],
-        ['RATIOS'], ['LTV', r.ltv.toFixed(1) + '%'],
+        ['RATIOS'], ['LTV', r.ltv != null ? Math.round(r.ltv * 10) / 1000 : 'n.c.'],
         ...(r.ltc !== null ? [['LTC', r.ltc.toFixed(1) + '%']] : []),
         ...(r.dscr !== null ? [['DSCR', r.dscr.toFixed(2) + 'x']] : []),
         ...(r.valuation !== null ? [['Valorisation', Math.round(r.valuation)]] : []),
@@ -1114,8 +1241,12 @@ export const ImmobilierModule = {
             }
             const field = e.target.dataset.field;
             if (!field) return;
-            const isText = field === 'propertyName' || field === 'propertyAddress' || field === 'amortType' || field === 'frequency' || field === 'tvaRelaisFrequency' || field === 'tvaRelaisInterestMode';
+            const isText = field === 'propertyName' || field === 'propertyAddress' || field === 'amortType' || field === 'frequency' || field === 'tvaRelaisFrequency' || field === 'tvaRelaisInterestMode' || field === 'notaryRegime' || field === 'cbiEnabled';
             state[field] = isText ? e.target.value : (parseFloat(e.target.value) || 0);
+            // Champs conditionnels (ballon, crédit-bail, régime de notaire) : la forme du formulaire change
+            if (e.type === 'change' && (field === 'amortType' || field === 'cbiEnabled' || field === 'notaryRegime')) {
+                formContainer.innerHTML = getFormHTML();
+            }
 
             if (hasCalculated) {
                 clearTimeout(recalcTimer);
@@ -1148,7 +1279,7 @@ export const ImmobilierModule = {
 
             // Auto notaire
             if (e.target.closest('#immo-auto-notaire')) {
-                state.fraisNotaire = Math.round(state.acquisitionCost * 0.075);
+                state.fraisNotaire = Math.round(state.acquisitionCost * (NOTARY_REGIMES[state.notaryRegime]?.pct ?? 7.5) / 100);
                 formContainer.innerHTML = getFormHTML();
                 if (hasCalculated) { clearTimeout(recalcTimer); recalcTimer = setTimeout(runCalculation, 300); }
                 return;
