@@ -7,6 +7,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Lecture seule : la CI ne pousse rien (moindre privilège face à une dépendance compromise)
+permissions:
+  contents: read
+
 jobs:
   qualite:
     name: Tests + typage + lint + E2E
