@@ -300,45 +300,80 @@ function exportExcel() {
     if (typeof XLSX === 'undefined') { alert('Bibliothèque Excel non chargée'); return; }
     if (!lastResult) recalculate();
     const c = lastResult.results;
+    const n = c.rows.length;
+    const col = i => XLSX.utils.encode_col(i + 1); // B, C, …
+    const num = (v, f) => ({ t: 'n', v: v ?? 0, ...(f ? { f } : {}) });
+    const pct = (v, f) => ({ t: 'n', v: v ?? 0, f, z: '0.0%' });
+    const ratio = (v, f) => ({ t: 'n', v: v ?? 0, f, z: '0.00"x"' });
 
-    const wb = XLSX.utils.book_new();
+    // Feuille Covenants : les montants issus des échéanciers sont des valeurs,
+    // tous les ratios sont des FORMULES (modifiables dans Excel)
     const rows = [
-        ['AUXY PARTNERS — Covenants & DSCR prévisionnel'],
+        ['AUXY PARTNERS — Covenants & DSCR prévisionnel (k€)'],
         [''],
-        ['Covenant DSCR minimum', covenantDscr],
-        ['Covenant Levier maximum', covenantLeverage],
+        ['Covenant DSCR minimum', ratio(covenantDscr)],
+        ['Covenant levier net maximum', ratio(covenantLeverage)],
+        ['Trésorerie d\'ouverture', num(openingCash)],
+        ['Numérateur du DSCR', dscrBasis === 'ebitda' ? 'EBITDA' : 'CFADS'],
         [''],
-        ['DETTES (k€)', 'Montant', 'Taux / marge (%)', 'Durée (ans)', 'Amortissement', 'Fréquence', 'Taux', 'Couvert (%)']
+        ['k€', ...c.rows.map(r => `Année ${r.year}`)]
     ];
-    debts.forEach(d => rows.push([d.label, d.amount, d.rate, d.durationYears, AMORT_OPTIONS[d.amortType], FREQ_OPTIONS[d.frequency], RATE_TYPES[d.rateType || 'fixed'], d.rateType === 'floating' ? d.hedgePct || 0 : null]));
-    rows.push(['']);
-    rows.push(['k€', ...c.rows.map(r => `Année ${r.year}`)]);
-    const n2 = v => (v != null && isFinite(v) ? Math.round(v * 100) / 100 : null);
-    rows.push(['EBITDA', ...c.rows.map(r => Math.round(r.ebitda))]);
-    rows.push(['IS décaissé', ...c.rows.map(r => -Math.round(r.tax))]);
-    rows.push(['Capex', ...c.rows.map(r => -Math.round(r.capex))]);
-    rows.push(['Variation de BFR', ...c.rows.map(r => -Math.round(r.wcChange))]);
-    rows.push(['CFADS', ...c.rows.map(r => Math.round(r.cfads))]);
-    rows.push(['Service de dette testé', ...c.rows.map(r => Math.round(r.service))]);
-    rows.push(['dont intérêts', ...c.rows.map(r => Math.round(r.interest))]);
-    rows.push([`DSCR (${dscrBasis === 'ebitda' ? 'EBITDA' : 'CFADS'} / service)`, ...c.rows.map(r => n2(r.dscr))]);
-    rows.push(['Marge DSCR (%)', ...c.rows.map(r => n2(r.headroomDscr))]);
-    rows.push(['ICR (EBITDA / intérêts)', ...c.rows.map(r => n2(r.icr))]);
-    rows.push(['CRD fin d\'année', ...c.rows.map(r => Math.round(r.crd))]);
-    rows.push(['Trésorerie fin d\'année', ...c.rows.map(r => Math.round(r.cash))]);
-    rows.push(['Dette nette', ...c.rows.map(r => Math.round(r.netDebt))]);
-    rows.push(['Levier net', ...c.rows.map(r => n2(r.leverage))]);
-    rows.push(['Marge levier (%)', ...c.rows.map(r => n2(r.headroomLev))]);
-    rows.push(['Statut', ...c.rows.map(r => ({ ok: 'Conforme', warning: 'Tendu', breach: 'BRIS' })[r.status])]);
+    const R = { ebitda: 9, tax: 10, capex: 11, wc: 12, cfads: 13, service: 14, interest: 15, dscr: 16, mDscr: 17, crd: 18, cash: 19, net: 20, lev: 21, mLev: 22, icr: 23, status: 24 };
+    const line = (label, fn) => [label, ...c.rows.map((r, i) => fn(r, i, col(i)))];
+    const num1 = dscrBasis === 'ebitda' ? R.ebitda : R.cfads;
+    rows.push(line('EBITDA', r => num(Math.round(r.ebitda))));
+    rows.push(line('IS décaissé', r => num(Math.round(r.tax))));
+    rows.push(line('Capex', r => num(Math.round(r.capex))));
+    rows.push(line('Variation de BFR (+ = besoin)', r => num(Math.round(r.wcChange))));
+    rows.push(line('CFADS', (r, i, L) => num(r.cfads, `${L}${R.ebitda}-${L}${R.tax}-${L}${R.capex}-${L}${R.wc}`)));
+    rows.push(line(`Service de dette testé${excludeBullet ? ' (in fine refinancés)' : ''}`, r => num(Math.round(r.service))));
+    rows.push(line('dont intérêts', r => num(Math.round(r.interest))));
+    rows.push(line('DSCR', (r, i, L) => ratio(r.dscr, `IF(${L}${R.service}>0,${L}${num1}/${L}${R.service},"")`)));
+    rows.push(line('Marge DSCR', (r, i, L) => pct((r.headroomDscr ?? 0) / 100, `IF(N(${L}${R.dscr})>0,1-$B$3/${L}${R.dscr},"")`)));
+    rows.push(line('CRD fin d\'année', r => num(Math.round(r.crd))));
+    rows.push(line('Trésorerie fin d\'année', (r, i, L) => num(r.cash, `${i === 0 ? '$B$5' : `${col(i - 1)}${R.cash}`}+${L}${R.cfads}-${L}${R.service}`)));
+    rows.push(line('Dette nette', (r, i, L) => num(r.netDebt, `${L}${R.crd}-MAX(0,${L}${R.cash})`)));
+    rows.push(line('Levier net', (r, i, L) => ratio(r.leverage, `IF(${L}${R.ebitda}>0,MAX(0,${L}${R.net})/${L}${R.ebitda},"")`)));
+    rows.push(line('Marge levier', (r, i, L) => pct((r.headroomLev ?? 0) / 100, `IF(N(${L}${R.lev})>0,1-${L}${R.lev}/$B$4,"")`)));
+    rows.push(line('ICR (EBITDA / intérêts)', (r, i, L) => ratio(r.icr, `IF(${L}${R.interest}>0,${L}${R.ebitda}/${L}${R.interest},"")`)));
+    rows.push(line('Statut', (r, i, L) => ({ t: 's', v: ({ ok: 'Conforme', warning: 'Tendu', breach: 'BRIS' })[r.status],
+        f: `IF(OR(AND(ISNUMBER(${L}${R.dscr}),${L}${R.dscr}<$B$3),AND(ISNUMBER(${L}${R.lev}),${L}${R.lev}>$B$4)),"BRIS",IF(MIN(IF(ISNUMBER(${L}${R.mDscr}),${L}${R.mDscr},1),IF(ISNUMBER(${L}${R.mLev}),${L}${R.mLev},1))<0.1,"Tendu","Conforme"))` })));
     rows.push(['']);
     rows.push(['Baisse d\'EBITDA supportable (%)', c.ebitdaDropToBreach]);
     rows.push(['Hausse de l\'Euribor supportable (pts)', c.rateRiseToBreach]);
+    rows.push(['']);
+    rows.push(['DETTES (k€)', 'Montant', 'Taux / marge (%)', 'Durée (ans)', 'Amortissement', 'Fréquence', 'Taux', 'Couvert (%)']);
+    debts.forEach(d => rows.push([d.label, d.amount, d.rate, d.durationYears, AMORT_OPTIONS[d.amortType], FREQ_OPTIONS[d.frequency], RATE_TYPES[d.rateType || 'fixed'], d.rateType === 'floating' ? d.hedgePct || 0 : null]));
 
+    const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = [{ wch: 28 }, ...c.rows.map(() => ({ wch: 12 }))];
+    ws['!cols'] = [{ wch: 36 }, ...Array.from({ length: Math.max(n, 7) }, () => ({ wch: 13 }))];
     XLSX.utils.book_append_sheet(wb, ws, 'Covenants');
+
+    // Hypothèses et définitions : ce qu'un lecteur doit savoir pour refaire le calcul
+    const hyp = [
+        ['HYPOTHÈSES ET DÉFINITIONS'],
+        [''],
+        ['Édité le', new Date().toLocaleDateString('fr-FR')],
+        ['Horizon', `${horizon} ans (années glissantes depuis la date d'analyse)`],
+        ['Euribor retenu (par année, %)', (indexPath.length ? indexPath : [marketIndex ?? 0]).map(v => Financial.formatNumber(v, 3)).join(' / ')],
+        ['Source Euribor', indexPath.length ? 'trajectoire saisie' : 'Euribor 3M publié (veille Auxy), prolongé'],
+        ['Floor de l\'index', floorZero ? '0 %' : 'aucun'],
+        ['Taux du swap de couverture (%)', swapRate],
+        [''],
+        ['CFADS', 'EBITDA − IS décaissé − capex − variation de BFR'],
+        ['DSCR', `${dscrBasis === 'ebitda' ? 'EBITDA' : 'CFADS'} / (intérêts + amortissement contractuel${excludeBullet ? ', in fine supposés refinancés' : ''})`],
+        ['Levier net', '(CRD − trésorerie projetée) / EBITDA'],
+        ['Marge DSCR', 'baisse du numérateur supportable avant bris = 1 − covenant / DSCR'],
+        ['Marge levier', 'baisse d\'EBITDA supportable avant bris = 1 − levier / covenant'],
+        ['Avertissement', 'Document de travail — simulation indicative, ne constitue pas un engagement de financement. Les définitions contractuelles (EBITDA ajusté, LTM, IFRS 16) peuvent différer.']
+    ];
+    const wsH = XLSX.utils.aoa_to_sheet(hyp);
+    wsH['!cols'] = [{ wch: 34 }, { wch: 90 }];
+    XLSX.utils.book_append_sheet(wb, wsH, 'Hypothèses');
+
     XLSX.writeFile(wb, `covenants_${new Date().toISOString().slice(0, 10)}.xlsx`);
-    window.showToast?.('Export Excel téléchargé', 'success');
+    window.showToast?.('Export Excel téléchargé (formules vivantes + hypothèses)', 'success');
 }
 
 function exportPdf() {
