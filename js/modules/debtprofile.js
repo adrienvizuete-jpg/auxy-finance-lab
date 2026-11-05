@@ -24,6 +24,7 @@ import { Share } from '../utils/share.js';
 import { Market } from '../utils/market.js';
 import { escapeHtml } from '../utils/sanitize.js';
 import { DossierBar } from '../utils/dossierbar.js';
+import { RefiEngine } from '../utils/refiengine.js';
 
 // ── State ──
 const now = new Date();
@@ -38,6 +39,8 @@ let loans = [
 ];
 let lastResult = null;
 let marketRates = null; // pré-remplissage du taux des nouveaux financements
+// Scénario de refinancement des crédits cochés « Refinancer »
+let refi = { rateType: 'fixed', rate: 4.0, durationMonths: 84, frequency: 'quarterly', amortType: 'constant', upfrontFeePct: 1.0, financeCosts: true, extraAmount: 0, discountRate: 5 };
 
 const AMORT_OPTIONS = { constant: 'Constant', degressif: 'Dégressif', infine: 'In Fine' };
 const FREQ_OPTIONS = { monthly: 'Mensuel', quarterly: 'Trimestriel', semiannual: 'Semestriel', annual: 'Annuel' };
@@ -99,6 +102,94 @@ function renderLoanRows() {
                 ${loans.length > 1 ? `<button class="er-remove-btn" data-action="remove" title="Supprimer">${X_SVG}</button>` : ''}
             </td>
         </tr>`).join('');
+}
+
+/** Tableau pool bancaire : prêteur, garanties, coûts de sortie, sélection pour refinancement */
+function renderPoolRows() {
+    return loans.map((l, i) => `
+        <tr data-index="${i}">
+            <td>${escapeHtml(l.label)}</td>
+            <td><input class="er-input dp-pool" type="text" value="${escapeHtml(l.lender || '')}" data-field="lender" placeholder="Banque" style="width:120px"></td>
+            <td><input class="er-input dp-pool" type="text" value="${escapeHtml(l.security || '')}" data-field="security" placeholder="Nantissement, caution…" style="width:150px"></td>
+            <td style="text-align:right"><input class="er-input narrow dp-pool" type="number" value="${l.bpiPct ?? 0}" data-field="bpiPct" min="0" max="100" step="10" style="width:60px"></td>
+            <td style="text-align:right"><input class="er-input narrow dp-pool" type="number" value="${l.exitCostPct ?? 0}" data-field="exitCostPct" min="0" max="20" step="0.5" style="width:60px"></td>
+            <td style="text-align:right"><input class="er-input narrow dp-pool" type="number" value="${l.exitCostFixed ?? 0}" data-field="exitCostFixed" min="0" step="500" style="width:90px"></td>
+            <td style="text-align:center"><input type="checkbox" class="dp-pool" data-field="refi" ${l.refi ? 'checked' : ''} ${l.isNew ? 'disabled' : ''}></td>
+        </tr>`).join('');
+}
+
+/** Exposition par prêteur à la date d'analyse */
+function renderPoolSummary(agg) {
+    const aIdx = analysisIdx();
+    /** @type {Map<string, { crd: number, service12: number, bpi: number, count: number }>} */
+    const byLender = new Map();
+    for (const s of agg.schedules) {
+        const key = (s.loan.lender || '').trim() || 'Non renseigné';
+        const v = byLender.get(key) || { crd: 0, service12: 0, bpi: 0, count: 0 };
+        v.crd += s.crdAtAnalysis;
+        v.bpi += s.crdAtAnalysis * (s.loan.bpiPct || 0) / 100;
+        v.service12 += s.sched.rows.filter(r => r.mIdx > aIdx && r.mIdx <= aIdx + 12).reduce((t, r) => t + r.payment, 0);
+        v.count++;
+        byLender.set(key, v);
+    }
+    const total = [...byLender.values()].reduce((t, v) => t + v.crd, 0);
+    const rows = [...byLender.entries()].sort((a, b) => b[1].crd - a[1].crd);
+    if (!rows.length) return '<p style="color:var(--text-muted)">Aucun crédit.</p>';
+    return `
+        <table class="data-table">
+            <thead><tr><th>Prêteur</th><th style="text-align:right">Crédits</th><th style="text-align:right">CRD au ${analysisLabel()}</th><th style="text-align:right">Part du pool</th><th style="text-align:right">Service 12 mois</th><th style="text-align:right">CRD garanti Bpifrance</th></tr></thead>
+            <tbody>${rows.map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td class="number">${v.count}</td><td class="number">${f0(v.crd)}</td><td class="number">${total > 0 ? fmtPct(v.crd / total * 100) : '—'}</td><td class="number">${f0(v.service12)}</td><td class="number">${f0(v.bpi)}</td></tr>`).join('')}
+                <tr class="er-total-row"><td>Total</td><td class="number">${rows.reduce((t, [, v]) => t + v.count, 0)}</td><td class="number">${f0(total)}</td><td class="number">100 %</td><td class="number">${f0(rows.reduce((t, [, v]) => t + v.service12, 0))}</td><td class="number">${f0(rows.reduce((t, [, v]) => t + v.bpi, 0))}</td></tr>
+            </tbody>
+        </table>`;
+}
+
+/** Comparatif de refinancement des crédits cochés */
+function computeRefi(agg) {
+    const selected = agg.schedules.filter(s => s.loan.refi && !s.loan.isNew && s.crdAtAnalysis > 0);
+    if (!selected.length) return null;
+    const idx3m = marketRates?.rates?.euribor_3m?.value;
+    return RefiEngine.compare({
+        loans: selected.map(s => ({ label: s.loan.label, rows: s.sched.rows, crd: s.crdAtAnalysis, exitCostPct: s.loan.exitCostPct || 0, exitCostFixed: s.loan.exitCostFixed || 0 })),
+        analysisIdx: analysisIdx(),
+        newLoan: {
+            principal: 0,
+            durationMonths: refi.durationMonths,
+            frequency: refi.frequency,
+            amortType: refi.amortType,
+            rateType: refi.rateType,
+            fixedRate: refi.rate,
+            margin: refi.rate,
+            indexPath: [typeof idx3m === 'number' ? idx3m : 0],
+            dayCount: refi.rateType === 'floating' ? 'act/360' : '30/360',
+            upfrontFeePct: refi.upfrontFeePct,
+            startDate: `${analysis.year}-${String(analysis.month).padStart(2, '0')}-01`
+        },
+        financeCosts: refi.financeCosts,
+        extraAmount: refi.extraAmount,
+        discountRate: refi.discountRate,
+        closingMonth
+    });
+}
+
+function renderRefiResults(r) {
+    if (!r) return '<p style="color:var(--text-muted);font-size:0.88rem">Cochez « Refinancer » sur les crédits concernés dans le tableau du pool.</p>';
+    const kpi = (label, value, sub = '') => `<div class="er-kpi-card"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div>${sub ? `<div class="result-sub">${sub}</div>` : ''}</div>`;
+    const color = v => (v >= 0 ? 'var(--success)' : 'var(--danger)');
+    return `
+        <div class="er-kpi-grid">
+            ${kpi('CRD refinancé', f0(r.crd), `coûts de sortie ${f0(r.exitCosts)}`)}
+            ${kpi('Nouveau nominal', f0(r.principal), `TEG ${fmtPct(r.newLoan.teg)} · frais ${f0(r.upfront)}`)}
+            ${kpi('Économie brute', `<span style="color:${color(r.grossSaving)}">${f0(r.grossSaving)}</span>`, `intérêts restants ${f0(r.interestBefore)} → ${f0(r.costAfter)} (coûts inclus)`)}
+            ${kpi('Valeur actuelle des économies', `<span style="color:${color(r.npvSaving)}">${f0(r.npvSaving)}</span>`, `actualisées à ${Financial.formatNumber(refi.discountRate, 1)} %`)}
+            ${kpi('Point mort', r.paybackLabel || 'non atteint', 'cumul des économies ≥ 0')}
+        </div>
+        <div class="table-container" style="margin-top:12px">
+            <table class="data-table">
+                <thead><tr><th>Exercice</th><th style="text-align:right">Service avant</th><th style="text-align:right">Service après</th><th style="text-align:right">Écart</th></tr></thead>
+                <tbody>${r.years.map(y => `<tr><td>${escapeHtml(y.label)}</td><td class="number">${f0(y.before)}</td><td class="number">${f0(y.after)}</td><td class="number" style="color:${color(y.saving)}">${f0(y.saving)}</td></tr>`).join('')}</tbody>
+            </table>
+        </div>`;
 }
 
 /** Met à jour les CRD calculés + badges d'écart, sans re-render (focus conservé) */
@@ -199,6 +290,15 @@ function recalculate() {
     const tableEl = document.getElementById('dp-variation-table');
     if (tableEl) tableEl.innerHTML = renderVariationTable(agg);
 
+    // Pool bancaire et refinancement (lignes re-rendues sauf saisie en cours dans ce tableau)
+    const poolBody = document.getElementById('dp-pool-body');
+    if (poolBody && !poolBody.contains(document.activeElement)) poolBody.innerHTML = renderPoolRows();
+    const poolEl = document.getElementById('dp-pool-summary');
+    if (poolEl) poolEl.innerHTML = renderPoolSummary(agg);
+    const refiResult = computeRefi(agg);
+    const refiEl = document.getElementById('dp-refi-results');
+    if (refiEl) refiEl.innerHTML = renderRefiResults(refiResult);
+
     // Frise des financements
     const ganttItems = agg.schedules.map(s => {
         const start = s.loan.startYear + (s.loan.startMonth - 1) / 12;
@@ -232,7 +332,8 @@ function recalculate() {
             analysis: { ...analysis },
             closingMonth,
             includeNew,
-            loans: loans.map(l => ({ ...l }))
+            loans: loans.map(l => ({ ...l })),
+            refi: { ...refi }
         },
         results: k ? {
             exposure: k.exposure,
@@ -342,6 +443,23 @@ function exportExcel() {
     const wsVar = XLSX.utils.aoa_to_sheet(vard);
     wsVar['!cols'] = vard[0].map(() => ({ wch: 17 }));
     XLSX.utils.book_append_sheet(wb, wsVar, 'Variation endettement');
+
+    // Pool bancaire et scénario de refinancement
+    const aggP = computeAll();
+    const poolRows = [['Crédit', 'Prêteur', 'Sûretés', 'Garantie Bpi (%)', `CRD au ${analysisLabel()} (€)`, 'IRA (% CRD)', 'Coûts fixes de sortie (€)', 'Refinancé']];
+    aggP.schedules.forEach(sc => poolRows.push([sc.loan.label, sc.loan.lender || '', sc.loan.security || '', sc.loan.bpiPct || 0, Math.round(sc.crdAtAnalysis), sc.loan.exitCostPct || 0, sc.loan.exitCostFixed || 0, sc.loan.refi ? 'oui' : '']));
+    const refiR = computeRefi(aggP);
+    if (refiR) {
+        poolRows.push([], ['SCÉNARIO DE REFINANCEMENT'],
+            ['CRD refinancé (€)', Math.round(refiR.crd)], ['Coûts de sortie (€)', Math.round(refiR.exitCosts)], ['Nouveau nominal (€)', Math.round(refiR.principal)],
+            ['TEG du nouveau prêt (%)', refiR.newLoan.teg != null ? Math.round(refiR.newLoan.teg * 1000) / 1000 : null],
+            ['Économie brute (€)', Math.round(refiR.grossSaving)], ['Valeur actuelle des économies (€)', Math.round(refiR.npvSaving)], ['Point mort', refiR.paybackLabel || 'non atteint'],
+            [], ['Exercice', 'Service avant (€)', 'Service après (€)', 'Écart (€)'],
+            ...refiR.years.map(y => [y.label, Math.round(y.before), Math.round(y.after), Math.round(y.saving)]));
+    }
+    const wsPool = XLSX.utils.aoa_to_sheet(poolRows);
+    wsPool['!cols'] = [{ wch: 30 }, { wch: 18 }, { wch: 26 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 16 }, { wch: 10 }];
+    XLSX.utils.book_append_sheet(wb, wsPool, 'Pool & refinancement');
 
     XLSX.writeFile(wb, `profil_dette_${new Date().toISOString().slice(0, 10)}.xlsx`);
     window.showToast?.('Export Excel téléchargé', 'success');
@@ -590,10 +708,17 @@ function loadParams(p) {
                 amortType: AMORT_OPTIONS[l.amortType] ? l.amortType : 'constant',
                 frequency: FREQ_OPTIONS[l.frequency] ? l.frequency : 'monthly',
                 isNew: !!l.isNew,
-                crdCheck: l.crdCheck != null && isFinite(parseFloat(l.crdCheck)) ? parseFloat(l.crdCheck) : null
+                crdCheck: l.crdCheck != null && isFinite(parseFloat(l.crdCheck)) ? parseFloat(l.crdCheck) : null,
+                lender: typeof l.lender === 'string' ? l.lender.slice(0, 60) : '',
+                security: typeof l.security === 'string' ? l.security.slice(0, 120) : '',
+                bpiPct: Math.min(100, Math.max(0, parseFloat(l.bpiPct) || 0)),
+                exitCostPct: Math.max(0, parseFloat(l.exitCostPct) || 0),
+                exitCostFixed: Math.max(0, parseFloat(l.exitCostFixed) || 0),
+                refi: !!l.refi
             };
         });
     }
+    if (p.refi && typeof p.refi === 'object') refi = { ...refi, ...p.refi };
 }
 
 // ── Module ──
@@ -716,6 +841,40 @@ export const DebtProfileModule = {
                 <div id="dp-variation-table" style="margin-top:12px"></div>
             </div>
 
+            <!-- Pool bancaire -->
+            <div class="card section">
+                <div class="card-title">Pool bancaire, garanties et coûts de sortie</div>
+                <div class="table-container" style="margin-top:12px">
+                    <table class="er-table">
+                        <thead><tr><th>Crédit</th><th>Prêteur</th><th>Sûretés</th><th style="text-align:right">Garantie Bpi (%)</th><th style="text-align:right">IRA (% CRD)</th><th style="text-align:right">Coûts fixes (€)</th><th style="text-align:center">Refinancer</th></tr></thead>
+                        <tbody id="dp-pool-body">${renderPoolRows()}</tbody>
+                    </table>
+                </div>
+                <div id="dp-pool-summary" style="margin-top:16px"></div>
+            </div>
+
+            <!-- Refinancement -->
+            <div class="card section">
+                <div class="card-title">Scénario de refinancement</div>
+                <div class="form-row" style="margin-top:12px;flex-wrap:wrap">
+                    <div class="form-group"><label class="form-label">Taux</label>
+                        <select class="form-select dp-refi" data-field="rateType"><option value="fixed" ${refi.rateType === 'fixed' ? 'selected' : ''}>Fixe</option><option value="floating" ${refi.rateType === 'floating' ? 'selected' : ''}>Variable (Euribor 3M + marge)</option></select></div>
+                    <div class="form-group"><label class="form-label">Taux fixe / marge (%)</label><input type="number" class="form-input dp-refi" data-field="rate" value="${refi.rate}" step="0.05"></div>
+                    <div class="form-group"><label class="form-label">Durée (mois)</label><input type="number" class="form-input dp-refi" data-field="durationMonths" value="${refi.durationMonths}" min="1" step="12"></div>
+                    <div class="form-group"><label class="form-label">Périodicité</label>
+                        <select class="form-select dp-refi" data-field="frequency">${Object.entries(FREQ_OPTIONS).map(([k, v]) => `<option value="${k}" ${k === refi.frequency ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+                    <div class="form-group"><label class="form-label">Amortissement</label>
+                        <select class="form-select dp-refi" data-field="amortType">${Object.entries(AMORT_OPTIONS).map(([k, v]) => `<option value="${k}" ${k === refi.amortType ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+                    <div class="form-group"><label class="form-label">Frais d'arrangement (%)</label><input type="number" class="form-input dp-refi" data-field="upfrontFeePct" value="${refi.upfrontFeePct}" step="0.1" min="0"></div>
+                    <div class="form-group"><label class="form-label">Besoin additionnel (€)</label><input type="number" class="form-input dp-refi" data-field="extraAmount" value="${refi.extraAmount}" step="10000" min="0"></div>
+                    <div class="form-group"><label class="form-label">Coûts de sortie et frais</label>
+                        <select class="form-select dp-refi" data-field="financeCosts"><option value="1" ${refi.financeCosts ? 'selected' : ''}>Financés par le nouveau prêt</option><option value="0" ${!refi.financeCosts ? 'selected' : ''}>Payés comptant</option></select></div>
+                    <div class="form-group"><label class="form-label">Taux d'actualisation (%)</label><input type="number" class="form-input dp-refi" data-field="discountRate" value="${refi.discountRate}" step="0.5" min="0"></div>
+                </div>
+                <div id="dp-refi-results" style="margin-top:12px"></div>
+                <p style="font-size:0.8rem;color:var(--text-muted);margin:8px 0 0">Service « avant » : échéancier contractuel restant des crédits cochés. « Après » : nouveau prêt tiré à la date d'analyse, nominal = CRD + besoin additionnel (+ coûts et frais s'ils sont financés) ; la part du besoin additionnel est neutralisée dans la comparaison.</p>
+            </div>
+
             <!-- Actions -->
             <div class="btn-group section" style="justify-content:flex-start">
                 <button class="btn btn-primary btn-lg" id="dp-recalc">
@@ -736,6 +895,30 @@ export const DebtProfileModule = {
 
     init() {
         const body = document.getElementById('dp-loans-body');
+
+        // Pool bancaire / sélection pour refinancement
+        const poolBody = document.getElementById('dp-pool-body');
+        const onPool = e => {
+            const el = e.target.closest('.dp-pool');
+            const row = e.target.closest('tr');
+            if (!el || !row) return;
+            const i = parseInt(row.dataset.index);
+            const field = el.dataset.field;
+            if (!loans[i] || !field) return;
+            if (field === 'refi') loans[i].refi = el.checked;
+            else if (field === 'lender' || field === 'security') loans[i][field] = el.value.slice(0, field === 'lender' ? 60 : 120);
+            else loans[i][field] = Math.max(0, parseFloat(el.value) || 0);
+            recalculate();
+        };
+        poolBody?.addEventListener('input', onPool);
+        poolBody?.addEventListener('change', onPool);
+        document.querySelectorAll('.dp-refi').forEach(el => el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', e => {
+            const field = e.target.dataset.field;
+            if (field === 'rateType' || field === 'frequency' || field === 'amortType') refi[field] = e.target.value;
+            else if (field === 'financeCosts') refi.financeCosts = e.target.value === '1';
+            else refi[field] = Math.max(0, parseFloat(e.target.value) || 0);
+            recalculate();
+        }));
 
         // Dossier client : nom et dettes vivantes (CRD, durée résiduelle) → Covenants
         DossierBar.bind({

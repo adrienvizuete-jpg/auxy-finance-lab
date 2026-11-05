@@ -30,6 +30,7 @@ const PRECACHE = [
     './js/utils/loanengine.js',
     './js/utils/dossier.js',
     './js/utils/dossierbar.js',
+    './js/utils/refiengine.js',
     './js/utils/charts.js',
     './js/utils/export.js',
     './js/utils/storage.js',
