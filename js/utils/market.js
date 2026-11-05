@@ -15,6 +15,8 @@ const DEFAULT_MAX_AGE_MS = 6 * 60 * 60 * 1000; // 6 h
  * @property {string} label
  * @property {number} value
  * @property {string} [unit]
+ * @property {string} [as_of] Date (AAAA-MM-JJ) ou période (AAAA-MM) de l'observation
+ * @property {string} [note] Précision (ex. « moyenne mensuelle BCE »)
  */
 
 /**
@@ -60,6 +62,28 @@ export const Market = {
         if (!data?.updated_at) return null;
         const d = new Date(data.updated_at);
         return isNaN(/** @type {any} */ (d)) ? null : d.toLocaleDateString('fr-FR');
+    },
+
+    /**
+     * Précision à afficher à côté d'un taux : nature (ex. « moyenne mensuelle
+     * BCE ») et date de l'observation si elle n'est pas du jour de mise à jour.
+     * Chaîne vide si le taux est frais.
+     * @param {RatesData | null} data
+     * @param {string} key
+     * @returns {string}
+     */
+    rateNote(data, key) {
+        const r = data?.rates?.[key];
+        if (!r) return '';
+        const asOf = typeof r.as_of === 'string' ? r.as_of : '';
+        let when = '';
+        if (/^\d{4}-\d{2}$/.test(asOf)) when = `${asOf.slice(5, 7)}/${asOf.slice(0, 4)}`;
+        else if (/^\d{4}-\d{2}-\d{2}/.test(asOf)) {
+            const days = data?.updated_at ? (Date.parse(data.updated_at) - Date.parse(asOf)) / 86400000 : 0;
+            if (days > 4) when = `au ${asOf.slice(8, 10)}/${asOf.slice(5, 7)}/${asOf.slice(0, 4)}`;
+        }
+        const note = typeof r.note === 'string' ? r.note : '';
+        return [note, when].filter(Boolean).join(' ');
     },
 
     /**

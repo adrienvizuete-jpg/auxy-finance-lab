@@ -214,20 +214,39 @@ function validateForm() {
 
     const requiredFields = getRequiredFields(currentType);
 
+    const flag = (el, message) => {
+        valid = false;
+        el.classList.add('invalid');
+        el.setAttribute('aria-invalid', 'true');
+        const error = document.createElement('div');
+        error.className = 'form-error';
+        error.id = `${el.id}-error`;
+        error.textContent = message;
+        el.setAttribute('aria-describedby', error.id);
+        el.closest('.form-group')?.appendChild(error);
+    };
+    document.querySelectorAll('#credit-form-fields [aria-invalid]').forEach(el => { el.removeAttribute('aria-invalid'); el.removeAttribute('aria-describedby'); });
+
     requiredFields.forEach(({ id, label, min }) => {
         const el = document.getElementById(id);
         if (!el) return;
         const val = parseFloat(el.value);
-        if (isNaN(val) || val < (min ?? 0.01)) {
-            valid = false;
-            el.classList.add('invalid');
-            const error = document.createElement('div');
-            error.className = 'form-error';
-            error.textContent = `${label} est requis`;
-            el.closest('.form-group')?.appendChild(error);
+        if (isNaN(val) || val < (min ?? 0.01)) flag(el, `${label} est requis`);
+    });
+
+    // Validation HTML native désactivée (novalidate : elle refusait 4,125 %
+    // ou 62 jours à cause des pas) : seuls les maxima déclarés sont contrôlés
+    document.querySelectorAll('#credit-form-fields input[type="number"][max]').forEach(el => {
+        const input = /** @type {HTMLInputElement} */ (el);
+        const val = parseFloat(input.value);
+        if (!isNaN(val) && input.max !== '' && val > parseFloat(input.max) && !input.classList.contains('invalid')) {
+            const lbl = input.closest('.form-group')?.querySelector('.form-label')?.textContent?.trim() || 'Valeur';
+            flag(input, `${lbl} : maximum ${input.max}`);
         }
     });
 
+    const firstInvalid = document.querySelector('#credit-form-fields .invalid');
+    if (firstInvalid) /** @type {HTMLElement} */ (firstInvalid).focus();
     return valid;
 }
 
@@ -1622,9 +1641,10 @@ async function setupRateHint() {
     hint.className = 'rate-hint';
     // Arrondi à 2 décimales : l'input taux a step="0.01", une 3e décimale
     // déclencherait la validation HTML native et bloquerait le submit
-    hint.innerHTML = `Marché${updated ? ` (${updated})` : ''} : ` + entries.map(([, r]) => {
+    hint.innerHTML = `Marché${updated ? ` (${updated})` : ''} : ` + entries.map(([key, r]) => {
         const v = (Math.round(r.value * 100) / 100).toFixed(2);
-        return `<button type="button" class="rate-hint-value" data-rate="${v}" title="Utiliser ${v} %">${escapeHtml(r.label)} ${Financial.formatNumber(r.value, 2)} %</button>`;
+        const note = Market.rateNote(data, key);
+        return `<button type="button" class="rate-hint-value" data-rate="${v}" title="Utiliser ${v} %">${escapeHtml(r.label)} ${Financial.formatNumber(r.value, 2)} %${note ? ` (${escapeHtml(note)})` : ''}</button>`;
     }).join(' · ');
     group.appendChild(hint);
 
@@ -2035,7 +2055,7 @@ export const CreditModule = {
                         <div class="card-subtitle">${CREDIT_TYPES.find(t => t.id === currentType)?.desc}</div>
                     </div>
                 </div>
-                <form id="credit-form">
+                <form id="credit-form" novalidate>
                     <div id="credit-form-fields">
                         ${getFormHTML(currentType)}
                     </div>

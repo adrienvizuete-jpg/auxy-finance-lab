@@ -227,13 +227,13 @@ function recalculate() {
     if (tableEl) tableEl.innerHTML = renderResultsTable(c);
 
     // Graphique
-    Charts.covenantChart('chart-covenants', {
+    Charts.scheduleDraw('chart-covenants', () => Charts.covenantChart('chart-covenants', {
         labels: c.rows.map(r => `Année ${r.year}`),
         ebitda: c.rows.map(r => r.ebitda),
         debtService: c.rows.map(r => r.service),
         dscr: c.rows.map(r => r.dscr ?? 0),
         covenantDscr
-    });
+    }));
 
     lastResult = {
         type: 'covenants',

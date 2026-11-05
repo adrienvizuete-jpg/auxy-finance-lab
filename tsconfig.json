@@ -18,6 +18,8 @@
     "js/utils/loanengine.js",
     "js/utils/dossier.js",
     "js/utils/refiengine.js",
+    "js/utils/libs.js",
+    "js/utils/a11y.js",
     "js/utils/storage.js",
     "js/utils/sanitize.js",
     "js/utils/share.js",

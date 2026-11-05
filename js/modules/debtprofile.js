@@ -311,19 +311,18 @@ function recalculate() {
             tooltip: `${f0(s.loan.amount)} · ${s.loan.rate} % · ${s.loan.durationMonths} mois${s.loan.isNew ? ' · nouveau' : ''}`
         };
     });
-    Charts.debtGantt('chart-debt-gantt', ganttItems, {
-        markerValue: analysis.year + (analysis.month - 1) / 12,
-        markerLabel: analysisLabel()
-    });
+    const marker = { markerValue: analysis.year + (analysis.month - 1) / 12, markerLabel: analysisLabel() };
+    Charts.scheduleDraw('chart-debt-gantt', () => Charts.debtGantt('chart-debt-gantt', ganttItems, marker));
 
     // Mur de la dette + encours
-    Charts.debtTimeline('chart-debt-wall', {
+    const wall = {
         labels: agg.years.map(y => y.label),
         series: agg.perLoanCapital,
         crd: agg.years.map(y => y.closing),
         pastCount: agg.years.filter(y => y.isPast).length,
         markerLabel: analysisLabel()
-    });
+    };
+    Charts.scheduleDraw('chart-debt-wall', () => Charts.debtTimeline('chart-debt-wall', wall));
 
     lastResult = {
         type: 'debtprofile',

@@ -190,6 +190,8 @@ function sizingProjection() {
 }
 
 let lastSizing = null;
+/** @type {ReturnType<typeof setTimeout> | undefined} */
+let sizingTimer;
 function renderSizing(c) {
     const el = document.getElementById('er-sizing-results');
     if (!el) return;
@@ -215,7 +217,7 @@ function renderSizing(c) {
     el.innerHTML = [
         card('Max. par le levier', `${fmtK(result.byLeverage)} k€`, `${fmtRatio(sizing.maxLeverage)} × EBITDA − autre dette nette`),
         card('Max. par le DSCR', `${fmtK(result.byDscr)} k€`, `DSCR ≥ ${fmtRatio(sizing.minDscr)} sur ${proj.years} ans${proj.fromDossier ? ' (BP du dossier)' : ''}`),
-        card('Dette senior maximale', `<span style="color:var(--primary)">${fmtK(result.max)} k€</span>`, `contrainte liante : ${({ dscr: 'DSCR', leverage: 'levier', equity: `fonds propres ≥ ${sizing.fpMinPct} %` })[result.binding]} · actuelle ${fmtK(c.detteSenior)} k€`),
+        card('Dette senior maximale', `<span style="color:var(--link)">${fmtK(result.max)} k€</span>`, `contrainte liante : ${({ dscr: 'DSCR', leverage: 'levier', equity: `fonds propres ≥ ${sizing.fpMinPct} %` })[result.binding]} · actuelle ${fmtK(c.detteSenior)} k€`),
         card('Fonds propres requis', `${fmtK(fpRequired)} k€`, `${c.totalEmplois > 0 ? fmtPct(fpRequired / c.totalEmplois * 100) : '—'} des emplois`)
     ].join('');
 }
@@ -321,7 +323,10 @@ function recalculate() {
     if (elAutres) elAutres.textContent = fmtK(c.totalAutres);
     const elAutresPct = document.getElementById('er-autres-pct');
     if (elAutresPct) elAutresPct.textContent = fmtPct(c.pctAutres);
-    renderSizing(c);
+    // Dimensionnement (≈ 50 projections) : 150 ms après la dernière frappe
+    clearTimeout(sizingTimer);
+    if (!lastSizing) renderSizing(c);
+    else sizingTimer = setTimeout(() => renderSizing(compute()), 150);
     const elAnnuityTotal = document.getElementById('er-annuity-total');
     if (elAnnuityTotal) elAnnuityTotal.textContent = fmtK(totalAnnuity);
 

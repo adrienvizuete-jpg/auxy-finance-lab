@@ -77,7 +77,25 @@ const AUXY_MARKER_PLUGIN = {
     }
 };
 
+/** @type {Record<string, ReturnType<typeof setTimeout>>} */
+const drawTimers = {};
+
 export const Charts = {
+    /**
+     * Redessine un graphique : immédiatement s'il n'existe pas encore (premier
+     * affichage, export), sinon 150 ms après la dernière frappe — recréer un
+     * Chart.js à chaque touche coûtait plus que le calcul lui-même.
+     * @param {string} canvasId
+     * @param {() => void} draw
+     */
+    scheduleDraw(canvasId, draw) {
+        const canvas = document.getElementById(canvasId);
+        const exists = canvas && /** @type {any} */ (window).Chart?.getChart?.(canvas);
+        clearTimeout(drawTimers[canvasId]);
+        if (!exists) { draw(); return; }
+        drawTimers[canvasId] = setTimeout(() => { if (document.contains(canvas)) draw(); }, 150);
+    },
+
     COLORS,
 
     /**

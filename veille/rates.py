@@ -24,6 +24,8 @@ class RateData:
     name: str
     value: float | None
     change_bps: float | None  # variation en points de base
+    as_of: str | None = None  # date (AAAA-MM-JJ) ou période (AAAA-MM) de l'observation
+    note: str | None = None   # précision affichée (ex. « moyenne mensuelle »)
 
 
 # ---------------------------------------------------------------------------
@@ -67,14 +69,17 @@ async def _fetch_ecb_json(session: httpx.AsyncClient, flow: str, key: str, name:
         # Les observations sont indexées par position temporelle
         sorted_obs = sorted(observations.items(), key=lambda x: int(x[0]))
         values = [float(v[0]) for _, v in sorted_obs if v]
+        periods = data.get("structure", {}).get("dimensions", {}).get("observation", [{}])[0].get("values", [])
+        last_idx = int(sorted_obs[-1][0]) if sorted_obs else -1
+        as_of = periods[last_idx].get("id") if 0 <= last_idx < len(periods) else None
 
         if len(values) >= 2:
             last_val = values[-1]
             prev_val = values[-2]
             change_bps = round((last_val - prev_val) * 100, 1)
-            return RateData(name=name, value=round(last_val, 3), change_bps=change_bps)
+            return RateData(name=name, value=round(last_val, 3), change_bps=change_bps, as_of=as_of)
         elif len(values) == 1:
-            return RateData(name=name, value=round(values[0], 3), change_bps=None)
+            return RateData(name=name, value=round(values[0], 3), change_bps=None, as_of=as_of)
 
     except Exception:
         logger.warning("Erreur récupération ECB JSON %s (%s)", name, key, exc_info=True)
@@ -138,10 +143,11 @@ def _rate_from_observations(
             )
             return RateData(name=name, value=None, change_bps=None)
 
+    as_of = last_date[:10] or None
     if len(obs) >= 2:
         change_bps = round((last_val - obs[-2][1]) * 100, 1)
-        return RateData(name=name, value=round(last_val, 3), change_bps=change_bps)
-    return RateData(name=name, value=round(last_val, 3), change_bps=None)
+        return RateData(name=name, value=round(last_val, 3), change_bps=change_bps, as_of=as_of)
+    return RateData(name=name, value=round(last_val, 3), change_bps=None, as_of=as_of)
 
 
 async def _fetch_bundesbank_series(
@@ -236,79 +242,93 @@ async def _fetch_dbnomics_euribor(session: httpx.AsyncClient, series: str, name:
 
 
 # ---------------------------------------------------------------------------
-# Banque de France Webstat API — pour OAT France 10Y (quotidien)
+# Banque de France Webstat — OAT 10 ans de référence (quotidien)
 # ---------------------------------------------------------------------------
+# Série « Taux de l'emprunt phare à 10 ans - France » (FR10YT_RR) : rendement
+# de l'OAT 10 ans de référence, celle citée par la presse. À ne pas confondre
+# avec le TEC 10 (taux de l'échéance constante, série FRMOYTEC10), indice
+# interpolé publié par l'AFT.
+#
+# Webstat a migré en 2024 vers l'API Explore v2.1 (Opendatasoft) : l'ancienne
+# route /api/v2.1/data/... répond 404, d'où un repli permanent sur la moyenne
+# mensuelle BCE. Le jeu « observations » exige une clé gratuite
+# (developer.webstat.banque-france.fr), passée en « Authorization: Apikey … ».
 
-BDF_WEBSTAT_URL = "https://webstat.banque-france.fr/api/v2.1/data"
-BDF_OAT_SERIES = "FM/D.FR.EUR.FR2.BB.FR10YT_RR.YLD"
+BDF_EXPLORE_URL = "https://webstat.banque-france.fr/api/explore/v2.1/catalog/datasets/observations"
+BDF_OAT_SERIES = "FM.D.FR.EUR.FR2.BB.FR10YT_RR.YLD"
+
+
+def _parse_bdf_records(payload: object) -> list[tuple[str, float]]:
+    """Extrait [(date, valeur)] d'une réponse Explore (records ou export JSON)."""
+    rows = payload.get("results", []) if isinstance(payload, dict) else payload
+    out: list[tuple[str, float]] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        rec = row.get("record", {}).get("fields", row) if "record" in row else row
+        day = str(rec.get("time_period_end") or rec.get("time_period") or "")[:10]
+        val = rec.get("obs_value")
+        try:
+            num = float(val)
+        except (TypeError, ValueError):
+            continue
+        if day and math.isfinite(num):
+            out.append((day, num))
+    return sorted(out)
 
 
 async def _fetch_bdf_yield() -> RateData:
-    """Récupère le rendement OAT France 10Y quotidien depuis la BdF Webstat API."""
+    """Rendement quotidien de l'OAT 10 ans de référence (BdF Webstat, clé requise)."""
     name = "OAT France 10Y"
     api_key = os.environ.get("BDF_API_KEY", "").strip()
 
     if not api_key:
-        logger.info("BDF_API_KEY absente, fallback ECB IRS mensuel pour OAT")
+        logger.warning("BDF_API_KEY absente : OAT 10 ans en repli sur la moyenne mensuelle BCE")
         return await _fetch_oat_fallback()
 
-    url = f"{BDF_WEBSTAT_URL}/{BDF_OAT_SERIES}"
+    params = {
+        "select": "time_period_end,obs_value",
+        "where": f"series_key='{BDF_OAT_SERIES}'",
+        "order_by": "time_period_end desc",
+        "limit": "10",
+    }
+    headers = {"Accept": "application/json", "User-Agent": "AuxyVeille/1.0", "Authorization": f"Apikey {api_key}"}
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                url,
-                params={"lastNObservations": "5", "detail": "dataonly", "format": "jsondata"},
-                headers={
-                    "Accept": "application/json",
-                    "User-Agent": "AuxyVeille/1.0",
-                    "Authorization": f"Bearer {api_key}",
-                },
-                timeout=20.0,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-
-            # Structure JSON SDMX identique à l'ECB
-            datasets = data.get("dataSets", [])
-            if not datasets:
-                logger.warning("BdF OAT : pas de dataset, fallback ECB")
-                return await _fetch_oat_fallback()
-
-            series = datasets[0].get("series", {})
-            if not series:
-                logger.warning("BdF OAT : pas de séries, fallback ECB")
-                return await _fetch_oat_fallback()
-
-            first_series = next(iter(series.values()))
-            observations = first_series.get("observations", {})
-            if not observations:
-                logger.warning("BdF OAT : pas d'observations, fallback ECB")
-                return await _fetch_oat_fallback()
-
-            sorted_obs = sorted(observations.items(), key=lambda x: int(x[0]))
-            values = [float(v[0]) for _, v in sorted_obs if v]
-
-            if len(values) >= 2:
-                last_val = values[-1]
-                prev_val = values[-2]
-                change_bps = round((last_val - prev_val) * 100, 1)
-                logger.info("OAT France via BdF Webstat : %.3f%%", last_val)
-                return RateData(name=name, value=round(last_val, 3), change_bps=change_bps)
-            elif len(values) == 1:
-                return RateData(name=name, value=round(values[0], 3), change_bps=None)
-
+        async with httpx.AsyncClient(http2=False) as client:
+            for path in ("/records", "/exports/json"):
+                resp = await client.get(BDF_EXPLORE_URL + path, params=params, headers=headers, timeout=20.0)
+                if resp.status_code in (401, 403):
+                    logger.warning("BdF Webstat : clé refusée (HTTP %s) — vérifier BDF_API_KEY", resp.status_code)
+                    break
+                if resp.status_code != 200:
+                    logger.warning("BdF Webstat %s : HTTP %s", path, resp.status_code)
+                    continue
+                obs = _parse_bdf_records(resp.json())
+                if not obs:
+                    logger.warning("BdF Webstat %s : aucune observation", path)
+                    continue
+                day, last_val = obs[-1]
+                change_bps = round((last_val - obs[-2][1]) * 100, 1) if len(obs) >= 2 else None
+                logger.info("OAT 10 ans (emprunt phare, BdF) : %.3f%% au %s", last_val, day)
+                return RateData(name=name, value=round(last_val, 3), change_bps=change_bps, as_of=day)
     except Exception:
-        logger.warning("Erreur BdF Webstat OAT, fallback ECB", exc_info=True)
+        logger.warning("Erreur BdF Webstat OAT, repli BCE", exc_info=True)
 
     return await _fetch_oat_fallback()
 
 
 async def _fetch_oat_fallback() -> RateData:
-    """Fallback : OAT via ECB IRS mensuel (convergence Maastricht)."""
+    """Repli : taux de convergence BCE (moyenne MENSUELLE du 10 ans France).
+
+    Décalé d'un à deux mois et lissé : publié avec sa période et la mention
+    « moyenne mensuelle » pour ne pas être lu comme le taux du jour.
+    """
     async with httpx.AsyncClient() as session:
-        return await _fetch_ecb_json(
+        rate = await _fetch_ecb_json(
             session, "IRS", "M.FR.L.L40.CI.0000.EUR.N.Z", "OAT France 10Y"
         )
+    rate.note = "moyenne mensuelle BCE"
+    return rate
 
 
 # ---------------------------------------------------------------------------
