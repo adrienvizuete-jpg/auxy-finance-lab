@@ -82,6 +82,12 @@ def build_payload(rates: list[RateData]) -> dict | None:
             "value": round(float(rate.value), 3),
             "unit": "%",
         }
+        # Date de l'observation et précision : un taux mensuel ou ancien ne
+        # doit pas être lu comme le taux du jour
+        if getattr(rate, "as_of", None):
+            entries[key]["as_of"] = rate.as_of
+        if getattr(rate, "note", None):
+            entries[key]["note"] = rate.note
 
     if not entries:
         return None

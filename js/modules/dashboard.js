@@ -189,11 +189,15 @@ export const DashboardModule = {
         const tiles = keys
             .map(k => ({ key: k, r: data.rates[k] }))
             .filter(({ r }) => r && typeof r.value === 'number' && isFinite(r.value))
-            .map(({ r }) => `
+            .map(({ key, r }) => {
+                const note = Market.rateNote(data, key);
+                return `
                 <div class="market-tile">
                     <div class="market-tile-label">${escapeHtml(r.label)}</div>
                     <div class="market-tile-value">${Financial.formatNumber(r.value, 2)} %</div>
-                </div>`);
+                    ${note ? `<div class="market-tile-note" style="font-size:0.7rem;color:var(--warning)">${escapeHtml(note)}</div>` : ''}
+                </div>`;
+            });
         if (tiles.length === 0) return;
 
         grid.innerHTML = tiles.join('');

@@ -229,8 +229,13 @@ def render_email(data: VeilleData) -> str:
     for i, rate in enumerate(data.rates):
         bg = "#f9f9f9" if i % 2 else "#ffffff"
         val_str = f"{rate.value:.3f}%" if rate.value is not None else "—"
+        # Taux mensuel ou daté : précisé pour ne pas le lire comme le taux du jour
+        label = rate.name
+        note = getattr(rate, "note", None)
+        if note:
+            label = f"{rate.name} ({note} {getattr(rate, 'as_of', '') or ''})".replace(" )", ")")
         html += _table_row([
-            rate.name,
+            label,
             val_str,
             _fmt_change(rate.change_bps, unit="bps"),
         ], bg)
