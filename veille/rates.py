@@ -242,20 +242,22 @@ async def _fetch_dbnomics_euribor(session: httpx.AsyncClient, series: str, name:
 
 
 # ---------------------------------------------------------------------------
-# Banque de France Webstat — OAT 10 ans de référence (quotidien)
+# Banque de France Webstat — OAT 10 ans : TEC 10 (quotidien)
 # ---------------------------------------------------------------------------
-# Série « Taux de l'emprunt phare à 10 ans - France » (FR10YT_RR) : rendement
-# de l'OAT 10 ans de référence, celle citée par la presse. À ne pas confondre
-# avec le TEC 10 (taux de l'échéance constante, série FRMOYTEC10), indice
-# interpolé publié par l'AFT.
+# Série « Taux de l'Echéance Constante - 10 ans » (FRMOYTEC10) : rendement
+# d'une OAT fictive d'échéance exactement 10 ans, interpolé entre les deux OAT
+# qui l'encadrent. C'est le seul taux 10 ans France quotidien de Webstat :
+# l'emprunt phare (FR10YT_RR) n'y existe qu'en mensuel, et sa version
+# quotidienne (ECOFI…FIGB_PA) s'arrête en juillet 2024. Écart avec l'OAT phare
+# citée par la presse : quelques points de base ; d'où la mention « TEC 10 ».
 #
 # Webstat a migré en 2024 vers l'API Explore v2.1 (Opendatasoft) : l'ancienne
 # route /api/v2.1/data/... répond 404, d'où un repli permanent sur la moyenne
-# mensuelle BCE. Le jeu « observations » exige une clé gratuite
-# (developer.webstat.banque-france.fr), passée en « Authorization: Apikey … ».
+# mensuelle BCE. Le jeu « observations » exige une clé gratuite (compte
+# Webstat, Préférences > Clés d'API), passée en « Authorization: Apikey … ».
 
 BDF_EXPLORE_URL = "https://webstat.banque-france.fr/api/explore/v2.1/catalog/datasets/observations"
-BDF_OAT_SERIES = "FM.D.FR.EUR.FR2.BB.FR10YT_RR.YLD"
+BDF_OAT_SERIES = "FM.D.FR.EUR.FR2.BB.FRMOYTEC10.HSTA"
 
 
 def _parse_bdf_records(payload: object) -> list[tuple[str, float]]:
@@ -278,7 +280,7 @@ def _parse_bdf_records(payload: object) -> list[tuple[str, float]]:
 
 
 async def _fetch_bdf_yield() -> RateData:
-    """Rendement quotidien de l'OAT 10 ans de référence (BdF Webstat, clé requise)."""
+    """OAT 10 ans : TEC 10 quotidien (BdF Webstat, clé requise)."""
     name = "OAT France 10Y"
     api_key = os.environ.get("BDF_API_KEY", "").strip()
 
@@ -309,8 +311,8 @@ async def _fetch_bdf_yield() -> RateData:
                     continue
                 day, last_val = obs[-1]
                 change_bps = round((last_val - obs[-2][1]) * 100, 1) if len(obs) >= 2 else None
-                logger.info("OAT 10 ans (emprunt phare, BdF) : %.3f%% au %s", last_val, day)
-                return RateData(name=name, value=round(last_val, 3), change_bps=change_bps, as_of=day)
+                logger.info("OAT 10 ans (TEC 10, BdF) : %.3f%% au %s", last_val, day)
+                return RateData(name=name, value=round(last_val, 3), change_bps=change_bps, as_of=day, note="TEC 10")
     except Exception:
         logger.warning("Erreur BdF Webstat OAT, repli BCE", exc_info=True)
 
