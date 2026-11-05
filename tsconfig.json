@@ -15,6 +15,7 @@
     "js/utils/financial.js",
     "js/utils/debtengine.js",
     "js/utils/covenantengine.js",
+    "js/utils/loanengine.js",
     "js/utils/storage.js",
     "js/utils/sanitize.js",
     "js/utils/share.js",

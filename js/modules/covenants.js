@@ -6,6 +6,8 @@
  */
 
 import { CovenantEngine } from '../utils/covenantengine.js';
+import { Financial } from '../utils/financial.js';
+import { Market } from '../utils/market.js';
 import { Charts } from '../utils/charts.js';
 import { Export } from '../utils/export.js';
 import { Storage } from '../utils/storage.js';
@@ -24,13 +26,18 @@ let taxYears = [], capexYears = [], wcYears = [];
 let openingCash = 0;      // trésorerie d'ouverture (k€)
 let dscrBasis = 'cfads';  // 'cfads' (définition bancaire) | 'ebitda' (approche simplifiée)
 let excludeBullet = true; // in fine supposés refinancés : hors DSCR
+// Marché des dettes à taux variable : Euribor par année, swap de couverture
+let indexPath = [];       // vide → Euribor 3M publié (rates.json)
+let swapRate = 2.8;
+let floorZero = true;
 let debts = [
     { label: 'Tranche A', amount: 8225, rate: 3.5, durationYears: 6, amortType: 'constant', frequency: 'monthly' },
     { label: 'Tranche B', amount: 3525, rate: 4.5, durationYears: 7, amortType: 'constant', frequency: 'monthly' }
 ];
 let lastResult = null;
 
-const AMORT_OPTIONS = { constant: 'Constant', degressif: 'Dégressif', infine: 'In Fine' };
+const AMORT_OPTIONS = { constant: 'Constant', degressif: 'Dégressif', infine: 'In Fine', custom: 'Profil libre', balloon: 'Ballon' };
+const RATE_TYPES = { fixed: 'Fixe', floating: 'Variable' };
 const FREQ_OPTIONS = { monthly: 'Mensuel', quarterly: 'Trimestriel', semiannual: 'Semestriel', annual: 'Annuel' };
 
 const fmtK = v => new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(v);
@@ -53,10 +60,10 @@ const PLUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 
 // ── Moteur de calcul ──
 
-const debtAnnualProfile = (debt, years) => CovenantEngine.debtAnnualProfile(debt, years);
+const debtAnnualProfile = (debt, years) => CovenantEngine.debtAnnualProfile(debt, years, covInput().market);
 
-function compute() {
-    return CovenantEngine.project({
+function covInput() {
+    return {
         years: horizon,
         ebitda: ebitdaYears.slice(0, horizon),
         tax: taxYears.slice(0, horizon),
@@ -67,8 +74,16 @@ function compute() {
         covenantDscr,
         covenantLeverage,
         dscrBasis,
-        excludeBullet
-    });
+        excludeBullet,
+        market: { indexPath: indexPath.length ? indexPath : [marketIndex ?? 0], swapRate, floor: floorZero ? 0 : null }
+    };
+}
+
+/** Euribor 3M publié, utilisé tant qu'aucune trajectoire n'est saisie */
+let marketIndex = null;
+
+function compute() {
+    return CovenantEngine.project(covInput());
 }
 
 // ── Rendus partiels ──
@@ -107,9 +122,13 @@ function renderDebtRows() {
         <tr data-index="${i}">
             <td><input class="er-input" type="text" value="${escapeHtml(d.label)}" data-field="label"></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${d.amount}" data-field="amount" step="100" min="0"></td>
-            <td style="text-align:right"><input class="er-input narrow" type="number" value="${d.rate}" data-field="rate" step="0.1" min="0" max="30" style="width:70px"></td>
+            <td><select class="er-input" data-field="rateType" style="width:86px;font-size:0.75rem">${Object.entries(RATE_TYPES).map(([k, v]) => `<option value="${k}" ${k === (d.rateType || 'fixed') ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
+            <td style="text-align:right"><input class="er-input narrow" type="number" value="${d.rate}" data-field="rate" step="0.05" min="0" max="30" style="width:70px" title="${d.rateType === 'floating' ? 'Marge sur Euribor' : 'Taux fixe'}"></td>
+            <td style="text-align:right"><input class="er-input narrow" type="number" value="${d.hedgePct || 0}" data-field="hedgePct" step="10" min="0" max="100" style="width:60px" ${d.rateType === 'floating' ? '' : 'disabled'}></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${d.durationYears}" data-field="durationYears" step="0.25" min="0.08" max="30" style="width:60px"></td>
-            <td><select class="er-input" data-field="amortType" style="width:100px;font-size:0.75rem">${Object.entries(AMORT_OPTIONS).map(([k, v]) => `<option value="${k}" ${k === d.amortType ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
+            <td><select class="er-input" data-field="amortType" style="width:100px;font-size:0.75rem">${Object.entries(AMORT_OPTIONS).map(([k, v]) => `<option value="${k}" ${k === d.amortType ? 'selected' : ''}>${v}</option>`).join('')}</select>
+                ${d.amortType === 'custom' ? `<input class="er-input" type="text" data-field="customProfile" value="${escapeHtml((d.customProfile || []).join('/'))}" placeholder="10/15/20/25/30" style="width:100px;margin-top:4px" title="% du nominal amorti par année">` : ''}
+                ${d.amortType === 'balloon' ? `<input class="er-input narrow" type="number" data-field="balloonPct" value="${d.balloonPct ?? 30}" min="0" max="100" step="5" style="width:60px;margin-top:4px" title="Ballon final (% du nominal)">` : ''}</td>
             <td><select class="er-input" data-field="frequency" style="width:100px;font-size:0.75rem">${Object.entries(FREQ_OPTIONS).map(([k, v]) => `<option value="${k}" ${k === d.frequency ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
             <td style="text-align:right" class="er-computed">${fmtK(annuity)}</td>
             <td style="width:30px">${debts.length > 1 ? `<button class="er-remove-btn" data-action="remove">${X_SVG}</button>` : ''}</td>
@@ -179,6 +198,11 @@ function recalculate() {
     const minHeadroom = c.minDscrRow?.headroomDscr;
     setKpi('cov-kpi-headroom', fmtPct1(minHeadroom));
     setKpi('cov-kpi-status', STATUS_BADGE[c.globalStatus]);
+    const input = covInput();
+    const drop = CovenantEngine.breakevenEbitdaDrop(input);
+    const rise = CovenantEngine.breakevenIndexRise(input);
+    setKpi('cov-kpi-ebitda-drop', drop == null ? '> 95 %' : drop === 0 ? 'déjà en bris' : `−${fmtPct1(drop)}`);
+    setKpi('cov-kpi-rate-rise', rise == null ? (debts.some(d => d.rateType === 'floating' && (d.hedgePct || 0) < 100) ? '> 10 pts' : 'sans objet') : rise === 0 ? 'déjà en bris' : `+${Financial.formatNumber(rise, 2)} pt`);
 
     // Tableau
     const tableEl = document.getElementById('cov-results-table');
@@ -205,6 +229,9 @@ function recalculate() {
             openingCash,
             dscrBasis,
             excludeBullet,
+            indexPath: [...indexPath],
+            swapRate,
+            floorZero,
             growthPct,
             covenantDscr,
             covenantLeverage,
@@ -216,6 +243,8 @@ function recalculate() {
             leverageMax: c.maxLevRow?.leverage ?? null,
             leverageMaxYear: c.maxLevRow?.year ?? null,
             globalStatus: c.globalStatus,
+            ebitdaDropToBreach: drop,
+            rateRiseToBreach: rise,
             rows: c.rows
         }
     };
@@ -278,9 +307,9 @@ function exportExcel() {
         ['Covenant DSCR minimum', covenantDscr],
         ['Covenant Levier maximum', covenantLeverage],
         [''],
-        ['DETTES (k€)', 'Montant', 'Taux (%)', 'Durée (ans)', 'Amortissement', 'Fréquence']
+        ['DETTES (k€)', 'Montant', 'Taux / marge (%)', 'Durée (ans)', 'Amortissement', 'Fréquence', 'Taux', 'Couvert (%)']
     ];
-    debts.forEach(d => rows.push([d.label, d.amount, d.rate, d.durationYears, AMORT_OPTIONS[d.amortType], FREQ_OPTIONS[d.frequency]]));
+    debts.forEach(d => rows.push([d.label, d.amount, d.rate, d.durationYears, AMORT_OPTIONS[d.amortType], FREQ_OPTIONS[d.frequency], RATE_TYPES[d.rateType || 'fixed'], d.rateType === 'floating' ? d.hedgePct || 0 : null]));
     rows.push(['']);
     rows.push(['k€', ...c.rows.map(r => `Année ${r.year}`)]);
     const n2 = v => (v != null && isFinite(v) ? Math.round(v * 100) / 100 : null);
@@ -300,6 +329,9 @@ function exportExcel() {
     rows.push(['Levier net', ...c.rows.map(r => n2(r.leverage))]);
     rows.push(['Marge levier (%)', ...c.rows.map(r => n2(r.headroomLev))]);
     rows.push(['Statut', ...c.rows.map(r => ({ ok: 'Conforme', warning: 'Tendu', breach: 'BRIS' })[r.status])]);
+    rows.push(['']);
+    rows.push(['Baisse d\'EBITDA supportable (%)', c.ebitdaDropToBreach]);
+    rows.push(['Hausse de l\'Euribor supportable (pts)', c.rateRiseToBreach]);
 
     const ws = XLSX.utils.aoa_to_sheet(rows);
     ws['!cols'] = [{ wch: 28 }, ...c.rows.map(() => ({ wch: 12 }))];
@@ -320,7 +352,9 @@ function exportPdf() {
             { label: 'Covenant Levier maximum', value: fmtX(covenantLeverage) },
             { label: 'DSCR minimum projeté', value: `${fmtX(c.dscrMin)} (année ${c.dscrMinYear ?? '—'})` },
             { label: 'Levier maximum projeté', value: `${fmtX(c.leverageMax)} (année ${c.leverageMaxYear ?? '—'})` },
-            { label: 'Statut global', value: ({ ok: 'Conforme', warning: 'Tendu (marge < 10 %)', breach: 'BRIS DE COVENANT' })[c.globalStatus] }
+            { label: 'Statut global', value: ({ ok: 'Conforme', warning: 'Tendu (marge < 10 %)', breach: 'BRIS DE COVENANT' })[c.globalStatus] },
+            { label: 'Baisse d\'EBITDA supportable', value: c.ebitdaDropToBreach == null ? '> 95 %' : `${fmtPct1(c.ebitdaDropToBreach)}` },
+            { label: 'Hausse de l\'Euribor supportable', value: c.rateRiseToBreach == null ? 'sans objet / > 10 pts' : `${Financial.formatNumber(c.rateRiseToBreach, 2)} pt` }
         ] },
         { type: 'note', title: 'Définitions', text:
             `DSCR = ${dscrBasis === 'ebitda' ? 'EBITDA' : 'CFADS (EBITDA − IS − capex − variation de BFR)'} / service de la dette (intérêts + amortissement contractuel${excludeBullet ? ', remboursements in fine supposés refinancés' : ''}). ` +
@@ -399,9 +433,16 @@ function loadParams(p) {
             rate: parseFloat(d.rate) || 0,
             durationYears: Math.max(1 / 12, parseFloat(d.durationYears) || 1),
             amortType: AMORT_OPTIONS[d.amortType] ? d.amortType : 'constant',
-            frequency: FREQ_OPTIONS[d.frequency] ? d.frequency : 'monthly'
+            frequency: FREQ_OPTIONS[d.frequency] ? d.frequency : 'monthly',
+            rateType: d.rateType === 'floating' ? 'floating' : 'fixed',
+            hedgePct: Math.min(100, Math.max(0, parseFloat(d.hedgePct) || 0)),
+            customProfile: Array.isArray(d.customProfile) ? d.customProfile.map(v => parseFloat(v) || 0) : undefined,
+            balloonPct: d.balloonPct != null ? parseFloat(d.balloonPct) || 0 : undefined
         }));
     }
+    if (Array.isArray(p.indexPath)) indexPath = p.indexPath.map(v => parseFloat(v)).filter(v => isFinite(v));
+    if (typeof p.swapRate === 'number') swapRate = p.swapRate;
+    if (typeof p.floorZero === 'boolean') floorZero = p.floorZero;
 }
 
 // ── Module ──
@@ -506,7 +547,9 @@ export const CovenantsModule = {
                             <tr>
                                 <th>Libellé</th>
                                 <th style="text-align:right">Montant (k€)</th>
-                                <th style="text-align:right">Taux (%)</th>
+                                <th>Taux</th>
+                                <th style="text-align:right">Taux / marge (%)</th>
+                                <th style="text-align:right">Couvert (%)</th>
                                 <th style="text-align:right">Durée (ans)</th>
                                 <th>Amortissement</th>
                                 <th>Fréquence</th>
@@ -517,6 +560,30 @@ export const CovenantsModule = {
                         <tbody id="cov-debts-body">${renderDebtRows()}</tbody>
                     </table>
                 </div>
+            </div>
+
+            <!-- Marché (dettes à taux variable) -->
+            <div class="card section">
+                <div class="card-title">Taux variable et couverture</div>
+                <div class="form-row" style="margin-top:12px">
+                    <div class="form-group">
+                        <label class="form-label" title="Une valeur par année, séparées par / ; la dernière est prolongée">Euribor par année (%)</label>
+                        <input type="text" class="form-input" id="cov-index-path" value="${escapeHtml(indexPath.map(v => Financial.formatNumber(v, 3)).join(' / '))}" placeholder="Euribor 3M du jour">
+                        <div class="rate-hint" id="cov-index-hint"></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Taux du swap de couverture (%)</label>
+                        <input type="number" class="form-input" id="cov-swap-rate" value="${swapRate}" step="0.05">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Floor de l'index</label>
+                        <select class="form-select" id="cov-floor">
+                            <option value="0" ${floorZero ? 'selected' : ''}>Floor à 0 %</option>
+                            <option value="none" ${!floorZero ? 'selected' : ''}>Sans floor</option>
+                        </select>
+                    </div>
+                </div>
+                <p style="font-size:0.8rem;color:var(--text-muted);margin:4px 0 0">Pour une ligne « Variable », la colonne taux est la marge sur Euribor ; « Couvert » est la part de l'encours swappée au taux ci-dessus.</p>
             </div>
 
             <!-- KPIs -->
@@ -536,6 +603,14 @@ export const CovenantsModule = {
                 <div class="er-kpi-card">
                     <div class="kpi-label">Statut global</div>
                     <div class="kpi-value" id="cov-kpi-status">—</div>
+                </div>
+                <div class="er-kpi-card">
+                    <div class="kpi-label" title="Baisse uniforme de l'EBITDA sur tout l'horizon qui déclenche le premier bris">Baisse d'EBITDA supportable</div>
+                    <div class="kpi-value" id="cov-kpi-ebitda-drop">—</div>
+                </div>
+                <div class="er-kpi-card">
+                    <div class="kpi-label" title="Hausse de l'Euribor (dettes variables non couvertes) qui déclenche le premier bris">Hausse de taux supportable</div>
+                    <div class="kpi-value" id="cov-kpi-rate-rise">—</div>
                 </div>
             </div>
 
@@ -626,6 +701,24 @@ export const CovenantsModule = {
             dscrBasis = e.target.value === 'ebitda' ? 'ebitda' : 'cfads';
             recalculate();
         });
+        document.getElementById('cov-index-path')?.addEventListener('input', e => {
+            indexPath = String(e.target.value).split(/[/;|]/).map(v => Financial.parseNumber(v)).filter(v => !isNaN(v));
+            recalculate();
+        });
+        document.getElementById('cov-swap-rate')?.addEventListener('input', e => {
+            swapRate = parseFloat(e.target.value) || 0;
+            recalculate();
+        });
+        document.getElementById('cov-floor')?.addEventListener('change', e => {
+            floorZero = e.target.value !== 'none';
+            recalculate();
+        });
+        Market.getRates().then(data => {
+            marketIndex = Market.rateValue(data, 'euribor_3m');
+            const hint = document.getElementById('cov-index-hint');
+            if (hint && marketIndex != null) hint.textContent = `Par défaut : Euribor 3M ${Financial.formatNumber(marketIndex, 3)} % (${Market.formatUpdatedAt(data) || 'n.d.'}), prolongé sur l'horizon`;
+            if (!indexPath.length && debts.some(d => d.rateType === 'floating')) recalculate();
+        });
         document.getElementById('cov-bullet')?.addEventListener('change', e => {
             excludeBullet = e.target.value !== 'include';
             recalculate();
@@ -640,7 +733,15 @@ export const CovenantsModule = {
             const i = parseInt(row.dataset.index);
             if (isNaN(i) || !debts[i]) return;
             const isText = field === 'label' || e.target.tagName === 'SELECT';
-            debts[i][field] = isText ? e.target.value : (parseFloat(e.target.value) || 0);
+            if (field === 'customProfile') {
+                debts[i].customProfile = String(e.target.value).split(/[/;|]/).map(v => Financial.parseNumber(v)).filter(v => !isNaN(v));
+            } else {
+                debts[i][field] = isText ? e.target.value : (parseFloat(e.target.value) || 0);
+            }
+            // Type de taux / amortissement : la ligne change de forme
+            if (e.type === 'change' && (field === 'rateType' || field === 'amortType')) {
+                debtsBody.innerHTML = renderDebtRows();
+            }
             if (field === 'durationYears') debts[i].durationYears = Math.max(1 / 12, parseFloat(e.target.value) || 1);
             recalculate();
         };

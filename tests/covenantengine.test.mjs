@@ -70,3 +70,31 @@ describe('CovenantEngine.project', () => {
         assert.equal(r.rows[0].status, 'breach');
     });
 });
+
+describe('Covenants — taux variable et stress inversé', () => {
+    const floating = { label: 'Senior', amount: 3000, rate: 2, durationYears: 3, amortType: 'degressif', frequency: 'annual', rateType: 'floating' };
+    const input = { years: 3, ebitda: [1500, 1500, 1500], debts: [floating], covenantDscr: 1.2, covenantLeverage: 3.5, market: { indexPath: [3] } };
+
+    test('intérêts = (index + marge) × CRD', () => {
+        const r = CovenantEngine.project(input);
+        near(r.rows[0].interest, 3000 * 0.05, 1e-6);
+    });
+
+    test('swap à 100 % : intérêts figés au taux swap + marge', () => {
+        const hedged = { ...input, debts: [{ ...floating, hedgePct: 100 }], market: { indexPath: [6], swapRate: 2.5 } };
+        near(CovenantEngine.project(hedged).rows[0].interest, 3000 * 0.045, 1e-6);
+    });
+
+    test('baisse d\'EBITDA supportable cohérente avec le DSCR', () => {
+        const drop = /** @type {number} */ (CovenantEngine.breakevenEbitdaDrop(input));
+        const at = CovenantEngine.project({ ...input, ebitdaShock: -drop + 0.01 });
+        assert.ok(!at.rows.some(r => r.status === 'breach'), 'juste avant : conforme');
+        const past = CovenantEngine.project({ ...input, ebitdaShock: -drop - 0.01 });
+        assert.ok(past.rows.some(r => r.status === 'breach'), 'juste après : bris');
+    });
+
+    test('hausse de taux supportable : null si toute la dette est couverte', () => {
+        assert.equal(CovenantEngine.breakevenIndexRise({ ...input, debts: [{ ...floating, hedgePct: 100 }] }), null);
+        assert.ok(/** @type {number} */ (CovenantEngine.breakevenIndexRise(input)) > 0);
+    });
+});

@@ -11,6 +11,7 @@ import { PARAM_LABELS, RESULT_LABELS, t, formatValue } from '../utils/i18n.js';
 import { escapeHtml } from '../utils/sanitize.js';
 import { Share } from '../utils/share.js';
 import { Market } from '../utils/market.js';
+import { LoanEngine } from '../utils/loanengine.js';
 
 const CREDIT_TYPES = [
     { id: 'constant', label: 'Amortissable Constant', desc: 'Mensualités fixes' },
@@ -20,6 +21,7 @@ const CREDIT_TYPES = [
     { id: 'revolving', label: 'Revolving', desc: 'Ligne de crédit' },
     { id: 'relais', label: 'Prêt Relais', desc: 'Court terme, intérêts capitalisés' },
     { id: 'mezzanine', label: 'Dette Mezzanine', desc: 'Cash + PIK + equity kicker' },
+    { id: 'variable', label: 'Taux variable', desc: 'Euribor + marge, floor, couverture, Exact/360' },
     { id: 'tranching', label: 'Tranching', desc: 'Financement multi-tranches (LBO)' }
 ];
 
@@ -40,6 +42,7 @@ const DEFAULTS = {
     revolving: { 'cr-principal': 1000000, 'cr-utilization': 60, 'cr-rate': 5.5, 'cr-commitment': 0.5, 'cr-duration': 12 },
     relais: { 'cr-principal': 300000, 'cr-salePrice': 450000, 'cr-rate': 5.0, 'cr-duration': 18, 'cr-capitalized': false, 'cr-fees': 0 },
     mezzanine: { 'cr-principal': 2000000, 'cr-duration': 60, 'cr-rate': 8.0, 'cr-pikRate': 4.0, 'cr-kicker': 5.0, 'cr-fees': 0, 'cr-pik-compounding': 'annual' },
+    variable: { 'cr-principal': 5000000, 'cr-duration': 84, 'cr-frequency': 'quarterly', 'cr-vamort': 'constant', 'cr-margin': 2.25, 'cr-upfront': 1.0 },
     tranching: {}
 };
 
@@ -245,6 +248,12 @@ function getRequiredFields(type) {
                 { id: 'cr-rate', label: 'Taux', min: 0 },
                 { id: 'cr-duration', label: 'Durée', min: 1 }
             ];
+        case 'variable':
+            return [
+                { id: 'cr-principal', label: 'Montant', min: 1 },
+                { id: 'cr-margin', label: 'Marge', min: 0 },
+                { id: 'cr-duration', label: 'Durée', min: 1 }
+            ];
         case 'relais':
             return [
                 { id: 'cr-principal', label: 'Montant du prêt', min: 1 },
@@ -343,6 +352,108 @@ function getFormHTML(type) {
         case 'degressif':
         case 'infine':
             return common;
+
+        case 'variable':
+            return `
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Montant emprunté (€)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-principal" value="5000000" min="0" step="1"><span class="input-suffix">€</span></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Durée (mois)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-duration" value="84" min="1" max="360" step="1"><span class="input-suffix">mois</span></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Date de tirage</label>
+                        <input type="date" class="form-input" id="cr-start" value="${new Date().toISOString().slice(0, 10)}">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Périodicité</label>
+                        <select class="form-select" id="cr-frequency">
+                            <option value="quarterly">Trimestrielle</option>
+                            <option value="monthly">Mensuelle</option>
+                            <option value="semiannual">Semestrielle</option>
+                            <option value="annual">Annuelle</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Amortissement</label>
+                        <select class="form-select" id="cr-vamort">
+                            <option value="constant">Échéances constantes</option>
+                            <option value="degressif">Amortissement constant</option>
+                            <option value="custom">Profil annuel libre</option>
+                            <option value="balloon">Avec ballon final</option>
+                            <option value="infine">In fine</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" title="% du nominal amorti chaque année, séparés par /">Profil (% par an)</label>
+                        <input type="text" class="form-input" id="cr-profile" value="10/15/20/25/30" placeholder="10/15/20/25/30">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Ballon final (% du nominal)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-balloon" value="30" min="0" max="100" step="5"><span class="input-suffix">%</span></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Différé (mois)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-deferral" value="0" min="0" max="60" step="1"><span class="input-suffix">mois</span></div>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Marge (%)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-margin" value="2.25" min="0" max="20" step="0.05"><span class="input-suffix">%</span></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" title="Une valeur par année, séparées par / ; la dernière est prolongée">Euribor par année (%)</label>
+                        <input type="text" class="form-input" id="cr-index-path" value="" placeholder="ex. 2,76 / 2,50 / 2,40">
+                        <div class="rate-hint" id="cr-index-hint"></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Floor de l'index</label>
+                        <select class="form-select" id="cr-floor">
+                            <option value="0">Floor à 0 %</option>
+                            <option value="none">Sans floor</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Base de calcul</label>
+                        <select class="form-select" id="cr-daycount">
+                            <option value="act/360">Exact/360 (Euribor)</option>
+                            <option value="act/365">Exact/365</option>
+                            <option value="30/360">30/360</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Couverture de taux</label>
+                        <select class="form-select" id="cr-hedge">
+                            <option value="none">Aucune</option>
+                            <option value="swap">Swap (payeur fixe)</option>
+                            <option value="cap">Cap</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Part couverte (%)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-hedge-pct" value="70" min="0" max="100" step="5"><span class="input-suffix">%</span></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Taux swap / strike cap (%)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-hedge-rate" value="2.80" min="-1" max="15" step="0.05"><span class="input-suffix">%</span></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Prime du cap (% du couvert)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-cap-premium" value="1.0" min="0" max="10" step="0.1"><span class="input-suffix">%</span></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Frais d'arrangement (%)</label>
+                        <div class="input-group"><input type="number" class="form-input" id="cr-upfront" value="1.0" min="0" max="10" step="0.05"><span class="input-suffix">%</span></div>
+                    </div>
+                </div>`;
 
         case 'creditbail':
             return `
@@ -827,6 +938,34 @@ function getResultsHTML(type, result) {
                     ${taegItem(result)}
                 </div>`;
 
+        case 'variable':
+            return `
+                <div class="results-grid">
+                    <div class="result-item">
+                        <div class="result-label">1re ${payLabel.toLowerCase()}</div>
+                        <div class="result-value">${f(result.periodicPayment)}</div>
+                        <div class="result-sub">taux tout compris ${p(result.firstRate)}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-label">Total intérêts</div>
+                        <div class="result-value">${f(result.totalInterest)}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-label">Couverture (net)</div>
+                        <div class="result-value">${f(result.totalHedge + result.hedgePremium)}</div>
+                        <div class="result-sub">${result.hedgePremium > 0 ? `dont prime ${f(result.hedgePremium)}` : '+ = coût, − = gain'}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-label">Frais d'arrangement</div>
+                        <div class="result-value">${f(result.upfrontFee)}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-label">Coût total</div>
+                        <div class="result-value">${f(result.totalCost)}</div>
+                    </div>
+                    ${taegItem(result)}
+                </div>`;
+
         case 'tranching': {
             const c = result.consolidated;
             return `
@@ -940,6 +1079,41 @@ function runSimulation({ scroll = true } = {}) {
             params = { principal: val('cr-principal'), cashRate: val('cr-rate'), pikRate: val('cr-pikRate'), durationMonths: val('cr-duration'), equityKicker: val('cr-kicker'), fees: val('cr-fees'), pikCompounding: document.getElementById('cr-pik-compounding')?.value || 'annual' };
             result = Financial.detteMezzanine(params);
             break;
+        case 'variable': {
+            const str = id => document.getElementById(id)?.value || '';
+            const list = txt => String(txt).split(/[/;|]/).map(v => Financial.parseNumber(v)).filter(v => !isNaN(v));
+            const hedgeType = str('cr-hedge') || 'none';
+            const hedgeRate = val('cr-hedge-rate');
+            params = {
+                principal: val('cr-principal'),
+                durationMonths: val('cr-duration'),
+                frequency: str('cr-frequency') || 'quarterly',
+                amortType: str('cr-vamort') || 'constant',
+                customProfile: list(str('cr-profile')),
+                balloonPct: val('cr-balloon'),
+                deferralMonths: val('cr-deferral'),
+                rateType: 'floating',
+                margin: val('cr-margin'),
+                indexPath: list(str('cr-index-path')),
+                floor: str('cr-floor') === 'none' ? null : 0,
+                dayCount: str('cr-daycount') || 'act/360',
+                startDate: str('cr-start') || undefined,
+                hedge: { type: hedgeType, pct: val('cr-hedge-pct'), swapRate: hedgeRate, capStrike: hedgeRate, capPremiumPct: val('cr-cap-premium') },
+                upfrontFeePct: val('cr-upfront')
+            };
+            if (!params.indexPath.length) params.indexPath = [0];
+            const built = LoanEngine.build(params);
+            const first = built.rows[0];
+            result = {
+                ...built,
+                schedule: built.rows,
+                frequency: params.frequency,
+                periodicPayment: first ? first.payment : 0,
+                firstRate: first ? first.rate : null,
+                totalHedge: built.totalHedge
+            };
+            break;
+        }
         case 'tranching':
             params = { tranches: tranchingTranches.map(t => ({ ...t })) };
             result = Financial.tranching(tranchingTranches);
@@ -1066,6 +1240,9 @@ function renderScheduleTable(schedule) {
     const columns = [];
 
     if ('period' in first) columns.push({ key: 'period', label: periodLabel });
+    if ('date' in first) columns.push({ key: 'date', label: 'Date', format: 'date' });
+    if ('indexRate' in first) columns.push({ key: 'indexRate', label: 'Index', format: 'pct' });
+    if ('rate' in first) columns.push({ key: 'rate', label: 'Taux', format: 'pct' });
     if ('payment' in first) columns.push({ key: 'payment', label: payLabel, format: 'currency' });
     if ('cashPayment' in first) columns.push({ key: 'cashPayment', label: 'Cash', format: 'currency' });
     if ('principal' in first) columns.push({ key: 'principal', label: 'Capital', format: 'currency' });
@@ -1073,6 +1250,7 @@ function renderScheduleTable(schedule) {
     if ('pikInterest' in first) columns.push({ key: 'pikInterest', label: 'PIK', format: 'currency' });
     if ('insurance' in first && schedule.some(r => r.insurance > 0)) columns.push({ key: 'insurance', label: 'Assurance', format: 'currency' });
     if ('commitmentFee' in first) columns.push({ key: 'commitmentFee', label: 'Com.', format: 'currency' });
+    if ('hedgeFlow' in first && schedule.some(r => r.hedgeFlow)) columns.push({ key: 'hedgeFlow', label: 'Couverture', format: 'currency' });
     if ('balance' in first) columns.push({ key: 'balance', label: 'CRD', format: 'currency' });
 
     const displayCount = Math.min(schedule.length, 60);
@@ -1086,7 +1264,7 @@ function renderScheduleTable(schedule) {
                 </thead>
                 <tbody>
                     ${schedule.slice(0, displayCount).map(row => `
-                        <tr>${columns.map(c => `<td class="${c.format === 'currency' ? 'number' : ''}">${c.format === 'currency' ? Financial.formatCurrency(row[c.key], 2) : row[c.key]}</td>`).join('')}</tr>
+                        <tr>${columns.map(c => `<td class="${c.format && c.format !== 'date' ? 'number' : ''}">${c.format === 'currency' ? Financial.formatCurrency(row[c.key], 2) : c.format === 'pct' ? Financial.formatPercent(row[c.key], 3) : c.format === 'date' ? new Date(row[c.key]).toLocaleDateString('fr-FR', { timeZone: 'UTC' }) : escapeHtml(row[c.key])}</td>`).join('')}</tr>
                     `).join('')}
                 </tbody>
             </table>
@@ -1098,7 +1276,7 @@ function renderScheduleTable(schedule) {
         document.getElementById('show-all-schedule')?.addEventListener('click', function () {
             const tbody = document.querySelector('#amort-table tbody');
             tbody.innerHTML = schedule.map(row => `
-                <tr>${columns.map(c => `<td class="${c.format === 'currency' ? 'number' : ''}">${c.format === 'currency' ? Financial.formatCurrency(row[c.key], 2) : row[c.key]}</td>`).join('')}</tr>
+                <tr>${columns.map(c => `<td class="${c.format && c.format !== 'date' ? 'number' : ''}">${c.format === 'currency' ? Financial.formatCurrency(row[c.key], 2) : c.format === 'pct' ? Financial.formatPercent(row[c.key], 3) : c.format === 'date' ? new Date(row[c.key]).toLocaleDateString('fr-FR', { timeZone: 'UTC' }) : escapeHtml(row[c.key])}</td>`).join('')}</tr>
             `).join('');
             this.remove();
         });
@@ -1280,6 +1458,22 @@ function shareSimulation() {
 }
 
 // ── Taux de marché (hint cliquable sous le champ taux) ──
+/** Taux variable : pré-remplit la trajectoire d'index avec l'Euribor 3M publié. */
+async function prefillIndexPath() {
+    const input = document.getElementById('cr-index-path');
+    if (!input) return;
+    const data = await Market.getRates();
+    if (!document.contains(input)) return;
+    const e3m = Market.rateValue(data, 'euribor_3m');
+    const e12m = Market.rateValue(data, 'euribor_12m');
+    const hint = document.getElementById('cr-index-hint');
+    if (e3m != null && !input.value) input.value = Financial.formatNumber(e3m, 3);
+    if (hint && (e3m != null || e12m != null)) {
+        const updated = Market.formatUpdatedAt(data);
+        hint.textContent = `Marché${updated ? ` (${updated})` : ''} : Euribor 3M ${e3m != null ? Financial.formatNumber(e3m, 3) + ' %' : 'n.d.'} · 12M ${e12m != null ? Financial.formatNumber(e12m, 3) + ' %' : 'n.d.'} — trajectoire à saisir par année (taux du jour prolongé par défaut)`;
+    }
+}
+
 async function setupRateHint() {
     const rateInput = document.getElementById('cr-rate');
     if (!rateInput) return;
@@ -1605,6 +1799,27 @@ function loadPendingReload() {
             }
         });
 
+        // Taux variable : champs propres (listes, couverture)
+        if (pending.type === 'variable') {
+            const p = pending.params;
+            const set = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = String(v); };
+            set('cr-vamort', p.amortType);
+            set('cr-margin', p.margin);
+            set('cr-balloon', p.balloonPct);
+            set('cr-daycount', p.dayCount);
+            set('cr-start', p.startDate);
+            set('cr-upfront', p.upfrontFeePct);
+            set('cr-floor', p.floor == null ? 'none' : '0');
+            if (Array.isArray(p.indexPath)) set('cr-index-path', p.indexPath.map(v => Financial.formatNumber(v, 3)).join(' / '));
+            if (Array.isArray(p.customProfile)) set('cr-profile', p.customProfile.join('/'));
+            if (p.hedge) {
+                set('cr-hedge', p.hedge.type);
+                set('cr-hedge-pct', p.hedge.pct);
+                set('cr-hedge-rate', p.hedge.type === 'cap' ? p.hedge.capStrike : p.hedge.swapRate);
+                set('cr-cap-premium', p.hedge.capPremiumPct);
+            }
+        }
+
         // Restore insurance toggle state
         const hasRate = pending.params.insuranceRate > 0;
         const modeToggle = document.getElementById('insurance-mode-toggle');
@@ -1764,6 +1979,8 @@ export const CreditModule = {
             setupInsuranceToggle();
             setupDeferralToggle();
             setupRateHint();
+            prefillIndexPath();
+        prefillIndexPath();
             if (currentType === 'tranching') setupTranchingListeners();
         });
 
@@ -1791,6 +2008,7 @@ export const CreditModule = {
         setupInsuranceToggle();
         setupDeferralToggle();
         setupRateHint();
+        prefillIndexPath();
         if (currentType === 'tranching') setupTranchingListeners();
 
         // Lien de partage (#credit?s=...) : restaure les paramètres et relance le calcul

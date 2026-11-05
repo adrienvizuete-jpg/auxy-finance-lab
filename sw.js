@@ -27,6 +27,7 @@ const PRECACHE = [
     './js/utils/financial.js',
     './js/utils/debtengine.js',
     './js/utils/covenantengine.js',
+    './js/utils/loanengine.js',
     './js/utils/charts.js',
     './js/utils/export.js',
     './js/utils/storage.js',
