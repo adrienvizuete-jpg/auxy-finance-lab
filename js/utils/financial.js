@@ -824,6 +824,59 @@ export const Financial = {
     },
 
     /**
+     * Crédit-bail immobilier vs acquisition financée par emprunt (SCI à l'IS) :
+     * coût net d'impôt année par année et en valeur actuelle. Approche
+     * simplifiée, à valider avec l'expert-comptable :
+     * - emprunt : apport + frais d'acquisition à t0 ; déductions = intérêts +
+     *   amortissement du bâti (hors terrain) + frais d'acquisition amortis avec le bâti ;
+     * - crédit-bail : avance preneur à t0 (non déductible, réduit l'encours) ;
+     *   loyers déductibles hors quote-part terrain ; levée d'option (valeur
+     *   résiduelle) au terme, non déductible. Les deux schémas aboutissent à
+     *   la propriété du bien au terme de la même durée.
+     * @param {{ price: number, landPct: number, notaryPct: number, isRate: number, buildingDepYears: number, discountRate: number,
+     *   loan: { rate: number, durationYears: number, apportPct: number },
+     *   cbi: { rate: number, durationYears: number, avancePct: number, residualPct: number, timing?: string } }} p
+     */
+    cbiVsLoan({ price, landPct, notaryPct, isRate, buildingDepYears, discountRate, loan, cbi }) {
+        const years = Math.max(1, Math.round(Math.max(loan.durationYears, cbi.durationYears)));
+        const t = isRate / 100;
+        const building = price * (1 - landPct / 100);
+        const notary = price * notaryPct / 100;
+        const depYearly = (building + notary * (1 - landPct / 100)) / Math.max(1, buildingDepYears);
+
+        // Emprunt
+        const apport = price * loan.apportPct / 100 + notary;
+        const loanSim = this.amortissableConstant({ principal: price * (1 - loan.apportPct / 100), annualRate: loan.rate, durationMonths: Math.round(loan.durationYears * 12) });
+        // Crédit-bail (loyers mensuels, terme à échoir par défaut)
+        const avance = price * cbi.avancePct / 100;
+        const residual = price * cbi.residualPct / 100;
+        const cbiSim = this.creditBail({ assetValue: price, deposit: avance, annualRate: cbi.rate, durationMonths: Math.round(cbi.durationYears * 12), residualValue: residual, paymentTiming: cbi.timing || 'advance' });
+
+        const rows = [];
+        let npvLoan = apport, npvCbi = avance;
+        for (let y = 1; y <= years; y++) {
+            const lr = loanSim.schedule.slice((y - 1) * 12, y * 12);
+            const service = lr.reduce((s, r) => s + r.payment, 0);
+            const interest = lr.reduce((s, r) => s + r.interest, 0);
+            const dep = y <= buildingDepYears ? depYearly : 0;
+            const loanNet = service - t * (interest + dep);
+            const cr = cbiSim.schedule.slice((y - 1) * 12, y * 12);
+            const rents = cr.reduce((s, r) => s + r.payment, 0);
+            const option = y === Math.round(cbi.durationYears) ? residual : 0;
+            const cbiNet = rents + option - t * rents * (1 - landPct / 100);
+            const df = Math.pow(1 + discountRate / 100, y);
+            npvLoan += loanNet / df;
+            npvCbi += cbiNet / df;
+            rows.push({ year: y, loanService: service, loanTaxSaving: t * (interest + dep), loanNet, cbiRents: rents, cbiOption: option, cbiTaxSaving: t * rents * (1 - landPct / 100), cbiNet });
+        }
+        return {
+            rows, apport, avance, residual,
+            loanRate: loan.rate, cbiRent: cbiSim.monthlyRent,
+            npvLoan, npvCbi, advantage: npvLoan - npvCbi, cheaper: npvCbi < npvLoan ? 'cbi' : 'loan'
+        };
+    },
+
+    /**
      * Ligne de Crédit Revolving (RCF)
      * - utilization : % moyen tiré, ou utilizationProfile : % tiré par mois
      *   (12 valeurs, répétées sur la durée) pour un BFR saisonnier ;

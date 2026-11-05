@@ -316,3 +316,17 @@ describe('RCF saisonnier et comparatif BFR', () => {
         approx(r.solutions[1].cost, 600000 * 0.04 * 365 / 360, 1e-6, 'Dailly');
     });
 });
+
+describe('Crédit-bail immobilier vs emprunt', () => {
+    test('structure du comparatif et cohérence des flux', () => {
+        const r = Financial.cbiVsLoan({ price: 2e6, landPct: 20, notaryPct: 7.5, isRate: 25, buildingDepYears: 30, discountRate: 5,
+            loan: { rate: 4, durationYears: 15, apportPct: 20 }, cbi: { rate: 4.5, durationYears: 15, avancePct: 10, residualPct: 1 } });
+        assert.equal(r.rows.length, 15);
+        approx(r.apport, 2e6 * 0.2 + 150000, 1e-6, 'apport + frais de notaire');
+        approx(r.rows[14].cbiOption, 20000, 1e-6, 'levée d\'option au terme');
+        // économie d'IS du crédit-bail = 25 % des loyers hors quote-part terrain
+        approx(r.rows[0].cbiTaxSaving, r.rows[0].cbiRents * 0.8 * 0.25, 1e-6);
+        assert.ok(['cbi', 'loan'].includes(r.cheaper));
+        approx(r.advantage, r.npvLoan - r.npvCbi, 1e-9);
+    });
+});
