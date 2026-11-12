@@ -116,7 +116,8 @@ export const Export = {
         navy: [27, 73, 97], teal: [19, 121, 163], copper: [211, 149, 87],
         cream: [247, 236, 221], light: [234, 241, 246], ink: [33, 37, 41],
         grey: [107, 114, 128], rule: [214, 221, 227], white: [255, 255, 255],
-        margin: 15, top: 22, bottom: 276
+        // Format diapositive 16:9 (338,7 × 190,5 mm), comme les présentations du cabinet
+        page: [338.67, 190.5], margin: 16, top: 23, footer: 18
     },
 
     /** Logo du bandeau PDF (37 Ko), chargé au premier export seulement. @type {string | null} */
@@ -141,53 +142,64 @@ export const Export = {
         return this._buildPdf(title, sections, filename, opts);
     },
 
-    /** Page de garde : type de document, client, objet, fiche d'identité, chiffres clés. */
+    /**
+     * Page de garde, format diapositive : panneau marine à gauche (logo),
+     * à droite le type de document, le client, la fiche d'identité et les
+     * chiffres clés.
+     */
     _drawCover(doc, title, cover) {
         const T = this._pdfTheme;
         const W = doc.internal.pageSize.getWidth();
         const H = doc.internal.pageSize.getHeight();
         const s = v => this._sanitizePdf(String(v));
-        const M = 20;
+        const panel = Math.round(W * 0.34);
+        const X = panel + 20;          // bord gauche du contenu
+        const R = W - 20;              // bord droit
 
         doc.setFillColor(...T.navy);
-        doc.rect(0, 0, W, 58, 'F');
+        doc.rect(0, 0, panel, H, 'F');
         doc.setFillColor(...T.copper);
-        doc.rect(0, 58, W, 1.6, 'F');
+        doc.rect(panel, 0, 1.6, H, 'F');
+        const logoW = Math.min(78, panel - 30);
         try {
-            doc.addImage(this._logo, 'JPEG', M, 17, 66, 23.3);
+            doc.addImage(this._logo, 'JPEG', (panel - logoW) / 2, H / 2 - logoW * 0.353 / 2 - 6, logoW, logoW * 0.353);
         } catch {
             doc.setTextColor(...T.white);
             doc.setFontSize(24);
             doc.setFont('helvetica', 'bold');
-            doc.text('AUXY PARTNERS', M, 34);
+            doc.text('AUXY PARTNERS', panel / 2, H / 2, { align: 'center' });
         }
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8.5);
+        doc.setTextColor(...T.white);
+        doc.text('Conseil en financement', panel / 2, H - 14, { align: 'center' });
 
         // « Plan de financement — EMEK GROUP » : le type de document en surtitre, le client en titre
         const [kindFromTitle, clientFromTitle] = String(title).split(/\s+[—–]\s+/);
         const kind = cover.kind || kindFromTitle || title;
         const client = cover.client || clientFromTitle || '';
 
-        let y = 92;
+        let y = 34;
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(11);
         doc.setTextColor(...T.copper);
-        doc.text(s(kind).toUpperCase(), M, y, { charSpace: 0.6 });
+        doc.text(s(kind).toUpperCase(), X, y, { charSpace: 0.6 });
         y += 14;
-        doc.setFontSize(client ? 28 : 24);
+        doc.setFontSize(client ? 30 : 26);
         doc.setTextColor(...T.navy);
-        const headline = doc.splitTextToSize(s(client || title), W - 2 * M);
-        doc.text(headline, M, y);
-        y += headline.length * 11;
+        const headline = doc.splitTextToSize(s(client || title), R - X).slice(0, 2);
+        doc.text(headline, X, y);
+        y += (headline.length - 1) * 12 + 9;
         if (cover.subtitle && cover.subtitle !== client) {
             doc.setFont('helvetica', 'italic');
             doc.setFontSize(12);
             doc.setTextColor(...T.grey);
-            doc.text(doc.splitTextToSize(s(cover.subtitle), W - 2 * M), M, y);
-            y += 9;
+            doc.text(doc.splitTextToSize(s(cover.subtitle), R - X)[0], X, y);
+            y += 7;
         }
         doc.setFillColor(...T.copper);
-        doc.rect(M, y, 24, 1.2, 'F');
-        y += 16;
+        doc.rect(X, y, 24, 1.2, 'F');
+        y += 14;
 
         // Fiche d'identité du document
         const today = new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
@@ -198,71 +210,64 @@ export const Export = {
             ['Cabinet émetteur', 'Auxy Partners'],
             ['Confidentialité', 'Document strictement confidentiel']
         ];
-        const row = (label, value, bold = true) => {
+        fiche.forEach(([label, value]) => {
             doc.setFont('helvetica', 'normal');
             doc.setFontSize(10);
             doc.setTextColor(...T.grey);
-            doc.text(s(label), M, y);
-            doc.setFont('helvetica', bold ? 'bold' : 'normal');
+            doc.text(s(label), X, y);
+            doc.setFont('helvetica', 'bold');
             doc.setTextColor(...T.navy);
-            doc.text(s(value), M + 52, y);
+            doc.text(s(value), X + 50, y);
             doc.setDrawColor(...T.rule);
             doc.setLineWidth(0.15);
-            doc.line(M, y + 3, W - M, y + 3);
-            y += 9;
-        };
-        fiche.forEach(([l, v]) => row(l, v));
+            doc.line(X, y + 2.8, R, y + 2.8);
+            y += 8.2;
+        });
 
-        // Chiffres clés
-        const items = (cover.items || []).slice(0, 6);
+        // Chiffres clés, sur une ligne en bas de page
+        const items = (cover.items || []).slice(0, 4);
         if (items.length) {
-            y += 10;
+            const cy = Math.max(y + 8, H - 52);
             doc.setFont('helvetica', 'bold');
             doc.setFontSize(9);
             doc.setTextColor(...T.copper);
-            doc.text('CHIFFRES CLÉS', M, y, { charSpace: 0.4 });
-            y += 6;
-            const perRow = Math.min(3, items.length);
+            doc.text('CHIFFRES CLÉS', X, cy, { charSpace: 0.4 });
             const gap = 5;
-            const cw = (W - 2 * M - gap * (perRow - 1)) / perRow;
+            const cw = (R - X - gap * (items.length - 1)) / items.length;
             items.forEach((item, i) => {
-                const cx = M + (i % perRow) * (cw + gap);
-                const cy = y + Math.floor(i / perRow) * 25;
+                const cx = X + i * (cw + gap);
                 doc.setFillColor(...T.light);
-                doc.rect(cx, cy, cw, 21, 'F');
+                doc.rect(cx, cy + 5, cw, 21, 'F');
                 doc.setFillColor(...T.navy);
-                doc.rect(cx, cy, cw, 1, 'F');
+                doc.rect(cx, cy + 5, cw, 1, 'F');
                 doc.setFont('helvetica', 'normal');
                 doc.setFontSize(8);
                 doc.setTextColor(...T.grey);
-                doc.text(s(item.label), cx + 4, cy + 8);
+                doc.text(doc.splitTextToSize(s(item.label), cw - 8)[0], cx + 4, cy + 13);
                 doc.setFont('helvetica', 'bold');
                 doc.setFontSize(13);
                 doc.setTextColor(...T.navy);
-                doc.text(s(item.value), cx + 4, cy + 16);
+                doc.text(doc.splitTextToSize(s(item.value), cw - 8)[0], cx + 4, cy + 21);
             });
         }
 
-        doc.setFillColor(...T.navy);
-        doc.rect(0, H - 16, W, 16, 'F');
         doc.setFont('helvetica', 'normal');
-        doc.setFontSize(8);
-        doc.setTextColor(...T.white);
-        doc.text('Auxy Partners — Conseil en financement', M, H - 6.5);
-        doc.text('Document de travail — ne constitue pas un engagement de financement', W - M, H - 6.5, { align: 'right' });
+        doc.setFontSize(7.5);
+        doc.setTextColor(...T.grey);
+        doc.text('Document de travail — ne constitue pas un engagement de financement', R, H - 9, { align: 'right' });
     },
 
     /** Titre de section : libellé, source ou unité en italique, filet cuivre. Retourne le nouveau y. */
     _sectionTitle(doc, section, y, x = this._pdfTheme.margin) {
         const T = this._pdfTheme;
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(section.small ? 10 : 12);
+        doc.setFontSize(section.small ? 11 : 13.5);
         doc.setTextColor(...T.navy);
         doc.text(this._sanitizePdf(String(section.text ?? section.title)), x, y);
         y += 4.5;
         if (section.subtitle) {
             doc.setFont('helvetica', 'italic');
-            doc.setFontSize(8);
+            doc.setFontSize(9);
             doc.setTextColor(...T.grey);
             doc.text(this._sanitizePdf(String(section.subtitle)), x, y);
             y += 4;
@@ -283,7 +288,7 @@ export const Export = {
         const head = section.headers.map(s);
         const body = section.rows.map(r => r.map(s));
         const wide = head.length > 7;
-        const fontSize = section.fontSize || (wide ? 7.5 : 8.5);
+        const fontSize = section.fontSize || (head.length > 10 ? 8.5 : 9.5);
         const isTotal = i => (section.totalRows ? section.totalRows.includes(i) : /^(total|sous[- ]total|ss total)/i.test(body[i]?.[0] || ''));
         const isGrand = i => /^total/i.test(body[i]?.[0] || '');
         const columnStyles = { 0: { halign: 'left', minCellWidth: wide ? 26 : 34 } };
@@ -295,10 +300,10 @@ export const Export = {
             body,
             theme: 'plain',
             // un petit tableau ne se coupe pas entre deux pages
-            pageBreak: body.length <= 28 ? 'avoid' : 'auto',
+            pageBreak: body.length <= 13 ? 'avoid' : 'auto',
             rowPageBreak: 'avoid',
-            margin: { left, right, top: T.top, bottom: 297 - T.bottom },
-            styles: { font: 'helvetica', fontSize, textColor: T.ink, cellPadding: { top: 2, bottom: 2, left: 2.4, right: 2.4 }, lineColor: T.rule, lineWidth: { top: 0, right: 0, bottom: 0.12, left: 0 }, overflow: 'linebreak', valign: 'middle' },
+            margin: { left, right, top: T.top, bottom: T.footer },
+            styles: { font: 'helvetica', fontSize, textColor: T.ink, cellPadding: { top: 2.3, bottom: 2.3, left: 3, right: 3 }, lineColor: T.rule, lineWidth: { top: 0, right: 0, bottom: 0.12, left: 0 }, overflow: 'linebreak', valign: 'middle' },
             headStyles: { fillColor: T.navy, textColor: T.white, fontStyle: 'bold', halign: 'right', lineWidth: 0 },
             columnStyles,
             didParseCell: data => {
@@ -326,7 +331,7 @@ export const Export = {
             doc.setFont('helvetica', 'italic');
             doc.setFontSize(7.5);
             doc.setTextColor(...T.grey);
-            const lines = doc.splitTextToSize(s(section.note), 210 - left - right);
+            const lines = doc.splitTextToSize(s(section.note), doc.internal.pageSize.getWidth() - left - right);
             doc.text(lines, left, endY + 4);
             endY += 2 + lines.length * 3.4;
         }
@@ -342,7 +347,7 @@ export const Export = {
         const T = this._pdfTheme;
         const s = v => this._sanitizePdf(String(v ?? ''));
         const { jsPDF } = jspdf;
-        const doc = new jsPDF('p', 'mm', 'a4');
+        const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: T.page });
         const W = doc.internal.pageSize.getWidth();
         const M = T.margin;
         const hasCover = opts.cover !== false;
@@ -353,9 +358,24 @@ export const Export = {
             doc.addPage();
         }
 
+        const H = doc.internal.pageSize.getHeight();
+        const bottom = H - T.footer;
         let y = T.top;
         /** Saut de page si le bloc de hauteur h ne tient pas */
-        const need = h => { if (y + h > T.bottom) { doc.addPage(); y = T.top; } };
+        const need = h => { if (y + h > bottom) { doc.addPage(); y = T.top; } };
+
+        // Mise en page : un titre suivi d'un graphique devient le titre du graphique,
+        // et deux graphiques qui se suivent sont posés côte à côte.
+        const merged = [];
+        for (let i = 0; i < sections.length; i++) {
+            const a = sections[i], b = sections[i + 1];
+            if (a.type === 'title' && b?.type === 'chart' && !b.title) { merged.push({ ...b, title: a.text, subtitle: a.subtitle }); i++; } else merged.push(a);
+        }
+        sections = [];
+        for (let i = 0; i < merged.length; i++) {
+            const a = merged[i], b = merged[i + 1];
+            if (a.type === 'chart' && b?.type === 'chart') { sections.push({ type: 'chartpair', left: a, right: b, maxHeight: Math.max(a.maxHeight || 0, b.maxHeight || 0) || undefined }); i++; } else sections.push(a);
+        }
 
         for (const [index, section] of sections.entries()) {
             if (section.type === 'pagebreak') {
@@ -367,14 +387,14 @@ export const Export = {
                 // un titre ne reste jamais seul en bas de page
                 const next = sections[index + 1];
                 const rowsNext = next?.type === 'table' ? next.rows.length : next?.type === 'columns' ? Math.max(next.left.rows.length, next.right.rows.length) : 0;
-                need(next?.type === 'chart' ? 80 : rowsNext && rowsNext <= 28 ? rowsNext * 6.4 + 26 : 36);
+                need(rowsNext && rowsNext <= 13 ? rowsNext * 8.8 + 32 : 48);
                 y = this._sectionTitle(doc, section, y + 2);
             }
 
             if (section.type === 'keyvalue') {
                 // Fiche sur deux colonnes de paires libellé / valeur
                 const items = (section.items || []).filter(it => it && it.value !== '' && it.value != null);
-                const pairs = items.length > 4 ? 2 : 1;
+                const pairs = items.length > 6 ? 3 : items.length > 2 ? 2 : 1;
                 const rows = [];
                 for (let i = 0; i < items.length; i += pairs) {
                     const r = [];
@@ -391,15 +411,15 @@ export const Export = {
                 }
                 doc.autoTable({
                     startY: y, body: rows, theme: 'plain',
-                    margin: { left: M, right: M, top: T.top, bottom: 297 - T.bottom },
-                    styles: { font: 'helvetica', fontSize: 8.5, cellPadding: { top: 1.9, bottom: 1.9, left: 2, right: 4 }, lineColor: T.rule, lineWidth: { top: 0, right: 0, bottom: 0.12, left: 0 } },
+                    margin: { left: M, right: M, top: T.top, bottom: T.footer },
+                    styles: { font: 'helvetica', fontSize: 9.5, cellPadding: { top: 2.2, bottom: 2.2, left: 2, right: 5 }, lineColor: T.rule, lineWidth: { top: 0, right: 0, bottom: 0.12, left: 0 } },
                     columnStyles
                 });
                 y = doc.lastAutoTable.finalY + 8;
             }
 
             if (section.type === 'table') {
-                need(Math.min(section.rows.length, 3) * 6.5 + 10);
+                need(section.rows.length <= 13 ? section.rows.length * 8.8 + 12 : 40);
                 y = this._table(doc, section, y) + 9;
             }
 
@@ -415,19 +435,19 @@ export const Export = {
                 if (section.left.title) yl = this._sectionTitle(doc, { text: section.left.title, subtitle: section.left.subtitle, small: true }, startY + 2, M);
                 if (section.right.title) yr = this._sectionTitle(doc, { text: section.right.title, subtitle: section.right.subtitle, small: true }, startY + 2, M + half + gap);
                 const top = Math.max(yl, yr);
-                const endL = this._table(doc, { fontSize: 8, ...section.left }, top, { left: M, right: W - M - half });
+                const endL = this._table(doc, { ...section.left }, top, { left: M, right: W - M - half });
                 doc.setPage(page);
-                const endR = this._table(doc, { fontSize: 8, ...section.right }, top, { left: M + half + gap, right: M });
+                const endR = this._table(doc, { ...section.right }, top, { left: M + half + gap, right: M });
                 doc.setPage(doc.internal.getNumberOfPages());
                 y = Math.max(endL, endR) + 9;
             }
 
             if (section.type === 'kpicards') {
                 const items = section.items || [];
-                const perRow = items.length === 4 || items.length >= 7 ? 4 : Math.min(3, Math.max(1, items.length));
+                const perRow = items.length <= 6 ? Math.max(3, items.length) : items.length <= 8 ? 4 : 5;
                 const gap = 4;
                 const cardW = (W - 2 * M - gap * (perRow - 1)) / perRow;
-                const cardH = items.some(it => it.sub) ? 23 : 19;
+                const cardH = items.some(it => it.sub) ? 25 : 20;
                 const rows = Math.ceil(items.length / perRow);
                 need(rows * (cardH + gap));
                 items.forEach((item, idx) => {
@@ -438,18 +458,18 @@ export const Export = {
                     doc.setFillColor(...T.navy);
                     doc.rect(cx, cy, cardW, 0.9, 'F');
                     doc.setFont('helvetica', 'normal');
-                    doc.setFontSize(7.5);
+                    doc.setFontSize(8.5);
                     doc.setTextColor(...T.grey);
-                    doc.text(doc.splitTextToSize(s(item.label), cardW - 6)[0], cx + 3.5, cy + 6.5);
+                    doc.text(doc.splitTextToSize(s(item.label), cardW - 6)[0], cx + 3.5, cy + 7);
                     doc.setFont('helvetica', 'bold');
-                    doc.setFontSize(perRow === 4 ? 11.5 : 13);
+                    doc.setFontSize(perRow >= 5 ? 13 : 15);
                     doc.setTextColor(...T.navy);
-                    doc.text(s(item.value), cx + 3.5, cy + 14);
+                    doc.text(s(item.value), cx + 3.5, cy + 15);
                     if (item.sub) {
                         doc.setFont('helvetica', 'normal');
-                        doc.setFontSize(7);
+                        doc.setFontSize(8);
                         doc.setTextColor(...T.grey);
-                        doc.text(doc.splitTextToSize(s(item.sub), cardW - 6)[0], cx + 3.5, cy + 19.5);
+                        doc.text(doc.splitTextToSize(s(item.sub), cardW - 6)[0], cx + 3.5, cy + 21);
                     }
                 });
                 y += rows * (cardH + gap) + 5;
@@ -457,9 +477,9 @@ export const Export = {
 
             if (section.type === 'note') {
                 doc.setFont('helvetica', 'normal');
-                doc.setFontSize(8);
+                doc.setFontSize(9.5);
                 const lines = doc.splitTextToSize(s(section.text), W - 2 * M - 9);
-                const h = lines.length * 3.7 + (section.title ? 12 : 7);
+                const h = lines.length * 4.3 + (section.title ? 12 : 7);
                 need(h);
                 doc.setFillColor(...T.cream);
                 doc.rect(M, y, W - 2 * M, h, 'F');
@@ -474,7 +494,7 @@ export const Export = {
                     ny += 5;
                 }
                 doc.setFont('helvetica', 'normal');
-                doc.setFontSize(8);
+                doc.setFontSize(9.5);
                 doc.setTextColor(...T.ink);
                 doc.text(lines, M + 5, ny);
                 y += h + 8;
@@ -484,21 +504,36 @@ export const Export = {
                 y += 2;
             }
 
-            if (section.type === 'chart') {
-                const dataUrl = Charts.toImage(section.canvasId);
-                if (dataUrl) {
-                    const canvas = document.getElementById(section.canvasId);
-                    const ratio = canvas && canvas.width > 0 ? canvas.height / canvas.width : 0.5;
-                    const imgW = W - 2 * M;
-                    const imgH = Math.min(imgW * ratio, section.maxHeight || 95);
-                    need(imgH + (section.title ? 12 : 0));
-                    if (section.title) y = this._sectionTitle(doc, { text: section.title, subtitle: section.subtitle }, y + 2);
-                    try {
-                        doc.addImage(dataUrl, 'JPEG', M, y, imgW, imgH);
-                        y += imgH + 9;
-                    } catch {
-                        // canvas inexploitable : on continue sans le graphique
-                    }
+            if (section.type === 'chart' || section.type === 'chartpair') {
+                // Un graphique seul est centré ; deux graphiques consécutifs sont posés côte à côte
+                const list = (section.type === 'chartpair' ? [section.left, section.right] : [section])
+                    .map(c => ({ c, url: Charts.toImage(c.canvasId), el: /** @type {HTMLCanvasElement | null} */ (document.getElementById(c.canvasId)) }))
+                    .filter(x => x.url);
+                if (list.length) {
+                    const gap = 8;
+                    const slotW = (W - 2 * M - gap * (list.length - 1)) / list.length;
+                    const titled = list.some(x => x.c.title);
+                    // le graphique occupe la place restante sur la diapositive si elle suffit (au moins 58 mm), sinon la suivante
+                    const titleH = titled ? 14 : 2;
+                    const room = bottom - y - titleH;
+                    if (room < 58) { doc.addPage(); y = T.top; }
+                    const maxH = Math.min(section.maxHeight || 112, bottom - y - titleH);
+                    const boxes = list.map(x => {
+                        const ratio = x.el && x.el.width > 0 ? x.el.height / x.el.width : 0.5;
+                        let w = slotW, h = slotW * ratio;
+                        if (h > maxH) { h = maxH; w = h / ratio; }
+                        return { ...x, w, h };
+                    });
+                    const blockH = Math.max(...boxes.map(b => b.h)) + (titled ? 12 : 0);
+                    const top = y;
+                    boxes.forEach((b, k) => {
+                        const x0 = M + k * (slotW + gap);
+                        let cy = top;
+                        if (b.c.title) cy = this._sectionTitle(doc, { text: b.c.title, subtitle: b.c.subtitle }, top + 2, x0);
+                        else if (titled) cy = top + 12;
+                        try { doc.addImage(b.url, 'JPEG', x0 + (slotW - b.w) / 2, cy, b.w, b.h); } catch { /* canvas inexploitable : on continue sans le graphique */ }
+                    });
+                    y = top + blockH + 8;
                 }
             }
         }
@@ -530,13 +565,13 @@ export const Export = {
 
             doc.setDrawColor(...T.rule);
             doc.setLineWidth(0.15);
-            doc.line(M, 283, W - M, 283);
+            doc.line(M, H - 12, W - M, H - 12);
             doc.setFont('helvetica', 'normal');
             doc.setFontSize(7);
             doc.setTextColor(...T.grey);
-            doc.text(`Auxy Partners — Confidentiel. Document de travail : simulation indicative, ne constitue pas un engagement de financement. Édité le ${new Date().toLocaleDateString('fr-FR')}.`, M, 287.5);
+            doc.text(`Auxy Partners — Confidentiel. Document de travail : simulation indicative, ne constitue pas un engagement de financement. Édité le ${new Date().toLocaleDateString('fr-FR')}.`, M, H - 7.5);
             doc.setFont('helvetica', 'bold');
-            doc.text(`${i - first + 1} / ${numbered}`, W - M, 287.5, { align: 'right' });
+            doc.text(`${i - first + 1} / ${numbered}`, W - M, H - 7.5, { align: 'right' });
         }
 
         doc.save(`${filename}_${new Date().toISOString().slice(0, 10)}.pdf`);

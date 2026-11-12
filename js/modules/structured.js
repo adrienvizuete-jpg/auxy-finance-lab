@@ -568,11 +568,11 @@ function exportPdf() {
 
     if (profiles.length) {
         sections.push({ type: 'title', text: 'Amortissement du capital', subtitle: 'k€ par année depuis le closing' });
-        sections.push({ type: 'table', headers: ['Ligne \\ Année', ...yearHead, 'Total'], rows: byYear('principal'), fontSize: 8 });
+        sections.push({ type: 'table', headers: ['Ligne \\ Année', ...yearHead, 'Total'], rows: byYear('principal') });
         sections.push({ type: 'title', text: 'Intérêts', subtitle: `k€ par année${debts.some(d => d.rateType === 'floating') ? ' · taux variable : Euribor 3M du jour maintenu, floor à 0 %' : ''}` });
-        sections.push({ type: 'table', headers: ['Ligne \\ Année', ...yearHead, 'Total'], rows: byYear('interest'), fontSize: 8 });
+        sections.push({ type: 'table', headers: ['Ligne \\ Année', ...yearHead, 'Total'], rows: byYear('interest') });
         sections.push({ type: 'title', text: 'Service de la dette', subtitle: 'Capital + intérêts, k€ par année' });
-        sections.push({ type: 'table', headers: ['Ligne \\ Année', ...yearHead, 'Total'], rows: byYear('service'), fontSize: 8,
+        sections.push({ type: 'table', headers: ['Ligne \\ Année', ...yearHead, 'Total'], rows: byYear('service'),
             note: years < Math.ceil(Math.max(...debts.map(d => d.durationYears))) ? `Tableau limité aux ${years} premières années.` : '' });
     }
     if (detteNonRef.some(d => d.amount > 0)) {

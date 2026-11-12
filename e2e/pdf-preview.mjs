@@ -83,3 +83,4 @@ try {
     await browser.close();
     server.close();
 }
+process.exit(0); // Chrome headless ne rend pas toujours la main

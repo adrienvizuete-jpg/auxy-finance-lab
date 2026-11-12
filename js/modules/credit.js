@@ -2083,9 +2083,9 @@ function exportPdf() {
     const amortizing = sched[0]?.principal !== undefined;
     if (amortizing) {
         sections.push({ type: 'title', text: 'Décomposition des échéances', subtitle: 'Capital et intérêts par échéance' });
-        sections.push({ type: 'chart', canvasId: 'chart-amort', maxHeight: 78 });
+        sections.push({ type: 'chart', canvasId: 'chart-amort' });
         sections.push({ type: 'title', text: 'Capital restant dû' });
-        sections.push({ type: 'chart', canvasId: 'chart-balance', maxHeight: 78 });
+        sections.push({ type: 'chart', canvasId: 'chart-balance' });
     }
 
     // ── Tableau d'amortissement annuel (l'échéancier complet passe en annexe) ──
@@ -2116,7 +2116,7 @@ function exportPdf() {
         const cell = (k, v) => (k === 'period' ? n0(v) : k === 'rate' || k === 'indexRate' ? Financial.formatNumber(v, 3) : typeof v === 'number' ? Financial.formatNumber(v, 2) : v == null ? '' : String(v));
         sections.push({ type: 'pagebreak' });
         sections.push({ type: 'title', text: 'Annexe — échéancier détaillé', subtitle: `${sched.length} échéances · montants en €` });
-        sections.push({ type: 'table', fontSize: 7.5, headers: keys.map(k => scheduleLabels[k] || t(k, RESULT_LABELS)), rows: sched.map(row => keys.map(k => cell(k, row[k]))) });
+        sections.push({ type: 'table', fontSize: 8.5, headers: keys.map(k => scheduleLabels[k] || t(k, RESULT_LABELS)), rows: sched.map(row => keys.map(k => cell(k, row[k]))) });
     }
 
     const coverItems = [
