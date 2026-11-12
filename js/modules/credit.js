@@ -2103,22 +2103,22 @@ function exportTranchingExcel() {
     const freqLabelsExcel = { monthly: 'Mensuel', quarterly: 'Trimestriel', semiannual: 'Semestriel', annual: 'Annuel' };
     result.tranches.forEach((tr, i) => {
         summaryData.push([`Tranche ${i + 1}: ${tr.name}`]);
-        summaryData.push(['  Montant', Financial.formatCurrency(tr.amount)]);
+        summaryData.push(['  Montant', Math.round(tr.amount * 100) / 100, '€']);
         summaryData.push(['  Taux', tr.rate + ' %']);
         summaryData.push(['  Durée', tr.duration + ' mois']);
         summaryData.push(['  Type', ({ infine: 'In Fine', degressif: 'Dégressif' })[tr.type] || 'Constant']);
         summaryData.push(['  Fréquence', freqLabelsExcel[tr.frequency || 'monthly']]);
-        summaryData.push(['  Intérêts totaux', Financial.formatCurrency(tr.result.totalInterest)]);
-        summaryData.push(['  Coût total', Financial.formatCurrency(tr.result.totalCost)]);
+        summaryData.push(['  Intérêts totaux', Math.round(tr.result.totalInterest * 100) / 100, '€']);
+        summaryData.push(['  Coût total', Math.round(tr.result.totalCost * 100) / 100, '€']);
         summaryData.push(['']);
     });
 
     summaryData.push(['RÉSULTATS CONSOLIDÉS']);
-    summaryData.push(['Dette totale', Financial.formatCurrency(result.consolidated.totalDebt)]);
-    summaryData.push(['Taux moyen pondéré', result.consolidated.weightedRate.toFixed(2) + ' %']);
-    summaryData.push(['Annuité totale', Financial.formatCurrency(result.consolidated.annualDebtService)]);
-    summaryData.push(['Total intérêts', Financial.formatCurrency(result.consolidated.totalInterest)]);
-    summaryData.push(['Coût total', Financial.formatCurrency(result.consolidated.totalCost)]);
+    summaryData.push(['Dette totale', Math.round(result.consolidated.totalDebt * 100) / 100, '€']);
+    summaryData.push(['Taux moyen pondéré', Math.round(result.consolidated.weightedRate * 100) / 100, '%']);
+    summaryData.push(['Annuité totale', Math.round(result.consolidated.annualDebtService * 100) / 100, '€']);
+    summaryData.push(['Total intérêts', Math.round(result.consolidated.totalInterest * 100) / 100, '€']);
+    summaryData.push(['Coût total', Math.round(result.consolidated.totalCost * 100) / 100, '€']);
 
     const summaryWs = XLSX.utils.aoa_to_sheet(summaryData);
     summaryWs['!cols'] = [{ wch: 30 }, { wch: 25 }];

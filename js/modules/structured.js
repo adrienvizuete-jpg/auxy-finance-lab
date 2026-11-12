@@ -13,6 +13,7 @@ import { Dossier } from '../utils/dossier.js';
 import { Financial } from '../utils/financial.js';
 import { Dialog } from '../utils/dialog.js';
 import { Draft } from '../utils/draft.js';
+import { Export } from '../utils/export.js';
 
 // ── State ──
 let emplois = [
@@ -492,6 +493,55 @@ function shareStructured() {
 }
 
 // ── Export Excel ──
+/** PDF du plan de financement : emplois, ressources, tranches, autres financements, indicateurs. */
+function exportPdf() {
+    if (!lastResult) recalculate();
+    const c = lastResult.results;
+    const k = v => fmtK(v);
+    const pct = v => `${Financial.formatNumber(v, 1)} %`;
+    const client = Dossier.get()?.name || '';
+    const sections = [
+        { type: 'kpicards', items: [
+            { label: 'Total emplois (k€)', value: k(c.totalEmplois) },
+            { label: 'Dette senior (k€)', value: k(c.detteSenior) },
+            { label: c.dfn < 0 ? 'Trésorerie nette (k€)' : 'Dette financière nette (k€)', value: k(Math.abs(c.dfn)) },
+            { label: 'Levier net (DFN / EBITDA)', value: c.ratioLevier == null ? 'n.s.' : fmtRatio(c.ratioLevier) },
+            { label: 'VE retenue (k€)', value: k(c.veRetenue) },
+            { label: 'EBITDA LTM (k€)', value: k(ebitda) }
+        ] },
+        { type: 'title', text: 'Emplois' },
+        { type: 'table', headers: ['Emploi', 'Montant (k€)'], rows: [...emplois.map(e => [e.label, k(e.amount)]), ['Total emplois', k(c.totalEmplois)]] },
+        { type: 'title', text: 'Ressources' },
+        { type: 'table', headers: ['Ressource', 'Montant (k€)', '%'], rows: [
+            ['Fonds propres', k(fondsPropres), pct(c.pctFP)],
+            ['Autres financements', k(c.totalAutres), pct(c.pctAutres)],
+            ['Dette senior', k(c.detteSenior), pct(c.pctSenior)],
+            ['Total ressources', k(c.totalEmplois), pct(100)]
+        ] },
+        { type: 'title', text: 'Tranches de dette senior' },
+        { type: 'table', headers: ['Tranche', '% senior', 'Durée', 'Taux / marge', 'Amortissement', 'Fréquence', 'Montant (k€)', 'Annuité (k€)'],
+            rows: c.tranchesDetail.map(t => [`Tranche ${t.label}`, pct(t.pct), `${t.duration} ans`, `${pct(t.taux || 0)}${t.rateType === 'floating' ? ' + Euribor' : ''}`, AMORT_LABELS[t.amortType] || 'Constant', FREQ_LABELS[t.frequency] || 'Mensuel', k(t.amount),
+                k(computeAnnuity(t.amount, t.taux || 0, t.duration || 1, t.amortType || 'constant', t.frequency || 'mensuel', t))]) }
+    ];
+    if (autresFin.length) {
+        sections.push({ type: 'title', text: 'Autres financements' });
+        sections.push({ type: 'table', headers: ['Libellé', 'Nature', 'Montant (k€)', 'Taux / marge', 'Durée', 'Différé', 'Amortissement', 'Annuité A1 (k€)'],
+            rows: autresFin.map(a => [a.label, AUTRE_TYPES[a.type] || '', k(a.amount || 0), pct(a.taux || 0), `${a.duration || 1} ans`, a.deferral ? `${a.deferral} an${a.deferral > 1 ? 's' : ''}` : '—', AMORT_LABELS[a.amortType] || 'In Fine',
+                k(computeAnnuity(a.amount || 0, a.taux || 0, a.duration || 1, a.amortType || 'infine', a.frequency || 'annuel', a))]) });
+    }
+    if (detteNonRef.length) {
+        sections.push({ type: 'title', text: 'Dette non refinancée' });
+        sections.push({ type: 'table', headers: ['Dette', 'Montant (k€)'], rows: [...detteNonRef.map(d => [d.label, k(d.amount)]), ['Sous-total', k(c.totalDetteNonRef)]] });
+    }
+    Export.toPdf(`Plan de financement${client ? ' — ' + client : ''}`, sections, 'financement_structure', {
+        cover: { subtitle: client || 'Emplois - Ressources', items: [
+            { label: 'Total emplois', value: `${k(c.totalEmplois)} k€` },
+            { label: 'Dette senior', value: `${k(c.detteSenior)} k€` },
+            { label: 'Levier net', value: c.ratioLevier == null ? 'n.s.' : fmtRatio(c.ratioLevier) }
+        ] }
+    });
+}
+
 function exportExcel() {
     if (typeof XLSX === 'undefined') {
         window.showToast?.('Outils d\u2019export Excel indisponibles (connexion ?) — réessayez', 'error');
@@ -846,6 +896,7 @@ export const StructuredModule = {
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                     Exporter Excel
                 </button>
+                <button class="btn btn-outline" id="er-export-pdf">Exporter PDF</button>
                 <button class="btn btn-outline" id="er-share">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
                     Partager
@@ -956,6 +1007,7 @@ export const StructuredModule = {
         document.getElementById('er-recalculate')?.addEventListener('click', recalculate);
         document.getElementById('er-save')?.addEventListener('click', saveSimulation);
         document.getElementById('er-export')?.addEventListener('click', exportExcel);
+        document.getElementById('er-export-pdf')?.addEventListener('click', exportPdf);
         document.getElementById('er-share')?.addEventListener('click', shareStructured);
 
         // ── Lien de partage (#structured?s=...) ──

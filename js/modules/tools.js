@@ -20,31 +20,11 @@ export const CalculatorModule = {
         return `
             <div class="page-header">
                 <h1>Calculatrice Financi\u00e8re</h1>
-                <p>Outils de calcul rapide pour les op\u00e9rations courantes</p>
+                <p>VAN, TRI, WACC et taux effectif</p>
             </div>
+            <p class="context-meta" style="margin:-8px 0 16px">Le calcul d'une mensualité se fait dans <a href="#credit" data-nav="credit">Simulation Crédit</a> (échéancier, TEG, envoi vers les autres modules) ; DSCR, ICR et levier dans <a href="#covenants" data-nav="covenants">Covenants &amp; DSCR</a>.</p>
 
             <div class="grid-2 section">
-                <!-- PMT Calculator -->
-                <div class="card">
-                    <div class="card-title">Calcul de mensualit\u00e9 (PMT)</div>
-                    <div class="form-row" style="margin-top:12px">
-                        <div class="form-group">
-                            <label class="form-label">Capital</label>
-                            <input type="number" class="form-input" id="calc-pmt-pv" value="500000" step="10000">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Taux annuel (%)</label>
-                            <input type="number" class="form-input" id="calc-pmt-rate" value="4.5" step="0.1">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Dur\u00e9e (mois)</label>
-                            <input type="number" class="form-input" id="calc-pmt-n" value="84" step="1">
-                        </div>
-                    </div>
-                    <button class="btn btn-primary btn-sm" id="calc-pmt-btn">Calculer</button>
-                    <div id="calc-pmt-result" class="results-panel" style="margin-top:12px;display:none"></div>
-                </div>
-
                 <!-- NPV Calculator -->
                 <div class="card">
                     <div class="card-title">Valeur Actuelle Nette (VAN)</div>
@@ -102,41 +82,6 @@ export const CalculatorModule = {
                     <div id="calc-wacc-result" class="results-panel" style="margin-top:12px;display:none"></div>
                 </div>
 
-                <!-- Ratios Calculator -->
-                <div class="card">
-                    <div class="card-title">Ratios Financiers</div>
-                    <div class="form-row" style="margin-top:12px">
-                        <div class="form-group">
-                            <label class="form-label">Cash-flow disponible \u2013 CFADS (\u20ac/an)</label>
-                            <input type="number" class="form-input" id="calc-ratio-ebit" value="500000" step="10000" title="EBITDA \u2212 IS \u2212 capex \u2212 variation de BFR (m\u00eame d\u00e9finition que le module Covenants)">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">EBITDA (\u20ac/an)</label>
-                            <input type="number" class="form-input" id="calc-ratio-ebitda" value="650000" step="10000">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Service de la dette (\u20ac/an)</label>
-                            <input type="number" class="form-input" id="calc-ratio-ds" value="300000" step="10000">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label class="form-label">Charge d'int\u00e9r\u00eats (\u20ac/an)</label>
-                            <input type="number" class="form-input" id="calc-ratio-interest" value="120000" step="5000">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Montant du pr\u00eat (\u20ac)</label>
-                            <input type="number" class="form-input" id="calc-ratio-loan" value="2000000" step="100000">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Valeur de l'actif (\u20ac)</label>
-                            <input type="number" class="form-input" id="calc-ratio-asset" value="3500000" step="100000">
-                        </div>
-                    </div>
-                    <button class="btn btn-primary btn-sm" id="calc-ratio-btn">Calculer</button>
-                    <div id="calc-ratio-result" class="results-panel" style="margin-top:12px;display:none"></div>
-                </div>
-
                 <!-- Effective Rate -->
                 <div class="card">
                     <div class="card-title">Taux Effectif Annuel</div>
@@ -164,22 +109,10 @@ export const CalculatorModule = {
     },
 
     init() {
-        // PMT
-        document.getElementById('calc-pmt-btn')?.addEventListener('click', () => {
-            const pv = parseFloat(document.getElementById('calc-pmt-pv').value);
-            const rate = parseFloat(document.getElementById('calc-pmt-rate').value) / 100 / 12;
-            const n = parseInt(document.getElementById('calc-pmt-n').value);
-            const pmt = Math.abs(Financial.pmt(rate, n, pv));
-            const total = pmt * n;
-            document.getElementById('calc-pmt-result').style.display = 'block';
-            document.getElementById('calc-pmt-result').innerHTML = `
-                <div class="results-grid">
-                    <div class="result-item"><div class="result-label">Mensualit\u00e9</div><div class="result-value">${Financial.formatCurrency(pmt)}</div></div>
-                    <div class="result-item"><div class="result-label">Total rembours\u00e9</div><div class="result-value">${Financial.formatCurrency(total)}</div></div>
-                    <div class="result-item"><div class="result-label">Int\u00e9r\u00eats</div><div class="result-value">${Financial.formatCurrency(total - pv)}</div></div>
-                </div>
-            `;
-        });
+        document.querySelectorAll('#page-container [data-nav]').forEach(link => link.addEventListener('click', e => {
+            e.preventDefault();
+            window.navigateTo?.(/** @type {HTMLElement} */ (link).dataset.nav || 'dashboard');
+        }));
 
         // NPV
         document.getElementById('calc-npv-btn')?.addEventListener('click', () => {
@@ -235,34 +168,6 @@ export const CalculatorModule = {
                     <div class="result-item"><div class="result-label">WACC</div><div class="result-value">${Financial.formatPercent(wacc * 100)}</div></div>
                     <div class="result-item"><div class="result-label">Poids dette</div><div class="result-value">${Financial.formatPercent(debt / total * 100)}</div></div>
                     <div class="result-item"><div class="result-label">Poids FP</div><div class="result-value">${Financial.formatPercent(equity / total * 100)}</div></div>
-                </div>
-            `;
-        });
-
-        // Ratios
-        document.getElementById('calc-ratio-btn')?.addEventListener('click', () => {
-            const cfads = parseFloat(document.getElementById('calc-ratio-ebit').value);
-            const ebitdaVal = parseFloat(document.getElementById('calc-ratio-ebitda').value);
-            const ds = parseFloat(document.getElementById('calc-ratio-ds').value);
-            const interest = parseFloat(document.getElementById('calc-ratio-interest').value);
-            const loan = parseFloat(document.getElementById('calc-ratio-loan').value);
-            const asset = parseFloat(document.getElementById('calc-ratio-asset').value);
-
-            // Définitions alignées sur Covenants : DSCR = CFADS / service, ICR = EBITDA / intérêts
-            const dscr = Financial.dscr(cfads, ds);
-            const icr = Financial.icr(ebitdaVal, interest);
-            const ltv = Financial.ltv(loan, asset);
-
-            const dscrColor = dscr >= 1.2 ? 'var(--success)' : dscr >= 1.0 ? 'var(--warning)' : 'var(--danger)';
-            const icrColor = icr >= 3 ? 'var(--success)' : icr >= 1.5 ? 'var(--warning)' : 'var(--danger)';
-            const ltvColor = ltv <= 60 ? 'var(--success)' : ltv <= 80 ? 'var(--warning)' : 'var(--danger)';
-
-            document.getElementById('calc-ratio-result').style.display = 'block';
-            document.getElementById('calc-ratio-result').innerHTML = `
-                <div class="results-grid">
-                    <div class="result-item"><div class="result-label">DSCR</div><div class="result-value" style="color:${dscrColor}">${Fmt.multiple(dscr, 2)}</div><div class="result-sub">${dscr >= 1.2 ? 'Au-dessus du covenant usuel (1,20x)' : dscr >= 1.0 ? 'Sous le covenant usuel' : 'Insuffisant'}</div></div>
-                    <div class="result-item"><div class="result-label">ICR</div><div class="result-value" style="color:${icrColor}">${Fmt.multiple(icr, 2)}</div><div class="result-sub">${icr >= 3 ? 'Solide' : icr >= 1.5 ? 'Acceptable' : 'Risqu\u00e9'}</div></div>
-                    <div class="result-item"><div class="result-label">LTV</div><div class="result-value" style="color:${ltvColor}">${Fmt.pct(ltv, 1)}</div><div class="result-sub">${ltv <= 60 ? 'Conservateur' : ltv <= 80 ? 'Mod\u00e9r\u00e9' : '\u00c9lev\u00e9'}</div></div>
                 </div>
             `;
         });
