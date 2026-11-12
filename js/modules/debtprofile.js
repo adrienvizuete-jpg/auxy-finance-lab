@@ -27,6 +27,7 @@ import { DossierBar } from '../utils/dossierbar.js';
 import { RefiEngine } from '../utils/refiengine.js';
 import { Dialog } from '../utils/dialog.js';
 import { Dossier } from '../utils/dossier.js';
+import { Handoff } from '../utils/handoff.js';
 
 // ── State ──
 const now = new Date();
@@ -51,6 +52,30 @@ let loans = [
     { label: 'Crédit-bail matériel', amount: 230000, startYear: 2024, startMonth: 1, durationMonths: 60, rate: 4.8, amortType: 'constant', frequency: 'monthly', isNew: false, crdCheck: null }
 ];
 let lastResult = null;
+// Crédits d'exemple à l'ouverture : remplacés par les prêts reçus d'un autre module
+const SAMPLE_LOANS = JSON.stringify(loans);
+
+/** Ligne de crédit « nouveau financement » démarrant le mois suivant la date d'analyse.
+ *  @param {{ label: string, amount: number, rate: number, durationMonths: number, deferralMonths?: number, amortType?: string, frequency?: string }} l */
+function newLoanLine(l, isNew = true) {
+    const start = new Date(analysis.year, analysis.month, 1); // mois suivant (month est en base 1)
+    return {
+        label: l.label, amount: Math.round(l.amount), startYear: start.getFullYear(), startMonth: start.getMonth() + 1,
+        durationMonths: Math.max(1, Math.round(l.durationMonths)), deferralMonths: Math.max(0, Math.round(l.deferralMonths || 0)),
+        rate: l.rate, amortType: ['degressif', 'infine'].includes(l.amortType || '') ? l.amortType : 'constant',
+        frequency: FREQ_OPTIONS[l.frequency || ''] ? l.frequency : 'monthly',
+        isNew, crdCheck: null, lender: '', security: '', bpiPct: 0, exitCostPct: 0, exitCostFixed: 0
+    };
+}
+
+/** Prêts reçus par « Envoyer vers… » : ajoutés comme nouveaux financements */
+function takeHandoff() {
+    const incoming = Handoff.take('debtprofile');
+    if (!incoming.length) return;
+    const lines = incoming.map(l => newLoanLine(l));
+    loans = JSON.stringify(loans) === SAMPLE_LOANS ? lines : loans.concat(lines);
+    includeNew = true;
+}
 let marketRates = null; // pré-remplissage du taux des nouveaux financements
 // Scénario de refinancement des crédits cochés « Refinancer »
 let refi = { rateType: 'fixed', rate: 4.0, durationMonths: 84, frequency: 'quarterly', amortType: 'constant', upfrontFeePct: 1.0, financeCosts: true, extraAmount: 0, discountRate: 5 };
@@ -739,6 +764,7 @@ function loadParams(p) {
 
 export const DebtProfileModule = {
     render() {
+        takeHandoff();
         // Un seul « dossier » : le nom suit le client actif tant qu'il n'est pas saisi ici
         if (!dossierName || nameFromActive) {
             dossierName = Dossier.get()?.name?.slice(0, 80) || '';
@@ -943,7 +969,17 @@ export const DebtProfileModule = {
         // Dossier client : nom et dettes vivantes (CRD, durée résiduelle) → Covenants
         DossierBar.bind({
             toDossier: () => ({ ...(dossierName ? { name: dossierName } : {}), debts: liveDebtsForCovenants(), source: 'module Profil de dette' }),
-            fromDossier: d => { dossierName = d.name.slice(0, 80); this._rerenderInputs(); }
+            fromDossier: d => {
+                dossierName = d.name.slice(0, 80);
+                nameFromActive = true;
+                // dettes du dossier (format Covenants, k€, durées résiduelles) → crédits existants
+                const fromDossier = (d.debts || []).filter(x => x.amount > 0).map(x => newLoanLine({ label: x.label, amount: x.amount * 1000, rate: x.rate, durationMonths: Math.max(1, Math.round(x.durationYears * 12)), deferralMonths: x.deferralMonths, amortType: x.amortType, frequency: x.frequency }, false));
+                const apply = () => { loans = fromDossier; this._rerenderInputs(); recalculate(); };
+                if (!fromDossier.length) { this._rerenderInputs(); return; }
+                if (JSON.stringify(loans) === SAMPLE_LOANS) { apply(); return; }
+                this._rerenderInputs();
+                Dialog.confirm(`Le dossier contient ${fromDossier.length} dette${fromDossier.length > 1 ? 's' : ''}. Elles remplaceront les crédits saisis ici.`, { title: 'Charger les dettes du dossier ?', confirmLabel: 'Remplacer' }).then(ok => { if (ok) apply(); });
+            }
         });
 
         // Taux de marché pour le pré-remplissage des nouveaux financements

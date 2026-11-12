@@ -10,6 +10,7 @@ import { Export } from '../utils/export.js';
 import { Share } from '../utils/share.js';
 import { escapeHtml } from '../utils/sanitize.js';
 import { LoanEngine } from '../utils/loanengine.js';
+import { Handoff } from '../utils/handoff.js';
 
 // =============================================
 // CONSTANTS
@@ -1160,6 +1161,7 @@ export const ImmobilierModule = {
                         Partager
                     </button>
                 </div>
+                <div id="immo-handoff">${Handoff.barHtml(['debtprofile', 'covenants'])}</div>
             </div>
 
             <!-- Results (KPIs) -->
@@ -1311,6 +1313,17 @@ export const ImmobilierModule = {
         });
 
         // ── Partage par URL ──
+        // Le prêt du montage part dans Profil de dette ou Covenants sans ressaisie
+        document.getElementById('immo-handoff')?.addEventListener('click', e => {
+            const btn = e.target.closest('[data-handoff]');
+            if (!btn) return;
+            Handoff.send(btn.dataset.handoff, [{
+                label: state.propertyName ? `Prêt immobilier — ${state.propertyName}` : 'Prêt immobilier',
+                amount: state.loanAmount, rate: state.annualRate, durationMonths: state.durationMonths,
+                amortType: state.amortType, frequency: state.frequency, balloonPct: state.amortType === 'balloon' ? state.balloonPct : undefined
+            }]);
+        });
+
         document.getElementById('immo-share')?.addEventListener('click', () => {
             Share.copyLink('immobilier', {
                 type: 'immobilier',

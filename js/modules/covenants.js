@@ -16,6 +16,7 @@ import { escapeHtml } from '../utils/sanitize.js';
 import { DossierBar } from '../utils/dossierbar.js';
 import { Dialog } from '../utils/dialog.js';
 import { Fmt } from '../utils/format.js';
+import { Handoff } from '../utils/handoff.js';
 
 // ── State ──
 let horizon = 5; // années
@@ -50,6 +51,27 @@ let debts = [
     { label: 'Tranche B', amount: 3525, rate: 4.5, durationYears: 7, amortType: 'constant', frequency: 'monthly' }
 ];
 let lastResult = null;
+// Dettes d'exemple à l'ouverture : remplacées (et non complétées) par un prêt reçu d'un autre module
+const SAMPLE_DEBTS = JSON.stringify(debts);
+
+/** Prêts reçus par « Envoyer vers… » (en €) → lignes de dette (k€) */
+function takeHandoff() {
+    const incoming = Handoff.take('covenants');
+    if (!incoming.length) return;
+    const lines = incoming.map(l => ({
+        label: l.label,
+        amount: Math.round(l.amount / 1000),
+        rate: l.rate,
+        durationYears: Math.round(l.durationMonths / 12 * 100) / 100,
+        amortType: AMORT_OPTIONS[l.amortType || ''] ? l.amortType : 'constant',
+        frequency: FREQ_OPTIONS[l.frequency || ''] ? l.frequency : 'monthly',
+        rateType: l.rateType === 'floating' ? 'floating' : 'fixed',
+        hedgePct: 0,
+        deferralMonths: l.deferralMonths || 0,
+        balloonPct: l.balloonPct
+    }));
+    debts = JSON.stringify(debts) === SAMPLE_DEBTS ? lines : debts.concat(lines);
+}
 
 const AMORT_OPTIONS = { constant: 'Constant', degressif: 'Dégressif', infine: 'In Fine', custom: 'Profil libre', balloon: 'Ballon' };
 const RATE_TYPES = { fixed: 'Fixe', floating: 'Variable' };
@@ -518,6 +540,7 @@ function loadParams(p) {
 // ── Module ──
 export const CovenantsModule = {
     render() {
+        takeHandoff();
         // S'assure que le tableau EBITDA couvre l'horizon
         while (ebitdaYears.length < 10) ebitdaYears.push(Math.round((ebitdaYears[ebitdaYears.length - 1] || 0) * (1 + growthPct / 100)));
 

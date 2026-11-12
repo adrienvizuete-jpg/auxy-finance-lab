@@ -13,6 +13,7 @@ import { Share } from '../utils/share.js';
 import { Market } from '../utils/market.js';
 import { LoanEngine } from '../utils/loanengine.js';
 import { Dialog } from '../utils/dialog.js';
+import { Handoff } from '../utils/handoff.js';
 
 const CREDIT_TYPES = [
     { id: 'constant', label: 'Amortissable Constant', desc: 'Mensualités fixes' },
@@ -934,6 +935,39 @@ function taegItem(result) {
     return `<div class="result-item"><div class="result-label">TAEG</div><div class="result-value" title="TAEG non calculable : les flux de cette simulation n'admettent pas de taux actuariel unique" style="color:var(--text-muted)">n.c.</div></div>`;
 }
 
+/**
+ * Prêt(s) de la simulation courante au format commun, pour « Envoyer vers… ».
+ * Vide pour les produits qui ne sont pas des prêts amortissables ou in fine.
+ * @returns {import('../utils/handoff.js').HandoffLoan[]}
+ */
+function loansForHandoff() {
+    if (!lastResult?.params) return [];
+    const p = lastResult.params;
+    const label = CREDIT_TYPES.find(t => t.id === lastResult.type)?.label || 'Prêt';
+    switch (lastResult.type) {
+        case 'constant':
+        case 'degressif':
+        case 'infine':
+            return [{ label, amount: p.principal, rate: p.annualRate, durationMonths: p.durationMonths, deferralMonths: lastResult.type === 'infine' ? 0 : (p.deferralMonths || 0), amortType: lastResult.type, frequency: p.frequency || 'monthly' }];
+        case 'bpi': {
+            const loans = [{ label: 'Prêt Bpifrance', amount: p.principal, rate: p.annualRate, durationMonths: p.durationMonths, deferralMonths: p.deferralMonths || 0, amortType: p.amortProfile || 'constant', frequency: p.frequency || 'quarterly' }];
+            if (p.cofinancement) loans.push({ label: 'Prêt bancaire cofinancé', amount: p.bankAmount, rate: p.bankRate, durationMonths: p.bankDurationMonths, deferralMonths: p.bankDeferralMonths || 0, amortType: p.bankProfile || 'constant', frequency: p.frequency || 'quarterly' });
+            return loans;
+        }
+        case 'variable':
+            return [{ label: 'Prêt à taux variable', amount: p.principal, rate: p.margin || 0, durationMonths: p.durationMonths, deferralMonths: p.deferralMonths || 0, amortType: ['constant', 'degressif', 'infine', 'balloon'].includes(p.amortType) ? p.amortType : 'constant', frequency: p.frequency || 'quarterly', rateType: 'floating', balloonPct: p.balloonPct }];
+        default:
+            return [];
+    }
+}
+
+/** Cibles possibles : Benchmark et sensibilité ne traitent que le taux fixe, un prêt à la fois */
+function handoffPages() {
+    const loans = loansForHandoff();
+    if (!loans.length) return [];
+    return loans.length === 1 && loans[0].rateType !== 'floating' ? ['debtprofile', 'covenants', 'benchmark', 'stress'] : ['debtprofile', 'covenants'];
+}
+
 /** Cofinancement Bpifrance + banque : synthèse consolidée puis détail par prêt */
 function getCofinancementHTML(result) {
     const f = Financial.formatCurrency;
@@ -1499,6 +1533,7 @@ function runSimulation({ scroll = true } = {}) {
             <div class="results-panel">
                 ${getResultsHTML(currentType, result)}
             </div>
+            ${handoffPages().length ? Handoff.barHtml(handoffPages()) : ''}
             ${supportsPrepayment ? `
             <div class="card section" style="margin-top:20px">
                 <div class="card-header">
@@ -2406,6 +2441,12 @@ export const CreditModule = {
     },
 
     init() {
+        // « Envoyer vers… » : le prêt simulé part dans un autre module, sans ressaisie
+        document.getElementById('credit-results')?.addEventListener('click', e => {
+            const btn = e.target.closest('[data-handoff]');
+            if (btn) Handoff.send(btn.dataset.handoff, loansForHandoff());
+        });
+
         // Famille : affiche ses types et ouvre le premier
         document.getElementById('credit-families')?.addEventListener('click', e => {
             const btn = e.target.closest('.credit-family');

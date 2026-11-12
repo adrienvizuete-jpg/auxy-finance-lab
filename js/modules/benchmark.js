@@ -7,6 +7,8 @@ import { Financial } from '../utils/financial.js';
 import { Charts } from '../utils/charts.js';
 import { Export } from '../utils/export.js';
 import { escapeHtml } from '../utils/sanitize.js';
+import { Handoff } from '../utils/handoff.js';
+import * as FormState from '../utils/formstate.js';
 
 const MAX_LOANS = 5;
 
@@ -478,6 +480,15 @@ function renderComparison() {
 
 export const BenchmarkModule = {
     render() {
+        // Prêt reçu par « Envoyer vers… » : il prend la place du prêt A, à comparer aux autres
+        const incoming = Handoff.take('benchmark')[0];
+        if (incoming) {
+            Object.assign(loans[0], defaultLoan(incoming.label), {
+                principal: incoming.amount, rate: incoming.rate, duration: incoming.durationMonths,
+                type: ['degressif', 'infine'].includes(incoming.amortType || '') ? incoming.amortType : 'constant'
+            });
+            FormState.forget('benchmark'); // les saisies gardées ne doivent pas écraser ce prêt
+        }
         return `
             <div class="page-header">
                 <h1>Benchmark - Comparaison de Prêts</h1>

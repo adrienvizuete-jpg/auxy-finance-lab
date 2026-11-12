@@ -77,6 +77,20 @@ function applyValues(root, snap) {
     });
 }
 
+/** Pré-remplit une page avant de l'ouvrir (prêt envoyé depuis un autre module).
+ *  @param {string} page @param {Record<string, string | boolean>} values @param {string[]} [replay] */
+export function prefill(page, values, replay = []) {
+    const snap = { values, actions: replay };
+    memory.set(page, snap);
+    try { sessionStorage.setItem(KEY + page, JSON.stringify(snap)); } catch { /* navigation privée */ }
+}
+
+/** Oublie les saisies gardées d'une page (son état vient d'être remplacé). @param {string} page */
+export function forget(page) {
+    memory.delete(page);
+    try { sessionStorage.removeItem(KEY + page); } catch { /* navigation privée */ }
+}
+
 /** Nouvelle page : on oublie les calculs de la précédente. */
 export function reset() { actions = []; }
 

@@ -6,6 +6,8 @@ import { Financial } from '../utils/financial.js';
 import { Charts } from '../utils/charts.js';
 import { Export } from '../utils/export.js';
 import { Fmt } from '../utils/format.js';
+import { Handoff } from '../utils/handoff.js';
+import * as FormState from '../utils/formstate.js';
 
 // =============================================
 // FINANCIAL CALCULATOR
@@ -288,6 +290,11 @@ export const StressTestModule = {
     _lastAnalysis: null,
 
     render() {
+        // Prêt reçu de Crédit : champs pré-remplis et grille de sensibilité lancée
+        const incoming = Handoff.take('stress')[0];
+        if (incoming) {
+            FormState.prefill('stress', { 'st-principal': String(incoming.amount), 'st-rate': String(incoming.rate), 'st-duration': String(incoming.durationMonths) }, ['click:st-run']);
+        }
         return `
             <div class="page-header">
                 <h1>Stress Test</h1>
