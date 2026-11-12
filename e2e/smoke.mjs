@@ -187,6 +187,21 @@ async function run() {
         check('Parcours : étape Crédit ouverte sur le bon type', await page.$eval('#credit-tabs .tab.active', el => el.getAttribute('data-type') === 'variable'));
         await page.click('#mission-stop');
 
+        // --- 4 quater. Prêt Bpifrance : différé puis échéances constantes ---
+        console.log('Parcours 4 quater : prêt Bpifrance');
+        await navByClick(page, 'credit');
+        await page.click('.credit-family[data-family="mt"]').catch(() => {});
+        await page.waitForSelector('#credit-tabs .tab[data-type="bpi"]', { timeout: 5000 });
+        await page.click('#credit-tabs .tab[data-type="bpi"]');
+        await page.waitForSelector('#cr-bpi-years', { timeout: 5000 });
+        await page.click('#credit-form button[type="submit"]');
+        await page.waitForSelector('#credit-results .results-panel', { timeout: 10000 });
+        const bpi = await page.evaluate(() => ({
+            rows: document.querySelectorAll('#amort-table tbody tr').length,
+            text: document.querySelector('#credit-results .results-panel')?.textContent || ''
+        }));
+        check('Bpifrance : phase de différé affichée', /pendant le différé/i.test(bpi.text) && /5 ans/.test(bpi.text), bpi.text.replace(/\s+/g, ' ').slice(0, 120));
+
         console.log('Parcours 5 : Service worker (install + bandeau de mise à jour)');
         const swActive = await page.evaluate(async () => {
             if (!('serviceWorker' in navigator)) return 'unsupported';

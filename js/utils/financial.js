@@ -410,6 +410,27 @@ export const Financial = {
     },
 
     /**
+     * Prêt Bpifrance (Prêt Croissance, Prêt Vert, cofinancement MLT…) :
+     * différé d'amortissement de 1 à 3 ans pendant lequel seuls les intérêts
+     * sont payés, puis amortissement sur la durée restante. La durée totale
+     * (7 ans le plus souvent, parfois 8 ou 10) INCLUT le différé.
+     * amortProfile : 'constant' = échéances constantes (défaut),
+     * 'degressif' = capital constant (linéaire).
+     * @param {{ principal: number, annualRate: number, durationYears: number, deferralYears: number, frequency?: string, fees?: number, amortProfile?: string }} p
+     * @returns {LoanResult & { amortProfile: string, deferralPayment: number, amortYears: number }}
+     */
+    pretBpifrance({ principal, annualRate, durationYears, deferralYears, frequency = 'quarterly', fees = 0, amortProfile = 'constant' }) {
+        const years = Math.max(1, Number(durationYears) || 0);
+        // au moins un an d'amortissement après le différé
+        const deferral = Math.min(Math.max(0, Number(deferralYears) || 0), years - 1);
+        const params = { principal, annualRate, durationMonths: years * 12, fees, frequency, deferralMonths: deferral * 12, deferralType: 'partial' };
+        const profile = amortProfile === 'degressif' ? 'degressif' : 'constant';
+        const result = profile === 'degressif' ? this.amortissableDegressif(params) : this.amortissableConstant(params);
+        const deferredRow = result.schedule.find(r => r.deferred);
+        return { ...result, amortProfile: profile, deferralPayment: deferredRow ? deferredRow.payment : 0, amortYears: years - deferral };
+    },
+
+    /**
      * Crédit Amortissable - Amortissement Constant (échéances dégressives)
      * Supports frequency + deferral
      * @param {LoanParams} params

@@ -18,6 +18,7 @@ const CREDIT_TYPES = [
     { id: 'constant', label: 'Amortissable Constant', desc: 'Mensualités fixes' },
     { id: 'degressif', label: 'Amortissable Dégressif', desc: 'Amortissement constant' },
     { id: 'infine', label: 'In Fine', desc: 'Intérêts seuls + bullet' },
+    { id: 'bpi', label: 'Prêt Bpifrance', desc: 'Différé de 1 à 3 ans (intérêts seuls), puis échéances constantes — 7 ans, parfois 8 ou 10' },
     { id: 'creditbail', label: 'Crédit-Bail', desc: "Leasing avec option d'achat" },
     { id: 'revolving', label: 'Revolving', desc: 'Ligne de crédit' },
     { id: 'relais', label: 'Prêt Relais', desc: 'Court terme, intérêts capitalisés' },
@@ -29,7 +30,7 @@ const CREDIT_TYPES = [
 
 /** Types regroupés en 3 familles : la barre de 10 onglets débordait */
 const CREDIT_FAMILIES = [
-    { id: 'mt', label: 'Moyen / long terme', desc: 'Amortissable, in fine, taux variable, crédit-bail', types: ['constant', 'degressif', 'infine', 'variable', 'creditbail'] },
+    { id: 'mt', label: 'Moyen / long terme', desc: 'Amortissable, in fine, Bpifrance, taux variable, crédit-bail', types: ['constant', 'degressif', 'infine', 'bpi', 'variable', 'creditbail'] },
     { id: 'ct', label: 'Court terme & BFR', desc: 'Comparatif BFR, RCF, prêt relais', types: ['bfr', 'revolving', 'relais'] },
     { id: 'st', label: 'Structuré', desc: 'Mezzanine, tranching LBO', types: ['mezzanine', 'tranching'] }
 ];
@@ -71,6 +72,7 @@ const DEFAULTS = {
     revolving: { 'cr-principal': 1000000, 'cr-utilization': 60, 'cr-rate': 5.5, 'cr-commitment': 0.5, 'cr-duration': 12 },
     relais: { 'cr-principal': 300000, 'cr-salePrice': 450000, 'cr-rate': 5.0, 'cr-duration': 18, 'cr-capitalized': false, 'cr-fees': 0 },
     mezzanine: { 'cr-principal': 2000000, 'cr-duration': 60, 'cr-rate': 8.0, 'cr-pikRate': 4.0, 'cr-kicker': 5.0, 'cr-fees': 0, 'cr-pik-compounding': 'annual' },
+    bpi: { 'cr-principal': 500000, 'cr-rate': 4.5, 'cr-bpi-years': '7', 'cr-bpi-deferral': '2', 'cr-frequency': 'quarterly', 'cr-bpi-profile': 'constant', 'cr-fees': 0 },
     variable: { 'cr-principal': 5000000, 'cr-duration': 84, 'cr-frequency': 'quarterly', 'cr-vamort': 'constant', 'cr-margin': 2.25, 'cr-upfront': 1.0 },
     bfr: {},
     tranching: {}
@@ -270,6 +272,11 @@ function getRequiredFields(type) {
                 { id: 'cr-rate', label: 'Taux', min: 0 },
                 { id: 'cr-duration', label: 'Durée', min: 1 }
             ];
+        case 'bpi':
+            return [
+                { id: 'cr-principal', label: 'Montant', min: 1 },
+                { id: 'cr-rate', label: 'Taux', min: 0 }
+            ];
         case 'bfr':
             return [
                 { id: 'cr-principal', label: 'CA confié', min: 1 },
@@ -379,6 +386,65 @@ function getFormHTML(type) {
         case 'degressif':
         case 'infine':
             return common;
+
+        case 'bpi':
+            return `
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Montant du prêt (€)</label>
+                <div class="input-group">
+                    <input type="number" class="form-input" id="cr-principal" value="500000" min="0" step="1">
+                    <span class="input-suffix">€</span>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Taux fixe annuel (%)</label>
+                <div class="input-group">
+                    <input type="number" class="form-input" id="cr-rate" value="4.5" min="0" max="50" step="0.01">
+                    <span class="input-suffix">%</span>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Frais de dossier (€)</label>
+                <div class="input-group">
+                    <input type="number" class="form-input" id="cr-fees" value="0" min="0" step="1">
+                    <span class="input-suffix">€</span>
+                </div>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Durée totale, différé inclus</label>
+                <select class="form-select" id="cr-bpi-years">
+                    ${[5, 6, 7, 8, 9, 10].map(y => `<option value="${y}" ${y === 7 ? 'selected' : ''}>${y} ans${y === 7 ? ' (usuel)' : ''}</option>`).join('')}
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Différé d'amortissement</label>
+                <select class="form-select" id="cr-bpi-deferral">
+                    <option value="1">1 an</option>
+                    <option value="2" selected>2 ans</option>
+                    <option value="3">3 ans</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Périodicité</label>
+                <select class="form-select" id="cr-frequency">
+                    <option value="monthly">Mensuelle</option>
+                    <option value="quarterly" selected>Trimestrielle (usuel Bpifrance)</option>
+                    <option value="semiannual">Semestrielle</option>
+                    <option value="annual">Annuelle</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Amortissement après différé</label>
+                <select class="form-select" id="cr-bpi-profile">
+                    <option value="constant" selected>Échéances constantes</option>
+                    <option value="degressif">Capital constant (linéaire)</option>
+                </select>
+            </div>
+        </div>
+        <p id="cr-bpi-hint" style="font-size:0.82rem;color:var(--text-muted);margin-top:4px"></p>`;
 
         case 'variable':
             return `
@@ -813,6 +879,23 @@ function getResultsHTML(type, result) {
     const deferralInfo = result.deferralMonths > 0 ? `<div class="result-item"><div class="result-label">Différé</div><div class="result-value">${result.deferralMonths} mois (${result.deferralType === 'total' ? 'total' : 'partiel'})</div></div>` : '';
 
     switch (type) {
+        case 'bpi': {
+            // Mêmes indicateurs que le profil d'amortissement retenu, précédés
+            // des deux phases du prêt : différé (intérêts seuls) puis amortissement
+            const phases = `
+                    <div class="result-item">
+                        <div class="result-label">${payLabel} pendant le différé</div>
+                        <div class="result-value">${f(result.deferralPayment)}</div>
+                        <div class="result-sub">intérêts seuls, ${result.deferralMonths / 12} an${result.deferralMonths > 12 ? 's' : ''}</div>
+                    </div>
+                    <div class="result-item">
+                        <div class="result-label">Amortissement</div>
+                        <div class="result-value">${result.amortYears} ans</div>
+                        <div class="result-sub">${result.amortProfile === 'degressif' ? 'capital constant' : 'échéances constantes'}</div>
+                    </div>`;
+            return getResultsHTML(result.amortProfile === 'degressif' ? 'degressif' : 'constant', result)
+                .replace('<div class="results-grid">', `<div class="results-grid">${phases}`);
+        }
         case 'constant':
             return `
                 <div class="results-grid">
@@ -1178,6 +1261,15 @@ function runSimulation({ scroll = true } = {}) {
             params = { principal: val('cr-principal'), annualRate: val('cr-rate'), durationMonths: val('cr-duration'), ...insuranceParams, fees: val('cr-fees'), frequency };
             result = Financial.inFine(params);
             break;
+        case 'bpi': {
+            const years = val('cr-bpi-years') || 7;
+            const deferralYears = Math.min(val('cr-bpi-deferral') || 0, years - 1);
+            const amortProfile = /** @type {HTMLSelectElement | null} */ (document.getElementById('cr-bpi-profile'))?.value === 'degressif' ? 'degressif' : 'constant';
+            // params au format des prêts amortissables (rechargement, exports, dossier banque)
+            params = { principal: val('cr-principal'), annualRate: val('cr-rate'), durationMonths: years * 12, deferralMonths: deferralYears * 12, deferralType: 'partial', frequency, amortProfile, fees: val('cr-fees') };
+            result = Financial.pretBpifrance({ principal: params.principal, annualRate: params.annualRate, durationYears: years, deferralYears, frequency, fees: params.fees, amortProfile });
+            break;
+        }
         case 'creditbail':
             params = { assetValue: val('cr-principal'), deposit: val('cr-deposit'), annualRate: val('cr-rate'), durationMonths: val('cr-duration'), residualValue: val('cr-residual'), fees: val('cr-fees'), paymentTiming: document.getElementById('cr-timing')?.value || 'advance', firstRentPct: val('cr-first-rent') };
             result = Financial.creditBail(params);
@@ -1271,7 +1363,7 @@ function runSimulation({ scroll = true } = {}) {
 
     // Render results
     const resultsDiv = document.getElementById('credit-results');
-    const supportsPrepayment = ['constant', 'degressif', 'infine'].includes(currentType);
+    const supportsPrepayment = ['constant', 'degressif', 'infine', 'bpi'].includes(currentType);
     if (resultsDiv) {
         resultsDiv.innerHTML = `
             <div class="results-panel">
@@ -1502,6 +1594,25 @@ function runPrepaymentAnalysis() {
             </div>
         </div>
     `;
+}
+
+// ── Prêt Bpifrance : rappel de la structure (différé + amortissement) ──
+function setupBpiHint() {
+    const hint = document.getElementById('cr-bpi-hint');
+    const years = /** @type {HTMLSelectElement | null} */ (document.getElementById('cr-bpi-years'));
+    const deferral = /** @type {HTMLSelectElement | null} */ (document.getElementById('cr-bpi-deferral'));
+    if (!hint || !years || !deferral) return;
+    const show = () => {
+        const y = Number(years.value) || 7;
+        // un différé au moins égal à la durée n'a pas de sens : options désactivées
+        [...deferral.options].forEach(o => { o.disabled = Number(o.value) >= y; });
+        if (Number(deferral.value) >= y) deferral.value = String(Math.max(1, y - 1));
+        const d = Number(deferral.value) || 0;
+        hint.textContent = `${d} an${d > 1 ? 's' : ''} de différé (intérêts seuls), puis ${y - d} an${y - d > 1 ? 's' : ''} d'amortissement. Durée totale : ${y} ans.`;
+    };
+    years.addEventListener('change', show);
+    deferral.addEventListener('change', show);
+    show();
 }
 
 // ── Deferral toggle ──
@@ -1944,6 +2055,21 @@ function loadPendingReload() {
 
         // RCF et comparatif BFR : champs propres (listes, paramètres imbriqués)
         const setField = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = String(v); };
+        if (pending.type === 'bpi') {
+            const p = pending.params;
+            /** @param {string} id @param {number} years */
+            const pick = (id, years) => {
+                const sel = /** @type {HTMLSelectElement | null} */ (document.getElementById(id));
+                if (!sel || !(years > 0)) return;
+                // durée hors liste (lien partagé, ancienne simulation) : option ajoutée
+                if (![...sel.options].some(o => Number(o.value) === years)) sel.add(new Option(`${years} ans`, String(years)));
+                sel.value = String(years);
+            };
+            pick('cr-bpi-years', Math.round((p.durationMonths || 84) / 12));
+            pick('cr-bpi-deferral', Math.round((p.deferralMonths || 0) / 12));
+            const prof = /** @type {HTMLSelectElement | null} */ (document.getElementById('cr-bpi-profile'));
+            if (prof) prof.value = p.amortProfile === 'degressif' ? 'degressif' : 'constant';
+        }
         if (pending.type === 'revolving') {
             const p = pending.params;
             setField('cr-commitment-mode', p.commitmentMode);
@@ -2024,6 +2150,7 @@ function loadPendingReload() {
     // Setup live formatting and insurance toggle after populating
     setupInsuranceToggle();
     setupDeferralToggle();
+    setupBpiHint();
 }
 
 export const CreditModule = {
@@ -2167,6 +2294,9 @@ export const CreditModule = {
             // Re-setup live formatting, insurance toggle, deferral toggle
             setupInsuranceToggle();
             setupDeferralToggle();
+    setupBpiHint();
+        setupBpiHint();
+            setupBpiHint();
             setupRateHint();
             prefillIndexPath();
         prefillIndexPath();
@@ -2195,6 +2325,8 @@ export const CreditModule = {
         // Setup live formatting, insurance toggle, deferral toggle
         setupInsuranceToggle();
         setupDeferralToggle();
+    setupBpiHint();
+        setupBpiHint();
         setupRateHint();
         prefillIndexPath();
         if (currentType === 'tranching') setupTranchingListeners();

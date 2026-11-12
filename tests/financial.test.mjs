@@ -341,3 +341,46 @@ describe('parseNumber — séparateurs de milliers', () => {
         assert.equal(Financial.parseNumber('1,000.50'), 1000.5);
     });
 });
+
+describe('Prêt Bpifrance — différé puis échéances constantes', () => {
+    const near = (/** @type {number} */ a, /** @type {number} */ b, tol = 1e-6) => assert.ok(Math.abs(a - b) <= tol, `${a} ≠ ${b}`);
+    const base = { principal: 1000000, annualRate: 4, durationYears: 7, deferralYears: 2, frequency: 'quarterly' };
+
+    test('7 ans dont 2 de différé : 8 trimestres d\'intérêts seuls, puis 20 échéances constantes', () => {
+        const r = Financial.pretBpifrance(base);
+        assert.equal(r.schedule.length, 28);
+        const deferred = r.schedule.slice(0, 8);
+        deferred.forEach(row => {
+            assert.equal(row.principal, 0);
+            near(row.payment, 1000000 * 0.04 / 4, 1e-6);
+            near(row.balance, 1000000, 1e-6);
+        });
+        near(r.deferralPayment, 10000, 1e-6);
+        const amort = r.schedule.slice(8);
+        // échéance = annuité constante sur 20 trimestres à 1 % par trimestre
+        const expected = 1000000 * 0.01 / (1 - Math.pow(1.01, -20));
+        amort.forEach(row => near(row.payment, expected, 1e-6));
+        near(r.schedule[27].balance, 0, 1e-4);
+        assert.equal(r.amortYears, 5);
+        near(/** @type {number} */ (r.teg), 4, 1e-6);
+    });
+
+    test('durée de 10 ans et différé de 3 ans : amortissement sur 7 ans', () => {
+        const r = Financial.pretBpifrance({ ...base, durationYears: 10, deferralYears: 3 });
+        assert.equal(r.schedule.filter(row => row.deferred).length, 12);
+        assert.equal(r.schedule.length, 40);
+        assert.equal(r.amortYears, 7);
+    });
+
+    test('option capital constant : même capital à chaque échéance après le différé', () => {
+        const r = Financial.pretBpifrance({ ...base, amortProfile: 'degressif' });
+        r.schedule.slice(8).forEach(row => near(row.principal, 1000000 / 20, 1e-6));
+        assert.equal(r.amortProfile, 'degressif');
+    });
+
+    test('un différé égal à la durée est ramené à durée − 1 an', () => {
+        const r = Financial.pretBpifrance({ ...base, durationYears: 3, deferralYears: 3 });
+        assert.equal(r.amortYears, 1);
+        near(r.schedule[r.schedule.length - 1].balance, 0, 1e-4);
+    });
+});

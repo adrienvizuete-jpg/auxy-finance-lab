@@ -29,6 +29,7 @@ export const PARAM_LABELS = {
     frequency: "Fréquence d'amortissement",
     deferralMonths: 'Différé (mois)',
     deferralType: 'Type de différé',
+    amortProfile: 'Amortissement après différé',
     // Immobilier
     propertyValue: 'Valeur du bien (\u20ac)',
     acquisitionCost: 'Co\u00fbt d\'acquisition (\u20ac)',
@@ -46,6 +47,7 @@ export const PARAM_LABELS = {
 
 /** @type {Record<string, string>} */
 export const RESULT_LABELS = {
+    periodicPayment: '\u00c9ch\u00e9ance',
     monthlyPayment: 'Mensualit\u00e9',
     monthlyPaymentExInsurance: 'Mensualit\u00e9 hors assurance',
     totalInterest: 'Total int\u00e9r\u00eats',
@@ -53,6 +55,8 @@ export const RESULT_LABELS = {
     totalCost: 'Co\u00fbt total',
     totalPayment: 'Total rembours\u00e9',
     taeg: 'TAEG',
+    deferralPayment: '\u00c9ch\u00e9ance pendant le diff\u00e9r\u00e9 (int\u00e9r\u00eats seuls)',
+    amortYears: 'Dur\u00e9e d\u2019amortissement apr\u00e8s diff\u00e9r\u00e9',
     firstPayment: '1\u00e8re mensualit\u00e9',
     lastPayment: 'Derni\u00e8re mensualit\u00e9',
     averagePayment: 'Mensualit\u00e9 moyenne',
@@ -90,6 +94,7 @@ export const TYPE_LABELS = {
     constant: 'Amortissable Constant',
     degressif: 'Amortissable D\u00e9gressif',
     infine: 'In Fine',
+    bpi: 'Pr\u00eat Bpifrance',
     creditbail: 'Cr\u00e9dit-Bail',
     revolving: 'Revolving',
     relais: 'Pr\u00eat Relais',
@@ -122,7 +127,7 @@ const KEY_FORMATS = {
     taxPct: 'pct', capexPct: 'pct', wcPct: 'pct', carryingCostPct: 'pct', amortized3yPct: 'pct',
     // durées
     durationMonths: 'months', deferralMonths: 'months', finalRecoveryMonth: 'months', effectiveDurationMonths: 'months',
-    horizon: 'years', wal: 'years',
+    horizon: 'years', wal: 'years', amortYears: 'years',
     // ratios
     dscrMin: 'x', leverageMax: 'x', covenantDscr: 'x', covenantLeverage: 'x', ratioLevier: 'x',
     // montants en k€ (modules Structuré / Covenants)
@@ -130,7 +135,7 @@ const KEY_FORMATS = {
     totalDetteNonRef: 'keur', detteSenior: 'keur', detteFinClosing: 'keur', dfn: 'keur', veRetenue: 'keur', excesFP: 'keur',
     // compteurs et libellés
     dscrMinYear: 'count', leverageMaxYear: 'count', newCount: 'count',
-    frequency: 'enum', deferralType: 'enum', amortType: 'enum', paymentTiming: 'enum', pikCompounding: 'enum',
+    frequency: 'enum', deferralType: 'enum', amortType: 'enum', amortProfile: 'enum', paymentTiming: 'enum', pikCompounding: 'enum',
     interestMode: 'enum', globalStatus: 'enum', dscrBasis: 'enum', strategy: 'enum', iraMode: 'enum'
 };
 

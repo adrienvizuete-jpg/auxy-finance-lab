@@ -20,6 +20,7 @@ export const DashboardModule = {
             constant: 'Amortissable',
             degressif: 'D\u00e9gressif',
             infine: 'In Fine',
+            bpi: 'Pr\u00eat Bpifrance',
             creditbail: 'Cr\u00e9dit-Bail',
             revolving: 'Revolving',
             relais: 'Pr\u00eat Relais',
