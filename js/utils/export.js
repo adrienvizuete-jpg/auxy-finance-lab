@@ -5,6 +5,7 @@
 import { PARAM_LABELS, RESULT_LABELS, t, excelValue, unitOf } from './i18n.js';
 import { Charts } from './charts.js';
 import { Dossier } from './dossier.js';
+import { Dialog } from './dialog.js';
 
 export const Export = {
 
@@ -139,6 +140,14 @@ export const Export = {
         if (!this._logo) {
             try { this._logo = (await import('./logo-data.js')).LOGO_JPEG_BANNER; } catch { /* repli texte « AUXY PARTNERS » */ }
         }
+        // Pas de client connu : la page de garde le demande une fois (il devient le
+        // dossier actif). Laissé vide, le document sort sans nom de client.
+        const known = (opts.cover && opts.cover.client) || String(title).split(/\s+[\u2014\u2013]\s+/)[1] || Dossier.get()?.name;
+        if (opts.cover !== false && !known && typeof document !== 'undefined' && document.getElementById('modal-overlay')) {
+            const name = await Dialog.prompt({ title: 'Nom du client', label: 'Client (page de garde et en-têtes du PDF)', text: 'Aucun dossier client n\u2019est actif. Le nom saisi sera repris sur ce document et les suivants.', placeholder: 'Ex : EMEK GROUP', confirmLabel: 'Exporter' });
+            if (name === null) return;
+            if (name) Dossier.update({ name });
+        }
         return this._buildPdf(title, sections, filename, opts);
     },
 
@@ -187,10 +196,12 @@ export const Export = {
         y += 14;
         doc.setFontSize(client ? 30 : 26);
         doc.setTextColor(...T.navy);
-        const headline = doc.splitTextToSize(s(client || title), R - X).slice(0, 2);
+        // sans client, le titre est l'objet de l'analyse (et non le type de document répété)
+        const headText = client || (cover.subtitle && cover.subtitle !== kind ? cover.subtitle : title);
+        const headline = doc.splitTextToSize(s(headText), R - X).slice(0, 2);
         doc.text(headline, X, y);
         y += (headline.length - 1) * 12 + 9;
-        if (cover.subtitle && cover.subtitle !== client) {
+        if (cover.subtitle && cover.subtitle !== headText) {
             doc.setFont('helvetica', 'italic');
             doc.setFontSize(12);
             doc.setTextColor(...T.grey);

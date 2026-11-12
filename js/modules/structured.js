@@ -511,7 +511,9 @@ function exportPdf() {
     const market = marketForEngine();
 
     // ── Emplois | Ressources ──
-    const emploisRows = [...emplois.map(e => [e.label, k(e.amount), share(e.amount)]), ['Total', k(c.totalEmplois), '100 %']];
+    // « VE [Nom cible] » : le libellé d'exemple porte le nom du client quand il est connu
+    const named = label => String(label).replace(/\[Nom cible\]/gi, client || 'cible');
+    const emploisRows = [...emplois.map(e => [named(e.label), k(e.amount), share(e.amount)]), ['Total', k(c.totalEmplois), '100 %']];
     const ressRows = [];
     const bold = [];
     ressRows.push(['Fonds propres', k(Math.min(fondsPropres, c.totalEmplois)), '', pct(c.pctFP, 0)]);
@@ -525,12 +527,18 @@ function exportPdf() {
     const years = Math.min(10, Math.max(1, Math.ceil(Math.max(...debts.map(d => d.durationYears), 1))));
     const profiles = debts.map(d => ({ label: d.label, rows: CovenantEngine.debtAnnualProfile(d, years, market) }));
     const yearHead = Array.from({ length: years }, (_, i) => `A${i + 1}`);
-    const byYear = field => {
-        const rows = profiles.map(p => [p.label, ...p.rows.map(r => k(r[field])), k(p.rows.reduce((s, r) => s + r[field], 0))]);
+    // Un seul tableau, trois blocs (amortissement, intérêts, service), comme dans les mémos
+    const serviceRows = [];
+    const sectionRows = [];
+    const totalRows = [];
+    [['Amortissement du capital', 'principal'], ['Intérêts', 'interest'], ['Service de la dette (capital + intérêts)', 'service']].forEach(([label, field]) => {
+        sectionRows.push(serviceRows.length);
+        serviceRows.push([label, ...yearHead.map(() => ''), '']);
+        profiles.forEach(p => serviceRows.push([`   ${p.label}`, ...p.rows.map(r => k(r[field])), k(p.rows.reduce((s, r) => s + r[field], 0))]));
         const totals = Array.from({ length: years }, (_, i) => profiles.reduce((s, p) => s + (p.rows[i]?.[field] || 0), 0));
-        rows.push(['Total', ...totals.map(k), k(totals.reduce((s, v) => s + v, 0))]);
-        return rows;
-    };
+        totalRows.push(serviceRows.length);
+        serviceRows.push(['Total', ...totals.map(k), k(totals.reduce((s, v) => s + v, 0))]);
+    });
     const serviceA1 = profiles.reduce((s, p) => s + (p.rows[0]?.service || 0), 0);
     const servicePeak = Array.from({ length: years }, (_, i) => profiles.reduce((s, p) => s + (p.rows[i]?.service || 0), 0))
         .reduce((m, v, i) => (v > m.v ? { v, i } : m), { v: 0, i: 0 });
@@ -553,31 +561,35 @@ function exportPdf() {
             { label: 'VE retenue', value: `${k(c.veRetenue)} k€`, sub: ebitda > 0 ? `${fmtRatio(c.veRetenue / ebitda)} l’EBITDA` : '' }
         ] }
     ];
+    // ── Diapositive « conditions » : capacité, conditions des lignes, dette conservée ──
+    sections.push({ type: 'pagebreak' });
     if (lastSizing) {
-        sections.push({ type: 'note', title: 'Capacité d’endettement', text: `Dette senior maximale : ${k(lastSizing.max)} k€ (contrainte liante : ${({ dscr: 'DSCR', leverage: 'levier', equity: 'fonds propres minimum' })[lastSizing.binding] || lastSizing.binding}). Maximum par le levier : ${k(lastSizing.byLeverage)} k€ ; maximum par le DSCR : ${k(lastSizing.byDscr)} k€.` });
+        const over = c.detteSenior - lastSizing.max;
+        const binding = ({ dscr: 'le DSCR', leverage: 'le levier', equity: 'les fonds propres minimum' })[lastSizing.binding] || lastSizing.binding;
+        sections.push({ type: 'note', title: over > 0.5 ? 'Capacité d\u2019endettement dépassée' : 'Capacité d\u2019endettement',
+            text: `Dette senior maximale : ${k(lastSizing.max)} k\u20ac, contrainte par ${binding} (maximum par le levier : ${k(lastSizing.byLeverage)} k\u20ac ; par le DSCR : ${k(lastSizing.byDscr)} k\u20ac). `
+                + (over > 0.5 ? `La dette senior du montage (${k(c.detteSenior)} k\u20ac) la dépasse de ${k(over)} k\u20ac : il faut plus de fonds propres, un autre financement ou une dette plus longue.` : `La dette senior du montage (${k(c.detteSenior)} k\u20ac) reste dans cette limite.`) });
     }
-
-    sections.push({ type: 'title', text: 'Conditions des financements', subtitle: 'Montants en k€' });
+    sections.push({ type: 'title', text: 'Conditions des financements', subtitle: 'Montants en k\u20ac' });
     sections.push({ type: 'table', headers: ['Ligne', 'Montant', 'Taux / marge', 'Durée', 'Différé', 'Amortissement', 'Périodicité', 'Annuité A1'],
         rows: [
-            ...c.tranchesDetail.map(t => [`Senior ${t.label}`, k(t.amount), `${pct(t.taux || 0, 2)}${t.rateType === 'floating' ? ' + Euribor' : ''}`, `${t.duration} ans`, t.deferral ? `${t.deferral} an${t.deferral > 1 ? 's' : ''}` : '—', AMORT_LABELS[t.amortType] || 'Constant', FREQ_LABELS[t.frequency] || 'Mensuel',
+            ...c.tranchesDetail.map(t => [`Senior ${t.label}`, k(t.amount), `${pct(t.taux || 0, 2)}${t.rateType === 'floating' ? ' + Euribor' : ''}`, `${t.duration} ans`, t.deferral ? `${t.deferral} an${t.deferral > 1 ? 's' : ''}` : '\u2014', AMORT_LABELS[t.amortType] || 'Constant', FREQ_LABELS[t.frequency] || 'Mensuel',
                 k(computeAnnuity(t.amount, t.taux || 0, t.duration || 1, t.amortType || 'constant', t.frequency || 'mensuel', t))]),
-            ...autresFin.filter(a => (a.amount || 0) > 0).map(a => [a.label || AUTRE_TYPES[a.type] || 'Financement', k(a.amount), `${pct(a.taux || 0, 2)}${a.rateType === 'floating' ? ' + Euribor' : ''}`, `${a.duration || 1} ans`, a.deferral ? `${a.deferral} an${a.deferral > 1 ? 's' : ''}` : '—', AMORT_LABELS[a.amortType] || 'In Fine', FREQ_LABELS[a.frequency] || 'Annuel',
+            ...autresFin.filter(a => (a.amount || 0) > 0).map(a => [a.label || AUTRE_TYPES[a.type] || 'Financement', k(a.amount), `${pct(a.taux || 0, 2)}${a.rateType === 'floating' ? ' + Euribor' : ''}`, `${a.duration || 1} ans`, a.deferral ? `${a.deferral} an${a.deferral > 1 ? 's' : ''}` : '\u2014', AMORT_LABELS[a.amortType] || 'In Fine', FREQ_LABELS[a.frequency] || 'Annuel',
                 k(computeAnnuity(a.amount || 0, a.taux || 0, a.duration || 1, a.amortType || 'infine', a.frequency || 'annuel', a))])
         ] });
-
-    if (profiles.length) {
-        sections.push({ type: 'title', text: 'Amortissement du capital', subtitle: 'k€ par année depuis le closing' });
-        sections.push({ type: 'table', headers: ['Ligne \\ Année', ...yearHead, 'Total'], rows: byYear('principal') });
-        sections.push({ type: 'title', text: 'Intérêts', subtitle: `k€ par année${debts.some(d => d.rateType === 'floating') ? ' · taux variable : Euribor 3M du jour maintenu, floor à 0 %' : ''}` });
-        sections.push({ type: 'table', headers: ['Ligne \\ Année', ...yearHead, 'Total'], rows: byYear('interest') });
-        sections.push({ type: 'title', text: 'Service de la dette', subtitle: 'Capital + intérêts, k€ par année' });
-        sections.push({ type: 'table', headers: ['Ligne \\ Année', ...yearHead, 'Total'], rows: byYear('service'),
-            note: years < Math.ceil(Math.max(...debts.map(d => d.durationYears))) ? `Tableau limité aux ${years} premières années.` : '' });
-    }
     if (detteNonRef.some(d => d.amount > 0)) {
-        sections.push({ type: 'title', text: 'Dette non refinancée', subtitle: 'Conservée au closing, k€' });
-        sections.push({ type: 'table', headers: ['Dette', 'Montant'], rows: [...detteNonRef.map(d => [d.label, k(d.amount)]), ['Total', k(c.totalDetteNonRef)]] });
+        sections.push({ type: 'title', text: 'Dette non refinancée', subtitle: 'Conservée au closing, k\u20ac' });
+        sections.push({ type: 'table', headers: ['Dette', 'Montant'], rows: [...detteNonRef.filter(d => d.amount > 0).map(d => [d.label, k(d.amount)]), ['Total', k(c.totalDetteNonRef)]] });
+    }
+
+    // ── Diapositive « service de la dette » ──
+    if (profiles.length) {
+        sections.push({ type: 'pagebreak' });
+        sections.push({ type: 'title', text: 'Service de la dette par ligne et par année',
+            subtitle: `k\u20ac par année depuis le closing${debts.some(d => d.rateType === 'floating') ? ' \u00b7 taux variable : Euribor 3M du jour maintenu, floor à 0 %' : ''}` });
+        sections.push({ type: 'table', headers: ['k\u20ac', ...yearHead, 'Total'], rows: serviceRows, sectionRows, totalRows,
+            note: years < Math.ceil(Math.max(...debts.map(d => d.durationYears))) ? `Tableau limité aux ${years} premières années.` : '' });
     }
 
     Export.toPdf(`Financement structuré${client ? ' — ' + client : ''}`, sections, 'financement_structure', {

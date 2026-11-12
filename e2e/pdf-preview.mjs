@@ -53,7 +53,8 @@ try {
     await page.setViewport({ width: 1440, height: 900 });
     page.on('pageerror', err => console.error(`pageerror: ${err.message}`));
     await page.goto(`${base}#dashboard`, { waitUntil: 'networkidle0' });
-    await page.evaluate(() => { try { window.localStorage.setItem('auxy_dossier_active', JSON.stringify({ name: 'EMEK GROUP', source: 'aperçu PDF' })); } catch { /* aperçu sans dossier */ } });
+    // SANS_CLIENT=1 : aperçu sans dossier actif (la fenêtre « Nom du client » est validée vide)
+    if (!process.env.SANS_CLIENT) await page.evaluate(() => { try { window.localStorage.setItem('auxy_dossier_active', JSON.stringify({ name: 'EMEK GROUP', source: 'aperçu PDF' })); } catch { /* aperçu sans dossier */ } });
     await page.reload({ waitUntil: 'networkidle0' });
     // bibliothèques d'export chargées, puis interception de save()
     await page.waitForFunction(() => /** @type {any} */ (window).jspdf?.jsPDF?.API?.autoTable, { timeout: 30000 });
@@ -71,6 +72,7 @@ try {
         const count = await page.evaluate(() => /** @type {any} */ (window).__pdfs.length);
         await page.waitForSelector(sc.button, { timeout: 10000 });
         await page.$eval(sc.button, el => /** @type {HTMLElement} */ (el).click());
+        if (process.env.SANS_CLIENT) { try { await page.waitForSelector('#dlg-prompt', { timeout: 3000 }); await page.click('#dlg-ok'); } catch { /* client déjà connu */ } }
         try {
             await page.waitForFunction(n => /** @type {any} */ (window).__pdfs.length > n, { timeout: 15000 }, count);
         } catch { console.error(`✗ ${sc.name} : aucun PDF produit`); continue; }
