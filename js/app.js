@@ -357,6 +357,12 @@ function init() {
         });
     });
 
+    // Stockage plein : les plus anciennes simulations ont été retirées — on prévient
+    window.addEventListener('storage:purged', e => {
+        const n = /** @type {CustomEvent} */ (e).detail?.removed || 0;
+        showToast(`Stockage du navigateur plein : ${n} simulation${n > 1 ? 's' : ''} parmi les plus anciennes ${n > 1 ? 'ont été retirées' : 'a été retirée'} de l'Historique. Exportez ou synchronisez pour ne rien perdre.`, 'error');
+    });
+
     // En-tête : client actif et parcours de mission ; l'accueil suit le dossier
     refreshContext = initContextBar(() => currentPage);
     window.addEventListener('dossier:change', () => {
