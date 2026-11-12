@@ -26,6 +26,7 @@ export function recomputeSchedule(type, p) {
             case 'relais': return Financial.pretRelais(p).schedule ?? null;
             case 'mezzanine': return Financial.detteMezzanine(p).schedule ?? null;
             case 'variable': return LoanEngine.build(p).rows;
+            case 'tranching': return Array.isArray(p.tranches) ? Financial.tranching(p.tranches).consolidated.schedule : null;
             case 'bpi': {
                 const bpi = { principal: p.principal, annualRate: p.annualRate, durationYears: p.durationMonths / 12, deferralYears: (p.deferralMonths || 0) / 12, fees: p.fees || 0, amortProfile: p.amortProfile, retenuePct: p.retenuePct || 0, retenueRate: p.retenueRate || 0 };
                 if (p.cofinancement) {

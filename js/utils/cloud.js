@@ -19,7 +19,7 @@
  * l'UI affiche la marche à suivre.
  */
 
-import { Storage } from './storage.js';
+import { Storage, slimResults } from './storage.js';
 
 /** @typedef {import('./storage.js').Simulation} Simulation */
 
@@ -309,7 +309,8 @@ export const Cloud = {
         // remplacer le dossier d'un associé en réutilisant son payload.id).
         const remote = list
             .filter(r => !r?.deleted_at && isValidSimulation(r?.payload) && r.payload.id === r.id)
-            .map(r => r.payload);
+            // anciens envois : échéanciers retirés, comme à l'enregistrement local
+            .map(r => (r.payload.results ? { ...r.payload, results: slimResults(r.payload.results) } : r.payload));
         const local = Storage.getHistory();
         const kept = local.filter(s => !deletedIds.has(String(s.id)));
         const { merged, added, updated } = mergeSimulations(kept, remote);

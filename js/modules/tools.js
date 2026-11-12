@@ -211,7 +211,7 @@ export const StressTestModule = {
         // Prêt reçu de Crédit : champs pré-remplis et grille de sensibilité lancée
         const incoming = Handoff.take('stress')[0];
         if (incoming) {
-            FormState.prefill('stress', { 'st-principal': String(incoming.amount), 'st-rate': String(incoming.rate), 'st-duration': String(incoming.durationMonths) }, ['click:st-run']);
+            FormState.prefill('stress', { 'st-principal': String(incoming.amount), 'st-rate': String(incoming.rate), 'st-duration': String(incoming.durationMonths), 'st-frequency': incoming.frequency || 'monthly' }, ['click:st-run']);
         }
         return `
             <div class="page-header">

@@ -81,7 +81,7 @@ def _is_correct_cron_run() -> bool:
 
 def _mark_skipped() -> None:
     """Signale au workflow que cette exécution ne fait rien (mauvais créneau
-    horaire ou jour non ouvré) : il n'exporte alors pas rates.json, ce qui
+    horaire du double cron été / hiver) : il n'exporte alors pas rates.json, ce qui
     évitait deux commits de données par jour (un par cron été / hiver)."""
     output = os.environ.get("GITHUB_OUTPUT")
     if output:
@@ -94,14 +94,14 @@ async def run_veille(config: VeilleConfig, force: bool = False) -> None:
     now = datetime.now(PARIS_TZ)
 
     if not force:
-        if not _is_business_day(now):
-            logger.info("Jour non ouvré (%s), skip.", now.strftime("%A %d/%m/%Y"))
-            _mark_skipped()
-            return
-
+        # Créneau d'abord : le cron de l'autre saison ne fait rien du tout, jours fériés compris
         if not _is_correct_cron_run():
             logger.info("Pas la bonne exécution cron (heure Paris : %s), skip.", now.strftime("%H:%M"))
             _mark_skipped()
+            return
+
+        if not _is_business_day(now):
+            logger.info("Jour non ouvré (%s), skip.", now.strftime("%A %d/%m/%Y"))
             return
 
     logger.info("=" * 60)

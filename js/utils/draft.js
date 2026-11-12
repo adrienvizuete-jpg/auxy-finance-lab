@@ -36,7 +36,9 @@ export const Draft = {
         const w = /** @type {any} */ (window);
         if (w._pendingReload || location.hash.includes('?s=')) return;
         const draft = Storage.get(key(page));
-        if (draft && typeof draft === 'object' && draft.params && typeof draft.params === 'object') {
+        // au-delà de 30 jours, un brouillon n'est plus un travail en cours
+        const age = draft?.savedAt ? Date.now() - Date.parse(draft.savedAt) : Infinity;
+        if (draft && typeof draft === 'object' && draft.params && typeof draft.params === 'object' && age < 30 * 86400000) {
             w._pendingReload = { type: page, params: draft.params };
         }
     },

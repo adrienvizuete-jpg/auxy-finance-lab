@@ -965,7 +965,17 @@ function loansForHandoff() {
 function handoffPages() {
     const loans = loansForHandoff();
     if (!loans.length) return [];
-    return loans.length === 1 && loans[0].rateType !== 'floating' ? ['debtprofile', 'covenants', 'benchmark', 'stress'] : ['debtprofile', 'covenants'];
+    // Chaque cible ne reçoit que ce qu'elle sait modéliser, pour ne pas changer le prêt en route :
+    // Profil de dette est à taux fixe sans ballon ; Benchmark et sensibilité prennent un seul
+    // prêt à taux fixe sans différé (Benchmark : mensualités uniquement).
+    const floating = loans.some(l => l.rateType === 'floating');
+    const balloon = loans.some(l => l.amortType === 'balloon');
+    const simple = loans.length === 1 && !floating && !balloon && !(loans[0].deferralMonths > 0);
+    const pages = ['covenants'];
+    if (!floating && !balloon) pages.unshift('debtprofile');
+    if (simple && (loans[0].frequency || 'monthly') === 'monthly') pages.push('benchmark');
+    if (simple) pages.push('stress');
+    return pages;
 }
 
 /** Cofinancement Bpifrance + banque : synthèse consolidée puis détail par prêt */
@@ -1520,14 +1530,14 @@ function runSimulation({ scroll = true } = {}) {
 
     // Durée non multiple de la périodicité : le moteur arrondit au nombre de
     // périodes le plus proche — on le dit plutôt que de le taire.
-    if (result.effectiveDurationMonths && params.durationMonths && result.effectiveDurationMonths !== Math.round(params.durationMonths)) {
+    if (!result.cofinancement && result.effectiveDurationMonths && params.durationMonths && result.effectiveDurationMonths !== Math.round(params.durationMonths)) {
         window.showToast?.(`Durée modélisée : ${result.effectiveDurationMonths} mois (multiple de la périodicité) au lieu de ${params.durationMonths}`, 'warning');
     }
 
     // Render results
     const resultsDiv = document.getElementById('credit-results');
-    // pas de remboursement anticipé sur un échéancier consolidé (deux prêts, deux IRA)
-    const supportsPrepayment = ['constant', 'degressif', 'infine', 'bpi'].includes(currentType) && !result.cofinancement;
+    // pas sur le prêt Bpifrance : le module de remboursement anticipé ne connaît ni le différé ni le profil choisi
+    const supportsPrepayment = ['constant', 'degressif', 'infine'].includes(currentType);
     if (resultsDiv) {
         resultsDiv.innerHTML = `
             <div class="results-panel">
@@ -1952,7 +1962,8 @@ function resetForm() {
         document.getElementById('credit-results').innerHTML = '';
         document.querySelectorAll('.credit-output').forEach(el => el.classList.add('hidden'));
         lastResult = null;
-        window.showToast?.('Formulaire réinitialisé', 'info');
+        setupBpiHint(); // bloc bancaire et rappel de structure alignés sur les valeurs par défaut
+    window.showToast?.('Formulaire réinitialisé', 'info');
         return;
     }
 

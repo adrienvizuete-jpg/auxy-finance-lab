@@ -75,19 +75,23 @@ function navigateTo(page, { history: mode = 'push' } = {}) {
     // Titre d'onglet par module : onglets et historique du navigateur lisibles
     document.title = `${label || 'Accueil'} · Auxy Finance Lab`;
 
-    // Historique : jamais d'entrée ajoutée sur un Retour / Suivant (sinon le
-    // bouton Retour tourne en boucle sur la même page)
-    if (mode === 'push' && location.hash.split('?')[0] !== `#${page}`) history.pushState(null, '', `#${page}`);
-    else if (mode === 'replace') history.replaceState(null, '', `#${page}`);
-
     // Close mobile sidebar
     document.getElementById('sidebar')?.classList.remove('open');
 
+    // Historique : jamais d'entrée ajoutée sur un Retour / Suivant (sinon le
+    // bouton Retour tourne en boucle sur la même page). Mis à jour APRÈS le
+    // rendu : init() du module lit d'abord le lien de partage (#page?s=…).
+    const show = () => {
+        renderPage(page);
+        if (mode === 'push' && location.hash.split('?')[0] !== `#${page}`) history.pushState(null, '', `#${page}`);
+        else if (mode === 'replace') history.replaceState(null, '', `#${page}`);
+    };
+
     // Rendu immédiat si le module est déjà chargé, sinon dès son arrivée
-    if (modules[page]) { renderPage(page); return; }
+    if (modules[page]) { show(); return; }
     loaders[page]().then(mod => {
         modules[page] = mod;
-        if (currentPage === page) renderPage(page); // l'utilisateur n'est pas reparti ailleurs entre-temps
+        if (currentPage === page) show(); // l'utilisateur n'est pas reparti ailleurs entre-temps
     }).catch(() => showToast('Module indisponible (connexion ?) — réessayez', 'error'));
 }
 

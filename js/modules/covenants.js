@@ -53,7 +53,9 @@ let debts = [
 ];
 let lastResult = null;
 // Dettes d'exemple à l'ouverture : remplacées (et non complétées) par un prêt reçu d'un autre module
-const SAMPLE_DEBTS = JSON.stringify(debts);
+/** Signature des dettes (libellé, montant, taux) : insensible aux champs ajoutés par un rechargement */
+const debtsSig = () => JSON.stringify(debts.map(d => [d.label, d.amount, d.rate]));
+const SAMPLE_DEBTS = debtsSig();
 
 /** Prêts reçus par « Envoyer vers… » (en €) → lignes de dette (k€) */
 function takeHandoff() {
@@ -71,7 +73,7 @@ function takeHandoff() {
         deferralMonths: l.deferralMonths || 0,
         balloonPct: l.balloonPct
     }));
-    debts = JSON.stringify(debts) === SAMPLE_DEBTS ? lines : debts.concat(lines);
+    debts = debtsSig() === SAMPLE_DEBTS ? lines : debts.concat(lines);
     return true;
 }
 

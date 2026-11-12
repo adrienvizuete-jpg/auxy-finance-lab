@@ -1320,6 +1320,10 @@ export const ImmobilierModule = {
         document.getElementById('immo-handoff')?.addEventListener('click', e => {
             const btn = e.target.closest('[data-handoff]');
             if (!btn) return;
+            if (btn.dataset.handoff === 'debtprofile' && state.amortType === 'balloon') {
+                window.showToast?.('Profil de dette ne modélise pas le ballon : envoyez ce prêt vers Covenants', 'warning');
+                return;
+            }
             Handoff.send(btn.dataset.handoff, [{
                 label: state.propertyName ? `Prêt immobilier — ${state.propertyName}` : 'Prêt immobilier',
                 amount: state.loanAmount, rate: state.annualRate, durationMonths: state.durationMonths,

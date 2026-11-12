@@ -54,7 +54,9 @@ let loans = [
 ];
 let lastResult = null;
 // Crédits d'exemple à l'ouverture : remplacés par les prêts reçus d'un autre module
-const SAMPLE_LOANS = JSON.stringify(loans);
+/** Signature des crédits (libellé, montant, taux) : insensible aux champs ajoutés par un rechargement */
+const loansSig = () => JSON.stringify(loans.map(l => [l.label, l.amount, l.rate]));
+const SAMPLE_LOANS = loansSig();
 
 /** Ligne de crédit « nouveau financement » démarrant le mois suivant la date d'analyse.
  *  @param {{ label: string, amount: number, rate: number, durationMonths: number, deferralMonths?: number, amortType?: string, frequency?: string }} l */
@@ -74,7 +76,7 @@ function takeHandoff() {
     const incoming = Handoff.take('debtprofile');
     if (!incoming.length) return false;
     const lines = incoming.map(l => newLoanLine(l));
-    loans = JSON.stringify(loans) === SAMPLE_LOANS ? lines : loans.concat(lines);
+    loans = loansSig() === SAMPLE_LOANS ? lines : loans.concat(lines);
     includeNew = true;
     return true;
 }
@@ -387,7 +389,14 @@ function recalculate() {
             years: agg.years
         } : { years: [] }
     };
-    Draft.save('debtprofile', lastResult.params);
+    // Brouillon : ni la date d'analyse (elle doit suivre le calendrier) ni un nom
+    // qui vient du client actif (il doit continuer à le suivre)
+    {
+        const draft = { ...lastResult.params };
+        delete draft.analysis;
+        if (nameFromActive) delete draft.dossierName;
+        Draft.save('debtprofile', draft);
+    }
 }
 
 // ── Actions ──
@@ -465,12 +474,12 @@ function exportExcel() {
         ['Date d\'analyse', analysisLabel()],
         ['Clôture d\'exercice', closingMonth === 12 ? 'Décembre (année civile)' : MONTH_NAMES[closingMonth - 1]],
         [''],
-        ['CRÉDITS', 'Montant initial (€)', '1ère échéance', 'Durée (mois)', 'Taux (%)', 'Amortissement', 'Périodicité', 'Nouveau', 'CRD à l\'analyse (€)', 'CRD constaté (€)']
+        ['CRÉDITS', 'Montant initial (€)', '1ère échéance', 'Durée (mois)', 'Différé (mois)', 'Taux (%)', 'Amortissement', 'Périodicité', 'Nouveau', 'CRD à l\'analyse (€)', 'CRD constaté (€)']
     ].filter(row => row.length);
     const aIdx = analysisIdx();
     validLoans().forEach(l => {
         const crd = DebtEngine.crdAt(DebtEngine.buildSchedule(l), aIdx);
-        inv.push([l.label, l.amount, monthValue(l.startYear, l.startMonth), l.durationMonths, l.rate,
+        inv.push([l.label, l.amount, monthValue(l.startYear, l.startMonth), l.durationMonths, l.deferralMonths || 0, l.rate,
             AMORT_OPTIONS[l.amortType], FREQ_OPTIONS[l.frequency], l.isNew ? 'Oui' : '', Math.round(crd), l.crdCheck ?? '']);
     });
     const wsInv = XLSX.utils.aoa_to_sheet(inv);
@@ -978,7 +987,7 @@ export const DebtProfileModule = {
                 const fromDossier = (d.debts || []).filter(x => x.amount > 0).map(x => newLoanLine({ label: x.label, amount: x.amount * 1000, rate: x.rate, durationMonths: Math.max(1, Math.round(x.durationYears * 12)), deferralMonths: x.deferralMonths, amortType: x.amortType, frequency: x.frequency }, false));
                 const apply = () => { loans = fromDossier; this._rerenderInputs(); recalculate(); };
                 if (!fromDossier.length) { this._rerenderInputs(); return; }
-                if (JSON.stringify(loans) === SAMPLE_LOANS) { apply(); return; }
+                if (loansSig() === SAMPLE_LOANS) { apply(); return; }
                 this._rerenderInputs();
                 Dialog.confirm(`Le dossier contient ${fromDossier.length} dette${fromDossier.length > 1 ? 's' : ''}. Elles remplaceront les crédits saisis ici.`, { title: 'Charger les dettes du dossier ?', confirmLabel: 'Remplacer' }).then(ok => { if (ok) apply(); });
             }
