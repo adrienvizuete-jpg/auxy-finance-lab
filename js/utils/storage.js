@@ -228,26 +228,6 @@ export const Storage = {
         this.set('cloud_tombstones', this.getTombstones().filter(t => !done.has(t.id)));
     },
 
-    // Benchmark saves — retourne null si l'écriture a échoué (quota plein)
-    /**
-     * @param {Benchmark} benchmark
-     * @returns {string | null}
-     */
-    saveBenchmark(benchmark) {
-        const benchmarks = this.get('benchmarks', /** @type {Benchmark[]} */ ([]));
-        benchmark.id = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
-        benchmark.date = new Date().toISOString();
-        benchmarks.unshift(benchmark);
-        if (benchmarks.length > 50) benchmarks.length = 50;
-        if (!this.set('benchmarks', benchmarks)) return null;
-        return benchmark.id;
-    },
-
-    /** @returns {Benchmark[]} */
-    getBenchmarks() {
-        return this.get('benchmarks', /** @type {Benchmark[]} */ ([]));
-    },
-
     // Theme
     /** @returns {string} */
     getTheme() {
@@ -262,9 +242,7 @@ export const Storage = {
     // Stats
     getStats() {
         const history = this.getHistory();
-        const benchmarks = this.getBenchmarks();
         const totalSimulations = history.length;
-        const totalBenchmarks = benchmarks.length;
 
         /** @type {Record<string, number>} */
         const byType = {};
@@ -276,7 +254,6 @@ export const Storage = {
 
         return {
             totalSimulations,
-            totalBenchmarks,
             byType,
             totalAmount,
             lastSimulation: history[0] || null

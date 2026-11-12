@@ -51,7 +51,6 @@ const PRECACHE = [
     './js/utils/share.js',
     './js/utils/market.js',
     './js/utils/cloud.js',
-    './assets/logo.png',
     './assets/favicon.svg',
     './assets/icon-192.png',
     './assets/icon-512.png'

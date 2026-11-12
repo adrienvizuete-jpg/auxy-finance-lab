@@ -69,6 +69,21 @@
  * @property {string} [frequency] Périodicité des échéances
  */
 
+// Formateurs Intl mis en cache : en créer un par appel coûtait ~90 fois plus
+// cher (un échéancier de 240 lignes en appelle un millier).
+/** @type {Map<string, Intl.NumberFormat>} */
+const FORMAT_CACHE = new Map();
+/** @param {'currency' | 'percent' | 'decimal'} style @param {number} decimals */
+function cachedFormat(style, decimals) {
+    const key = `${style}:${decimals}`;
+    let f = FORMAT_CACHE.get(key);
+    if (!f) {
+        f = new Intl.NumberFormat('fr-FR', { style, ...(style === 'currency' ? { currency: 'EUR' } : {}), minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+        FORMAT_CACHE.set(key, f);
+    }
+    return f;
+}
+
 export const Financial = {
 
     // =============================================
@@ -106,19 +121,6 @@ export const Financial = {
     },
 
     /**
-     * Principal portion of payment (PPMT)
-     * @param {number} rate Taux périodique
-     * @param {number} per Période visée (1..nper)
-     * @param {number} nper Nombre total de périodes
-     * @param {number} pv Valeur actuelle (capital)
-     * @param {number} [fv] Valeur future
-     * @returns {number}
-     */
-    ppmt(rate, per, nper, pv, fv = 0) {
-        return this.pmt(rate, nper, pv, fv) - this.ipmt(rate, per, nper, pv, fv);
-    },
-
-    /**
      * Future Value (FV)
      * @param {number} rate Taux périodique
      * @param {number} nper Nombre de périodes
@@ -130,20 +132,6 @@ export const Financial = {
         if (rate === 0) return -(pv + pmt * nper);
         const q = Math.pow(1 + rate, nper);
         return -(pv * q + pmt * (q - 1) / rate);
-    },
-
-    /**
-     * Present Value (PV)
-     * @param {number} rate Taux périodique
-     * @param {number} nper Nombre de périodes
-     * @param {number} pmt Paiement périodique
-     * @param {number} [fv] Valeur future
-     * @returns {number}
-     */
-    pv(rate, nper, pmt, fv = 0) {
-        if (rate === 0) return -(fv + pmt * nper);
-        const q = Math.pow(1 + rate, nper);
-        return -(fv + pmt * (q - 1) / rate) / q;
     },
 
     /**
@@ -1520,16 +1508,6 @@ export const Financial = {
     },
 
     /**
-     * Debt-to-Equity Ratio
-     * @param {number} totalDebt
-     * @param {number} totalEquity
-     * @returns {number}
-     */
-    debtToEquity(totalDebt, totalEquity) {
-        return totalEquity === 0 ? Infinity : totalDebt / totalEquity;
-    },
-
-    /**
      * Weighted Average Cost of Capital
      * @param {{ debtAmount: number, equityAmount: number, costOfDebt: number, costOfEquity: number, taxRate: number }} params
      * @returns {number}
@@ -1619,12 +1597,7 @@ export const Financial = {
      */
     formatCurrency(value, decimals = 0) {
         if (value == null || isNaN(value)) return '—';
-        return new Intl.NumberFormat('fr-FR', {
-            style: 'currency',
-            currency: 'EUR',
-            minimumFractionDigits: decimals,
-            maximumFractionDigits: decimals
-        }).format(value);
+        return cachedFormat('currency', decimals).format(value);
     },
 
     /**
@@ -1634,11 +1607,7 @@ export const Financial = {
      */
     formatPercent(value, decimals = 2) {
         if (value == null || isNaN(value)) return '—';
-        return new Intl.NumberFormat('fr-FR', {
-            style: 'percent',
-            minimumFractionDigits: decimals,
-            maximumFractionDigits: decimals
-        }).format(value / 100);
+        return cachedFormat('percent', decimals).format(value / 100);
     },
 
     /**
@@ -1648,9 +1617,6 @@ export const Financial = {
      */
     formatNumber(value, decimals = 0) {
         if (value == null || isNaN(value)) return '—';
-        return new Intl.NumberFormat('fr-FR', {
-            minimumFractionDigits: decimals,
-            maximumFractionDigits: decimals
-        }).format(value);
+        return cachedFormat('decimal', decimals).format(value);
     }
 };
