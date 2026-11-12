@@ -973,79 +973,103 @@ function exportPdf() {
     if (!lastResult) return;
     const r = lastResult;
     const config = NATURE_CONFIG[currentNature];
+    const f = v => Financial.formatCurrency(v, 0);
+    const n0 = v => Financial.formatNumber(v, 0);
+    const pct = (v, d = 2) => Financial.formatPercent(v, d);
+    const ppy = Financial.getPeriodsPerYear(state.frequency || 'monthly');
 
     const sections = [
-        { type: 'title', text: `Analyse Immobiliere - ${config.label}` },
-        { type: 'separator' },
+        { type: 'title', text: 'Synthèse', subtitle: `${config.label}${state.propertyName ? ' · ' + state.propertyName : ''}` },
+        { type: 'kpicards', items: [
+            { label: 'Montant du prêt', value: f(state.loanAmount), sub: `${pct(state.annualRate)} sur ${state.durationMonths} mois` },
+            { label: 'LTV', value: fmtLtv(r.ltv), sub: 'prêt / valeur du bien' },
+            ...(r.ltc !== null ? [{ label: 'LTC', value: pct(r.ltc, 1), sub: 'prêt / coût du projet' }] : []),
+            ...(r.dscr !== null ? [{ label: 'DSCR', value: `${Financial.formatNumber(r.dscr, 2)}x`, sub: 'NOI / service de la dette' }] : []),
+            { label: 'Service de dette annuel', value: f(r.annualDebtService) },
+            ...(r.noi && config.showRevenue ? [{ label: 'NOI', value: f(r.noi), sub: 'revenu net d’exploitation' }] : []),
+            ...(r.valuation !== null ? [{ label: 'Valorisation', value: f(r.valuation) }] : []),
+            ...(r.taeg != null ? [{ label: 'TAEG', value: pct(r.taeg) }] : [])
+        ] },
+        { type: 'title', text: 'Le bien' },
         { type: 'keyvalue', items: [
-            { label: 'Bien', value: state.propertyName || 'N/A' },
+            { label: 'Bien', value: state.propertyName || 'Non renseigné' },
+            ...(state.propertyAddress ? [{ label: 'Adresse', value: state.propertyAddress }] : []),
             { label: 'Nature', value: config.label },
-            { label: 'Valeur du bien', value: Financial.formatCurrency(r.propertyValue) },
-            { label: 'Date d\'analyse', value: new Date().toLocaleDateString('fr-FR') }
-        ]},
-        { type: 'separator' }
+            { label: 'Valeur du bien', value: f(r.propertyValue) }
+        ] }
     ];
 
     if (config.showCosts && r.totalCost !== null) {
-        sections.push({ type: 'keyvalue', items: [
-            { label: 'Cout d\'acquisition', value: Financial.formatCurrency(state.acquisitionCost) },
-            { label: 'Travaux', value: Financial.formatCurrency(state.travauxCost) },
-            { label: 'Frais de notaire', value: Financial.formatCurrency(state.fraisNotaire) },
-            { label: 'Frais divers', value: Financial.formatCurrency(state.fraisDivers) },
-            { label: 'Cout total du projet', value: Financial.formatCurrency(r.totalCost) }
-        ]});
-        sections.push({ type: 'separator' });
+        sections.push({ type: 'title', text: 'Coût du projet', subtitle: 'Montants en €' });
+        sections.push({ type: 'table', headers: ['Poste', 'Montant'], rows: [
+            ['Acquisition', n0(state.acquisitionCost)],
+            ['Travaux', n0(state.travauxCost)],
+            ['Frais de notaire', n0(state.fraisNotaire)],
+            ['Frais divers', n0(state.fraisDivers)],
+            ['Total coût du projet', n0(r.totalCost)]
+        ] });
     }
 
+    sections.push({ type: 'title', text: 'Financement' });
     sections.push({ type: 'keyvalue', items: [
-        { label: 'Montant du pret', value: Financial.formatCurrency(state.loanAmount) },
-        { label: 'Taux', value: state.annualRate + ' %' },
-        { label: 'Duree', value: state.durationMonths + ' mois' },
-        { label: 'Mensualite', value: Financial.formatCurrency(r.monthlyPayment) },
-        { label: 'Total interets', value: Financial.formatCurrency(r.totalInterest) },
-        ...(r.taeg != null ? [{ label: 'TAEG', value: r.taeg.toFixed(2) + ' %' }] : [])
-    ]});
-    sections.push({ type: 'separator' });
-
-    const ratioItems = [{ label: 'LTV', value: fmtLtv(r.ltv) }];
-    if (r.ltc !== null) ratioItems.push({ label: 'LTC', value: r.ltc.toFixed(1) + ' %' });
-    if (r.dscr !== null) ratioItems.push({ label: 'DSCR', value: r.dscr.toFixed(2) + 'x' });
-    if (r.noi && config.showRevenue) ratioItems.push({ label: 'NOI', value: Financial.formatCurrency(r.noi) });
-    if (r.valuation !== null) ratioItems.push({ label: 'Valorisation', value: Financial.formatCurrency(r.valuation) });
-    ratioItems.push({ label: 'Service de dette annuel', value: Financial.formatCurrency(r.annualDebtService) });
-    sections.push({ type: 'keyvalue', items: ratioItems });
+        { label: 'Montant du prêt', value: f(state.loanAmount) },
+        { label: 'Taux', value: pct(state.annualRate) },
+        { label: 'Durée', value: `${state.durationMonths} mois` },
+        { label: Financial.getPaymentLabel(state.frequency || 'monthly'), value: f(r.monthlyPayment) },
+        { label: 'Total des intérêts', value: f(r.totalInterest) },
+        ...(state.amortType === 'balloon' ? [{ label: 'Ballon final', value: pct(state.balloonPct, 0) }] : [])
+    ] });
 
     if (r.tva) {
-        sections.push({ type: 'separator' });
+        sections.push({ type: 'title', text: 'Crédit relais de TVA', subtitle: 'Hors DSCR : remboursé par la récupération de TVA' });
         sections.push({ type: 'keyvalue', items: [
-            { label: 'TVA prefinancee', value: Financial.formatCurrency(r.tva.amount) },
-            { label: 'Duree du relais', value: r.tva.duration + ' mois' },
-            { label: 'Cout de portage TVA', value: Financial.formatCurrency(r.tva.carryingCost) + ' (' + r.tva.carryingCostPct.toFixed(2) + ' %)' },
-            { label: 'Financement total', value: Financial.formatCurrency(r.totalFinancing) }
-        ]});
+            { label: 'TVA préfinancée', value: f(r.tva.amount) },
+            { label: 'Durée du relais', value: `${r.tva.duration} mois` },
+            { label: 'Coût de portage', value: `${f(r.tva.carryingCost)} (${pct(r.tva.carryingCostPct)})` },
+            { label: 'Financement total', value: f(r.totalFinancing) }
+        ] });
         if (r.financingPlan) {
             const p = r.financingPlan;
-            sections.push({ type: 'table', headers: ['Plan de financement', 'Montant'], rows: [
-                ['Cout du projet (hors TVA)', Financial.formatCurrency(p.coutHT)],
-                ['TVA prefinancee', Financial.formatCurrency(p.tva)],
-                ['Cout total (TTC)', Financial.formatCurrency(p.coutTTC)],
-                ['Credit principal', Financial.formatCurrency(p.creditPrincipal)],
-                ['Credit relais TVA', Financial.formatCurrency(p.relaisTVA)],
-                ['Fonds propres', Financial.formatCurrency(p.fondsPropres)]
-            ]});
+            sections.push({ type: 'columns',
+                left: { title: 'Emplois', headers: ['Emploi', 'Montant (€)'], rows: [['Coût du projet (hors TVA)', n0(p.coutHT)], ['TVA préfinancée', n0(p.tva)], ['Total', n0(p.coutTTC)]], totalFill: 'navy' },
+                right: { title: 'Ressources', headers: ['Ressource', 'Montant (€)'], rows: [['Crédit principal', n0(p.creditPrincipal)], ['Crédit relais TVA', n0(p.relaisTVA)], ['Fonds propres', n0(p.fondsPropres)], ['Total', n0(p.creditPrincipal + p.relaisTVA + p.fondsPropres)]], totalFill: 'navy' } });
         }
     }
 
     if (r.sensitivity.length > 0) {
-        sections.push({ type: 'separator' });
-        sections.push({ type: 'table', headers: ['Taux capi', 'Valorisation', 'LTV'], rows: r.sensitivity.map(s => [s.capRate.toFixed(1) + ' %', Financial.formatCurrency(s.valuation), s.ltv.toFixed(1) + ' %']) });
+        sections.push({ type: 'title', text: 'Sensibilité de la valorisation au taux de capitalisation' });
+        sections.push({ type: 'table', headers: ['Taux de capitalisation', 'Valorisation (€)', 'LTV'], rows: r.sensitivity.map(s => [pct(s.capRate, 1), n0(s.valuation), pct(s.ltv, 1)]) });
     }
 
-    sections.push({ type: 'separator' });
-    const schedRows = r.schedule.slice(0, 60);
-    sections.push({ type: 'table', headers: ['Periode', 'Mensualite', 'Capital', 'Interets', 'CRD'], rows: schedRows.map((row, i) => [String(i + 1), Financial.formatCurrency(row.payment), Financial.formatCurrency(row.principal), Financial.formatCurrency(row.interest), Financial.formatCurrency(row.balance)]) });
+    // Ratios dans le temps : ce que regarde la banque au-delà de l'année 1
+    if (r.ratiosByYear?.length && config.showRevenue) {
+        const x = v => (v == null ? '\u2014' : `${Financial.formatNumber(v, 2)}x`);
+        const yearsShown = r.ratiosByYear.filter((y, i) => i < 10 || i === r.ratiosByYear.length - 1);
+        sections.push({ type: 'title', text: 'Ratios dans le temps', subtitle: 'Montants en \u20ac \u00b7 NOI et valeur projetés aux taux de croissance saisis' });
+        sections.push({ type: 'table', headers: ['Année', 'NOI', 'Service de la dette', 'DSCR', 'ICR', 'CRD', 'LTV'],
+            rows: yearsShown.map(y => [`Année ${y.year}`, n0(y.noi), n0(y.service), x(y.dscr), x(y.icr), n0(y.crd), y.ltv == null ? '\u2014' : pct(y.ltv, 1)]) });
+    }
 
-    Export.toPdf(`Analyse Immobiliere - ${config.label}`, sections, `immobilier_${currentNature}`);
+    // Amortissement annuel (l'échéancier mensuel n'apporte rien sur 20 ans)
+    if (r.schedule.length) {
+        const rows = [];
+        const sum = (list, key) => list.reduce((s, row) => s + (row[key] || 0), 0);
+        for (let y = 0; y * ppy < r.schedule.length; y++) {
+            const slice = r.schedule.slice(y * ppy, (y + 1) * ppy);
+            rows.push([`Année ${y + 1}`, n0(sum(slice, 'payment')), n0(sum(slice, 'principal')), n0(sum(slice, 'interest')), n0(slice[slice.length - 1].balance)]);
+        }
+        rows.push(['Total', n0(sum(r.schedule, 'payment')), n0(sum(r.schedule, 'principal')), n0(sum(r.schedule, 'interest')), '']);
+        sections.push({ type: 'title', text: 'Tableau d’amortissement annuel', subtitle: 'Montants en €' });
+        sections.push({ type: 'table', headers: ['Année', 'Échéances', 'Capital', 'Intérêts', 'CRD fin d’année'], rows });
+    }
+
+    Export.toPdf('Analyse immobilière', sections, `immobilier_${currentNature}`, {
+        cover: { kind: 'Analyse immobilière', subtitle: `${config.label}${state.propertyName ? ' — ' + state.propertyName : ''}`, items: [
+            { label: 'Montant du prêt', value: f(state.loanAmount) },
+            { label: 'LTV', value: fmtLtv(r.ltv) },
+            ...(r.dscr !== null ? [{ label: 'DSCR', value: `${Financial.formatNumber(r.dscr, 2)}x` }] : [])
+        ] }
+    });
 }
 
 function exportExcel() {

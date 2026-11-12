@@ -67,6 +67,7 @@ export const RESULT_LABELS = {
     totalCost: 'Co\u00fbt total',
     totalPayment: 'Total rembours\u00e9',
     taeg: 'TAEG',
+    teg: 'TEG (proportionnel)',
     loanCount: 'Pr\u00eats compar\u00e9s',
     bestLoan: 'Pr\u00eat le moins co\u00fbteux',
     worstRate: 'Pire sc\u00e9nario \u2014 taux',
