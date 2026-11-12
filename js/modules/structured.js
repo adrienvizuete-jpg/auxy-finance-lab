@@ -494,48 +494,94 @@ function shareStructured() {
 }
 
 // ── Export Excel ──
-/** PDF du plan de financement : emplois, ressources, tranches, autres financements, indicateurs. */
+/**
+ * PDF du plan de financement, sur le modèle des mémos Emplois / Ressources :
+ * Emplois et Ressources côte à côte, position au closing, ratios, conditions
+ * des financements, puis service de la dette par ligne et par année.
+ */
 function exportPdf() {
     if (!lastResult) recalculate();
     const c = lastResult.results;
     const k = v => fmtK(v);
-    const pct = v => `${Financial.formatNumber(v, 1)} %`;
+    const pct = (v, d = 1) => `${Financial.formatNumber(v, d)} %`;
+    const x = v => (ebitda > 0 ? fmtRatio(v / ebitda) : 'n.s.');
+    const share = v => (c.totalEmplois > 0 ? pct(v / c.totalEmplois * 100, 0) : '');
     const client = Dossier.get()?.name || '';
+    const debts = structureDebts(c);
+    const market = marketForEngine();
+
+    // ── Emplois | Ressources ──
+    const emploisRows = [...emplois.map(e => [e.label, k(e.amount), share(e.amount)]), ['Total', k(c.totalEmplois), '100 %']];
+    const ressRows = [];
+    const bold = [];
+    ressRows.push(['Fonds propres', k(Math.min(fondsPropres, c.totalEmplois)), '', pct(c.pctFP, 0)]);
+    autresFin.filter(a => (a.amount || 0) > 0).forEach(a => ressRows.push([a.label || AUTRE_TYPES[a.type] || 'Financement', k(a.amount), x(a.amount), share(a.amount)]));
+    bold.push(ressRows.length);
+    ressRows.push(['Dette senior', k(c.detteSenior), x(c.detteSenior), pct(c.pctSenior, 0)]);
+    c.tranchesDetail.forEach(t => ressRows.push([`   Tranche ${t.label} — ${t.duration} ans`, k(t.amount), '', share(t.amount)]));
+    ressRows.push(['Total', k(c.totalEmplois), '', '100 %']);
+
+    // ── Service de la dette par ligne et par année (moteur Covenants) ──
+    const years = Math.min(10, Math.max(1, Math.ceil(Math.max(...debts.map(d => d.durationYears), 1))));
+    const profiles = debts.map(d => ({ label: d.label, rows: CovenantEngine.debtAnnualProfile(d, years, market) }));
+    const yearHead = Array.from({ length: years }, (_, i) => `A${i + 1}`);
+    const byYear = field => {
+        const rows = profiles.map(p => [p.label, ...p.rows.map(r => k(r[field])), k(p.rows.reduce((s, r) => s + r[field], 0))]);
+        const totals = Array.from({ length: years }, (_, i) => profiles.reduce((s, p) => s + (p.rows[i]?.[field] || 0), 0));
+        rows.push(['Total', ...totals.map(k), k(totals.reduce((s, v) => s + v, 0))]);
+        return rows;
+    };
+    const serviceA1 = profiles.reduce((s, p) => s + (p.rows[0]?.service || 0), 0);
+    const servicePeak = Array.from({ length: years }, (_, i) => profiles.reduce((s, p) => s + (p.rows[i]?.service || 0), 0))
+        .reduce((m, v, i) => (v > m.v ? { v, i } : m), { v: 0, i: 0 });
+
     const sections = [
+        { type: 'title', text: 'Analyse Emplois / Ressources', subtitle: `Montants en k€ · EBITDA de référence ${k(ebitda)} k€` },
+        { type: 'columns',
+            left: { headers: ['Emplois', 'Montant (k€)', '%'], rows: emploisRows, totalFill: 'navy' },
+            right: { headers: ['Ressources', 'Montant (k€)', 'x EBITDA', '%'], rows: ressRows, totalFill: 'navy', boldRows: bold } },
+        ...(c.excesFP > 0 ? [{ type: 'note', text: `Les fonds propres dépassent le besoin de ${k(c.excesFP)} k€ : les ressources sont plafonnées aux emplois.` }] : []),
+        { type: 'title', text: 'Position au closing et ratios' },
         { type: 'kpicards', items: [
-            { label: 'Total emplois (k€)', value: k(c.totalEmplois) },
-            { label: 'Dette senior (k€)', value: k(c.detteSenior) },
-            { label: c.dfn < 0 ? 'Trésorerie nette (k€)' : 'Dette financière nette (k€)', value: k(Math.abs(c.dfn)) },
-            { label: 'Levier net (DFN / EBITDA)', value: c.ratioLevier == null ? 'n.s.' : fmtRatio(c.ratioLevier) },
-            { label: 'VE retenue (k€)', value: k(c.veRetenue) },
-            { label: 'EBITDA LTM (k€)', value: k(ebitda) }
-        ] },
-        { type: 'title', text: 'Emplois' },
-        { type: 'table', headers: ['Emploi', 'Montant (k€)'], rows: [...emplois.map(e => [e.label, k(e.amount)]), ['Total emplois', k(c.totalEmplois)]] },
-        { type: 'title', text: 'Ressources' },
-        { type: 'table', headers: ['Ressource', 'Montant (k€)', '%'], rows: [
-            ['Fonds propres', k(fondsPropres), pct(c.pctFP)],
-            ['Autres financements', k(c.totalAutres), pct(c.pctAutres)],
-            ['Dette senior', k(c.detteSenior), pct(c.pctSenior)],
-            ['Total ressources', k(c.totalEmplois), pct(100)]
-        ] },
-        { type: 'title', text: 'Tranches de dette senior' },
-        { type: 'table', headers: ['Tranche', '% senior', 'Durée', 'Taux / marge', 'Amortissement', 'Fréquence', 'Montant (k€)', 'Annuité (k€)'],
-            rows: c.tranchesDetail.map(t => [`Tranche ${t.label}`, pct(t.pct), `${t.duration} ans`, `${pct(t.taux || 0)}${t.rateType === 'floating' ? ' + Euribor' : ''}`, AMORT_LABELS[t.amortType] || 'Constant', FREQ_LABELS[t.frequency] || 'Mensuel', k(t.amount),
-                k(computeAnnuity(t.amount, t.taux || 0, t.duration || 1, t.amortType || 'constant', t.frequency || 'mensuel', t))]) }
+            { label: 'Dette financière au closing', value: `${k(c.detteFinClosing)} k€`, sub: `dont non refinancée ${k(c.totalDetteNonRef)} k€` },
+            { label: c.dfn < 0 ? 'Trésorerie nette' : 'Dette financière nette', value: `${k(Math.abs(c.dfn))} k€`, sub: `trésorerie au closing ${k(tresorerieMin)} k€` },
+            { label: 'Levier brut', value: x(c.detteFinClosing), sub: 'dette financière / EBITDA' },
+            { label: 'Levier net', value: c.ratioLevier == null ? 'n.s.' : fmtRatio(c.ratioLevier), sub: 'dette nette / EBITDA' },
+            { label: 'Service de la dette année 1', value: `${k(serviceA1)} k€`, sub: 'capital + intérêts' },
+            { label: 'Service de la dette maximal', value: `${k(servicePeak.v)} k€`, sub: `année ${servicePeak.i + 1}` },
+            { label: 'EBITDA / service année 1', value: serviceA1 > 0 ? fmtRatio(ebitda / serviceA1) : 'n.s.', sub: 'avant IS, capex et BFR' },
+            { label: 'VE retenue', value: `${k(c.veRetenue)} k€`, sub: ebitda > 0 ? `${fmtRatio(c.veRetenue / ebitda)} l’EBITDA` : '' }
+        ] }
     ];
-    if (autresFin.length) {
-        sections.push({ type: 'title', text: 'Autres financements' });
-        sections.push({ type: 'table', headers: ['Libellé', 'Nature', 'Montant (k€)', 'Taux / marge', 'Durée', 'Différé', 'Amortissement', 'Annuité A1 (k€)'],
-            rows: autresFin.map(a => [a.label, AUTRE_TYPES[a.type] || '', k(a.amount || 0), pct(a.taux || 0), `${a.duration || 1} ans`, a.deferral ? `${a.deferral} an${a.deferral > 1 ? 's' : ''}` : '—', AMORT_LABELS[a.amortType] || 'In Fine',
-                k(computeAnnuity(a.amount || 0, a.taux || 0, a.duration || 1, a.amortType || 'infine', a.frequency || 'annuel', a))]) });
+    if (lastSizing) {
+        sections.push({ type: 'note', title: 'Capacité d’endettement', text: `Dette senior maximale : ${k(lastSizing.max)} k€ (contrainte liante : ${({ dscr: 'DSCR', leverage: 'levier', equity: 'fonds propres minimum' })[lastSizing.binding] || lastSizing.binding}). Maximum par le levier : ${k(lastSizing.byLeverage)} k€ ; maximum par le DSCR : ${k(lastSizing.byDscr)} k€.` });
     }
-    if (detteNonRef.length) {
-        sections.push({ type: 'title', text: 'Dette non refinancée' });
-        sections.push({ type: 'table', headers: ['Dette', 'Montant (k€)'], rows: [...detteNonRef.map(d => [d.label, k(d.amount)]), ['Sous-total', k(c.totalDetteNonRef)]] });
+
+    sections.push({ type: 'title', text: 'Conditions des financements', subtitle: 'Montants en k€' });
+    sections.push({ type: 'table', headers: ['Ligne', 'Montant', 'Taux / marge', 'Durée', 'Différé', 'Amortissement', 'Périodicité', 'Annuité A1'],
+        rows: [
+            ...c.tranchesDetail.map(t => [`Senior ${t.label}`, k(t.amount), `${pct(t.taux || 0, 2)}${t.rateType === 'floating' ? ' + Euribor' : ''}`, `${t.duration} ans`, t.deferral ? `${t.deferral} an${t.deferral > 1 ? 's' : ''}` : '—', AMORT_LABELS[t.amortType] || 'Constant', FREQ_LABELS[t.frequency] || 'Mensuel',
+                k(computeAnnuity(t.amount, t.taux || 0, t.duration || 1, t.amortType || 'constant', t.frequency || 'mensuel', t))]),
+            ...autresFin.filter(a => (a.amount || 0) > 0).map(a => [a.label || AUTRE_TYPES[a.type] || 'Financement', k(a.amount), `${pct(a.taux || 0, 2)}${a.rateType === 'floating' ? ' + Euribor' : ''}`, `${a.duration || 1} ans`, a.deferral ? `${a.deferral} an${a.deferral > 1 ? 's' : ''}` : '—', AMORT_LABELS[a.amortType] || 'In Fine', FREQ_LABELS[a.frequency] || 'Annuel',
+                k(computeAnnuity(a.amount || 0, a.taux || 0, a.duration || 1, a.amortType || 'infine', a.frequency || 'annuel', a))])
+        ] });
+
+    if (profiles.length) {
+        sections.push({ type: 'title', text: 'Amortissement du capital', subtitle: 'k€ par année depuis le closing' });
+        sections.push({ type: 'table', headers: ['Ligne \\ Année', ...yearHead, 'Total'], rows: byYear('principal'), fontSize: 8 });
+        sections.push({ type: 'title', text: 'Intérêts', subtitle: `k€ par année${debts.some(d => d.rateType === 'floating') ? ' · taux variable : Euribor 3M du jour maintenu, floor à 0 %' : ''}` });
+        sections.push({ type: 'table', headers: ['Ligne \\ Année', ...yearHead, 'Total'], rows: byYear('interest'), fontSize: 8 });
+        sections.push({ type: 'title', text: 'Service de la dette', subtitle: 'Capital + intérêts, k€ par année' });
+        sections.push({ type: 'table', headers: ['Ligne \\ Année', ...yearHead, 'Total'], rows: byYear('service'), fontSize: 8,
+            note: years < Math.ceil(Math.max(...debts.map(d => d.durationYears))) ? `Tableau limité aux ${years} premières années.` : '' });
     }
-    Export.toPdf(`Plan de financement${client ? ' — ' + client : ''}`, sections, 'financement_structure', {
-        cover: { subtitle: client || 'Emplois - Ressources', items: [
+    if (detteNonRef.some(d => d.amount > 0)) {
+        sections.push({ type: 'title', text: 'Dette non refinancée', subtitle: 'Conservée au closing, k€' });
+        sections.push({ type: 'table', headers: ['Dette', 'Montant'], rows: [...detteNonRef.map(d => [d.label, k(d.amount)]), ['Total', k(c.totalDetteNonRef)]] });
+    }
+
+    Export.toPdf(`Financement structuré${client ? ' — ' + client : ''}`, sections, 'financement_structure', {
+        cover: { kind: 'Financement structuré', client, subtitle: 'Analyse Emplois / Ressources', items: [
             { label: 'Total emplois', value: `${k(c.totalEmplois)} k€` },
             { label: 'Dette senior', value: `${k(c.detteSenior)} k€` },
             { label: 'Levier net', value: c.ratioLevier == null ? 'n.s.' : fmtRatio(c.ratioLevier) }

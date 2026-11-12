@@ -560,65 +560,57 @@ export const StressTestModule = {
         if (!d) return;
 
         const fmtCur = v => Financial.formatCurrency(v, 0);
-        const fmtCur2 = v => Financial.formatCurrency(v);
+        const n0 = v => Financial.formatNumber(v, 0);
         const baseSim = d.baseSim;
-
-        const sections = [
-            { type: 'title', text: 'Stress Test \u2014 Analyse de Sensibilite' },
-            { type: 'separator' },
-            { type: 'keyvalue', items: [
-                { label: 'Montant emprunte', value: fmtCur(d.principal) },
-                { label: 'Taux de base', value: d.baseRate.toFixed(2) + ' %' },
-                { label: 'Duree de base', value: d.baseDuration + ' mois (' + (d.baseDuration / 12).toFixed(1) + ' ans)' },
-                { label: 'Frequence d\'amortissement', value: d.freqLabel },
-                { label: 'Assurance mensuelle', value: fmtCur2(d.insurance) },
-                { label: 'Plage de taux testee', value: (d.baseRate + d.rateRange[0]).toFixed(2) + '% a ' + (d.baseRate + d.rateRange[d.rateRange.length - 1]).toFixed(2) + '%' },
-                { label: 'Date d\'analyse', value: new Date().toLocaleDateString('fr-FR') }
-            ]},
-            { type: 'separator' },
-            { type: 'title', text: 'Indicateurs Cles' },
-            { type: 'keyvalue', items: [
-                { label: 'Echeance de base (' + d.freqLabel + ')', value: fmtCur2(baseSim.periodicPayment) },
-                { label: 'Cout total de base', value: fmtCur(baseSim.totalCost) },
-                { label: 'Cout total min', value: fmtCur(Math.min(...d.allCells.map(c => c.totalCost))) },
-                { label: 'Cout total max', value: fmtCur(Math.max(...d.allCells.map(c => c.totalCost))) },
-                { label: 'Pire scenario', value: `${d.worstCell.rate.toFixed(2)}% / ${d.worstCell.duration} mois = ${fmtCur(d.worstCell.totalCost)}` }
-            ]},
-            { type: 'separator' }
-        ];
-
-        // Matrice Mensualit\u00e9
-        const buildMatrixSection = (title, valueKey) => {
-            const headers = ['Taux \\ Duree', ...d.durationRange.map(dd => (d.baseDuration + dd) + ' mois')];
-            const rows = d.results.map((row, ri) => [
-                (d.baseRate + d.rateRange[ri]).toFixed(2) + '%',
-                ...row.map(cell => cell ? Financial.formatCurrency(cell[valueKey], valueKey === 'periodicPayment' ? undefined : 0) : '\u2014')
-            ]);
-            sections.push({ type: 'title', text: title });
-            sections.push({ type: 'table', headers, rows });
-        };
-
-        buildMatrixSection('Matrice \u2014 Echeance (' + d.freqLabel + ')', 'periodicPayment');
-        buildMatrixSection('Matrice \u2014 Cout Total', 'totalCost');
-
-        // Analyse textuelle
-        sections.push({ type: 'separator' });
-        sections.push({ type: 'title', text: 'Analyse' });
-
         const baseP = baseSim.periodicPayment;
         const worstP = Math.max(...d.allCells.map(c => c.periodicPayment));
         const bestP = Math.min(...d.allCells.map(c => c.periodicPayment));
+        const minCost = Math.min(...d.allCells.map(c => c.totalCost));
         const surchargeMax = d.worstCell.totalCost - baseSim.totalCost;
+        const rateMin = d.baseRate + d.rateRange[0];
+        const rateMax = d.baseRate + d.rateRange[d.rateRange.length - 1];
+        const baseRow = d.rateRange.indexOf(0);
 
-        const analysisItems = [
-            { label: 'Variation mensualite', value: `De ${fmtCur2(bestP)} a ${fmtCur2(worstP)}, soit un ecart de ${fmtCur(worstP - bestP)} (${((worstP - bestP) / baseP * 100).toFixed(1)}%)` },
-            { label: 'Surcharge maximale', value: `Le pire scenario (${d.worstCell.rate.toFixed(2)}% sur ${d.worstCell.duration} mois) coute ${fmtCur(surchargeMax)} de plus que le scenario de base` },
-            { label: 'Sensibilite au taux', value: `Une hausse de 0.50 pt entraine environ ${fmtCur(Math.abs(this._sensibilityPerHalfPoint(d)))} de variation mensuelle` }
+        const sections = [
+            { type: 'title', text: 'Synthèse', subtitle: `Prêt de ${fmtCur(d.principal)} à ${Fmt.pct(d.baseRate, 2)} sur ${d.baseDuration} mois` },
+            { type: 'kpicards', items: [
+                { label: `Échéance de base (${String(d.freqLabel).toLowerCase()})`, value: fmtCur(baseP) },
+                { label: 'Coût total de base', value: fmtCur(baseSim.totalCost) },
+                { label: 'Coût total le plus bas', value: fmtCur(minCost) },
+                { label: 'Pire scénario', value: fmtCur(d.worstCell.totalCost), sub: `${Fmt.pct(d.worstCell.rate, 2)} sur ${d.worstCell.duration} mois` }
+            ] },
+            { type: 'title', text: 'Hypothèses' },
+            { type: 'keyvalue', items: [
+                { label: 'Montant emprunté', value: fmtCur(d.principal) },
+                { label: 'Taux de base', value: Fmt.pct(d.baseRate, 2) },
+                { label: 'Durée de base', value: `${d.baseDuration} mois (${Fmt.num(d.baseDuration / 12, 1)} ans)` },
+                { label: 'Périodicité', value: d.freqLabel },
+                { label: 'Assurance mensuelle', value: fmtCur(d.insurance) },
+                { label: 'Plage de taux testée', value: `${Fmt.pct(rateMin, 2)} à ${Fmt.pct(rateMax, 2)}` }
+            ] }
         ];
 
-        sections.push({ type: 'keyvalue', items: analysisItems });
+        const buildMatrixSection = (title, subtitle, valueKey) => {
+            const headers = ['Taux \\ Durée', ...d.durationRange.map(dd => `${d.baseDuration + dd} mois`)];
+            const rows = d.results.map((row, ri) => [Fmt.pct(d.baseRate + d.rateRange[ri], 2), ...row.map(cell => (cell ? n0(cell[valueKey]) : '—'))]);
+            sections.push({ type: 'title', text: title, subtitle });
+            sections.push({ type: 'table', headers, rows, totalRows: [], highlightRows: baseRow >= 0 ? [baseRow] : [], note: baseRow >= 0 ? 'Ligne en surbrillance : taux de base.' : '' });
+        };
+        buildMatrixSection(`Échéance ${String(d.freqLabel).toLowerCase()}`, 'En €, selon le taux et la durée', 'periodicPayment');
+        buildMatrixSection('Coût total du crédit', 'En €, selon le taux et la durée', 'totalCost');
 
-        Export.toPdf('Stress Test \u2014 Analyse de Sensibilite', sections, 'stress_test');
+        sections.push({ type: 'note', title: 'Lecture', text:
+            `L’échéance varie de ${fmtCur(bestP)} à ${fmtCur(worstP)} sur la plage testée, soit un écart de ${fmtCur(worstP - bestP)} (${Fmt.pct((worstP - bestP) / baseP * 100, 1)} de l’échéance de base). `
+            + `Le pire scénario (${Fmt.pct(d.worstCell.rate, 2)} sur ${d.worstCell.duration} mois) coûte ${fmtCur(surchargeMax)} de plus que le scénario de base. `
+            + `Une hausse de 0,50 point du taux fait varier l’échéance d’environ ${fmtCur(Math.abs(this._sensibilityPerHalfPoint(d)))}.` });
+
+        Export.toPdf('Sensibilité taux × durée', sections, 'sensibilite', {
+            cover: { kind: 'Analyse de sensibilité', subtitle: 'Échéance et coût du crédit selon le taux et la durée', items: [
+                { label: 'Montant', value: fmtCur(d.principal) },
+                { label: 'Taux de base', value: Fmt.pct(d.baseRate, 2) },
+                { label: 'Durée de base', value: `${d.baseDuration} mois` }
+            ] }
+        });
     },
 
     _sensibilityPerHalfPoint(d) {

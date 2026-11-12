@@ -48,7 +48,7 @@ let currentPage = 'dashboard';
 let renderedPage = '';
 /** @type {(() => void) | undefined} */
 let refreshContext;
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 
 // =============================================
 // ROUTER

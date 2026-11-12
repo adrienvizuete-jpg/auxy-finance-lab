@@ -2017,73 +2017,120 @@ function resetForm() {
 function exportPdf() {
     if (!lastResult) return;
     const typeLabel = CREDIT_TYPES.find(t => t.id === currentType)?.label || currentType;
-    const sections = [
-        { type: 'title', text: `Simulation - ${typeLabel}` },
-        { type: 'separator' },
-        { type: 'keyvalue', items: Object.entries(lastResult.params).filter(([k]) => {
-            const p = lastResult.params;
-            if (k === 'insuranceMonthly' && p.insuranceRate > 0) return false;
-            if ((k === 'insuranceRate' || k === 'insuranceMode') && (!p.insuranceRate || p.insuranceRate === 0)) return false;
-            return true;
-        }).map(([k, v]) => ({
-            label: t(k, PARAM_LABELS),
-            value: formatValue(k, v)
-        })) },
-        { type: 'separator' }
-    ];
+    const p = lastResult.params;
+    const r = lastResult.results || {};
+    const sched = Array.isArray(r.schedule) ? r.schedule : [];
+    const freq = r.frequency || p.frequency || 'monthly';
+    const ppy = Financial.getPeriodsPerYear(freq);
+    const f0 = v => Financial.formatCurrency(v, 0);
+    const n0 = v => Financial.formatNumber(v, 0);
+    const num = v => typeof v === 'number' && isFinite(v);
 
-    // Add results summary
-    if (lastResult.results) {
-        const resultItems = Object.entries(lastResult.results)
-            .filter(([k, v]) => typeof v !== 'object' && k !== 'schedule')
-            .map(([k, v]) => ({
-                label: t(k, RESULT_LABELS),
-                value: formatValue(k, v)
-            }));
-        if (resultItems.length > 0) {
-            sections.push({ type: 'title', text: 'Résultats' });
-            sections.push({ type: 'keyvalue', items: resultItems });
-            sections.push({ type: 'separator' });
-        }
+    // ── Synthèse : les chiffres qu'on lit en premier ──
+    const payment = r.periodicPayment ?? r.firstPayment ?? r.monthlyPayment;
+    const kpis = [
+        num(payment) && { label: Financial.getPaymentLabel(freq), value: f0(payment), sub: num(r.deferralPayment) && r.deferralPayment > 0 ? `${f0(r.deferralPayment)} pendant le différé` : '' },
+        num(r.totalInterest) && { label: 'Total des intérêts', value: f0(r.totalInterest) },
+        num(r.totalCost) && { label: 'Coût total du crédit', value: f0(r.totalCost), sub: 'intérêts, assurance et frais' },
+        num(r.teg) && { label: 'TEG (proportionnel)', value: Financial.formatPercent(r.teg) },
+        num(r.taeg) && { label: 'TAEG (actuariel)', value: Financial.formatPercent(r.taeg) },
+        num(r.totalPayment) && { label: 'Total remboursé', value: f0(r.totalPayment) }
+    ].filter(Boolean);
+    const shown = new Set(['periodicPayment', 'firstPayment', 'totalInterest', 'totalCost', 'teg', 'taeg', 'totalPayment']);
+    // Cofinancement Bpifrance + banque : la synthèse porte sur l'ensemble des deux prêts
+    if (r.cofinancement) {
+        kpis.unshift(
+            { label: 'Financement total', value: f0(r.totalPrincipal), sub: `Bpifrance ${n0(r.bpiShare)} %` },
+            { label: 'Service de dette année 1', value: f0(r.firstYearService), sub: 'pendant le différé Bpifrance' },
+            { label: 'Service de dette maximal', value: f0(r.peakService), sub: `année ${r.peakYear}` }
+        );
+        ['totalPrincipal', 'bpiShare', 'firstYearService', 'peakService', 'peakYear'].forEach(k => shown.add(k));
+    }
+
+    const sections = [];
+    if (kpis.length) {
+        sections.push({ type: 'title', text: 'Synthèse', subtitle: typeLabel });
+        sections.push({ type: 'kpicards', items: kpis });
+    }
+    if (r.cofinancement && r.loans) {
+        const pay = l => l.periodicPayment ?? l.firstPayment ?? 0;
+        sections.push({ type: 'title', text: 'Les deux prêts', subtitle: 'Montants en \u20ac' });
+        sections.push({ type: 'table', headers: ['Prêt', 'Montant', 'Taux', 'Durée', 'Différé', 'Échéance après différé', 'Intérêts', 'TEG'], rows: [
+            ['Bpifrance', n0(p.principal), Financial.formatPercent(p.annualRate), `${p.durationMonths / 12} ans`, `${p.deferralMonths / 12} an${p.deferralMonths > 12 ? 's' : ''}`, n0(pay(r.loans.bpi)), n0(r.loans.bpi.totalInterest), Financial.formatPercent(r.loans.bpi.teg)],
+            ['Banque', n0(p.bankAmount), Financial.formatPercent(p.bankRate), `${p.bankDurationMonths / 12} ans`, p.bankDeferralMonths ? `${p.bankDeferralMonths} mois` : '\u2014', n0(pay(r.loans.bank)), n0(r.loans.bank.totalInterest), Financial.formatPercent(r.loans.bank.teg)],
+            ['Total', n0(r.totalPrincipal), Financial.formatPercent(r.weightedRate), '', '', '', n0(r.totalInterest), Financial.formatPercent(r.teg)]
+        ] });
+    }
+    sections.push({ type: 'title', text: 'Hypothèses' });
+    sections.push({ type: 'keyvalue', items: Object.entries(p).filter(([k, v]) => {
+        if (v == null || (typeof v === 'object' && !Array.isArray(v))) return false;
+        if (k === 'insuranceMonthly' && (p.insuranceRate > 0 || !v)) return false;
+        if ((k === 'insuranceRate' || k === 'insuranceMode') && !(p.insuranceRate > 0)) return false;
+        return true;
+    }).map(([k, v]) => ({ label: t(k, PARAM_LABELS).replace(/\s*\((€|%|mois)\)$/, ''), value: formatValue(k, v) })) });
+
+    // Autres résultats : seulement ceux qui ont un libellé, sans répéter hypothèses ni synthèse
+    const others = Object.entries(r).filter(([k, v]) => typeof v !== 'object' && !shown.has(k) && !(k in p) && RESULT_LABELS[k]
+        && !(k === 'monthlyPayment' && num(payment) && Math.abs(v - payment) < 0.005)
+        && !(k === 'monthlyPaymentExInsurance' && !(r.totalInsurance > 0))
+        && !(k === 'totalInsurance' && !(v > 0)));
+    if (others.length) {
+        sections.push({ type: 'title', text: 'Résultats détaillés' });
+        sections.push({ type: 'keyvalue', items: others.map(([k, v]) => ({ label: t(k, RESULT_LABELS), value: formatValue(k, v) })) });
     }
 
     // Graphiques affichés à l'écran (décomposition + CRD)
-    if (lastResult.results.schedule?.[0]?.principal !== undefined) {
-        sections.push({ type: 'chart', canvasId: 'chart-amort', title: 'Décomposition des échéances' });
-        sections.push({ type: 'chart', canvasId: 'chart-balance', title: 'Capital restant dû' });
+    const amortizing = sched[0]?.principal !== undefined;
+    if (amortizing) {
+        sections.push({ type: 'title', text: 'Décomposition des échéances', subtitle: 'Capital et intérêts par échéance' });
+        sections.push({ type: 'chart', canvasId: 'chart-amort', maxHeight: 78 });
+        sections.push({ type: 'title', text: 'Capital restant dû' });
+        sections.push({ type: 'chart', canvasId: 'chart-balance', maxHeight: 78 });
     }
 
-    if (lastResult.results.schedule) {
-        const sched = lastResult.results.schedule;
+    // ── Tableau d'amortissement annuel (l'échéancier complet passe en annexe) ──
+    const hasInsurance = sched.some(row => row.insurance > 0);
+    if (amortizing && sched.length > ppy) {
+        const rows = [];
+        const sum = (list, key) => list.reduce((s, row) => s + (row[key] || 0), 0);
+        for (let y = 0; y * ppy < sched.length; y++) {
+            const slice = sched.slice(y * ppy, (y + 1) * ppy);
+            rows.push([`Année ${y + 1}`, n0(sum(slice, 'payment')), n0(sum(slice, 'principal')), n0(sum(slice, 'interest')), ...(hasInsurance ? [n0(sum(slice, 'insurance'))] : []), n0(slice[slice.length - 1].balance)]);
+        }
+        rows.push(['Total', n0(sum(sched, 'payment')), n0(sum(sched, 'principal')), n0(sum(sched, 'interest')), ...(hasInsurance ? [n0(sum(sched, 'insurance'))] : []), '']);
+        sections.push({ type: 'title', text: 'Tableau d’amortissement annuel', subtitle: 'Montants en €' });
+        sections.push({ type: 'table', headers: ['Année', 'Échéances', 'Capital', 'Intérêts', ...(hasInsurance ? ['Assurance'] : []), 'CRD fin d’année'], rows });
+    }
+
+    if (sched.length) {
         const first = sched[0];
-        const keys = Object.keys(first).filter(k => k !== 'totalInterest' && k !== 'totalInsurance' && k !== 'totalCommitment' && k !== 'totalCashInterest' && k !== 'totalPikInterest');
+        const hidden = new Set(['totalInterest', 'totalInsurance', 'totalCommitment', 'totalCashInterest', 'totalPikInterest', 'deferred', ...(hasInsurance ? [] : ['insurance'])]);
+        const keys = Object.keys(first).filter(k => !hidden.has(k) && (typeof first[k] !== 'object' || first[k] === null));
         const scheduleLabels = {
-            period: 'Période', payment: 'Échéance', principal: 'Capital',
-            interest: 'Intérêts', insurance: 'Assurance', balance: 'CRD',
-            utilized: 'Utilisé', unused: 'Non utilisé', commitmentFee: 'Com. Engagement',
-            totalCost: 'Coût Total', cashPayment: 'Paiement Cash', pikInterest: 'Intérêts PIK',
-            capitalizedInterest: 'Int. Capitalisés'
+            period: 'N°', date: 'Date', payment: 'Échéance', principal: 'Capital',
+            interest: 'Intérêts', insurance: 'Assurance', balance: 'CRD', rate: 'Taux (%)', indexRate: 'Index (%)', hedgeFlow: 'Couverture',
+            utilized: 'Utilisé', unused: 'Non utilisé', commitmentFee: 'Com. engagement',
+            totalCost: 'Coût total', cashPayment: 'Paiement cash', pikInterest: 'Intérêts PIK',
+            capitalizedInterest: 'Int. capitalisés'
         };
-        sections.push({
-            type: 'table',
-            headers: keys.map(k => scheduleLabels[k] || k),
-            rows: sched.map(row => keys.map(k => typeof row[k] === 'number' ? Financial.formatNumber(row[k], 2) : row[k]))
-        });
+        const cell = (k, v) => (k === 'period' ? n0(v) : k === 'rate' || k === 'indexRate' ? Financial.formatNumber(v, 3) : typeof v === 'number' ? Financial.formatNumber(v, 2) : v == null ? '' : String(v));
+        sections.push({ type: 'pagebreak' });
+        sections.push({ type: 'title', text: 'Annexe — échéancier détaillé', subtitle: `${sched.length} échéances · montants en €` });
+        sections.push({ type: 'table', fontSize: 7.5, headers: keys.map(k => scheduleLabels[k] || t(k, RESULT_LABELS)), rows: sched.map(row => keys.map(k => cell(k, row[k]))) });
     }
 
-    const p = lastResult.params;
     const coverItems = [
-        p.principal != null && { label: 'Montant', value: Financial.formatCurrency(p.principal) },
-        p.assetValue != null && { label: 'Valeur du bien', value: Financial.formatCurrency(p.assetValue) },
-        p.creditLine != null && { label: 'Ligne de crédit', value: Financial.formatCurrency(p.creditLine) },
-        p.bridgeAmount != null && { label: 'Montant du relais', value: Financial.formatCurrency(p.bridgeAmount) },
-        p.annualRate != null && { label: 'Taux annuel', value: `${p.annualRate} %` },
-        p.cashRate != null && { label: 'Taux cash', value: `${p.cashRate} %` },
+        p.principal != null && { label: r.cofinancement ? 'Financement total' : 'Montant', value: f0(r.cofinancement ? r.totalPrincipal : p.principal) },
+        p.assetValue != null && { label: 'Valeur du bien', value: f0(p.assetValue) },
+        p.creditLine != null && { label: 'Ligne de crédit', value: f0(p.creditLine) },
+        p.bridgeAmount != null && { label: 'Montant du relais', value: f0(p.bridgeAmount) },
+        p.annualRate != null && { label: 'Taux annuel', value: Financial.formatPercent(p.annualRate) },
+        p.cashRate != null && { label: 'Taux cash', value: Financial.formatPercent(p.cashRate) },
         p.durationMonths != null && { label: 'Durée', value: `${p.durationMonths} mois` }
     ].filter(Boolean);
 
-    Export.toPdf(`Simulation ${typeLabel}`, sections, `simulation_${currentType}`, {
-        cover: { subtitle: 'Simulation de financement', items: coverItems }
+    Export.toPdf('Simulation de crédit', sections, `simulation_${currentType}`, {
+        cover: { kind: 'Simulation de crédit', subtitle: typeLabel, items: coverItems }
     });
 }
 
