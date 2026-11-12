@@ -148,3 +148,25 @@ describe('Covenants — in fine refinancé', () => {
         assert.ok(r.rows[4].dscr != null);
     });
 });
+
+describe('Covenants — différé d\'amortissement', () => {
+    test('prêt Bpifrance 7 ans dont 2 de différé : intérêts seuls 2 ans, puis amortissement', () => {
+        const d = { label: 'Bpifrance', amount: 1000, rate: 4, durationYears: 7, amortType: 'constant', frequency: 'quarterly', deferralMonths: 24 };
+        const p = CovenantEngine.debtAnnualProfile(d, 7);
+        near(p[0].principal, 0);
+        near(p[0].service, 40, 1e-6);
+        near(p[1].crd, 1000, 1e-6);
+        assert.ok(p[2].principal > 150, 'amortissement à partir de l\'année 3');
+        near(p[6].crd, 0, 1e-6);
+        // sans différé, le service de l'année 1 serait bien plus lourd : le DSCR ne doit plus l'ignorer
+        const flat = CovenantEngine.debtAnnualProfile({ ...d, deferralMonths: 0 }, 7);
+        assert.ok(flat[0].service > 4 * p[0].service);
+    });
+
+    test('différé sur une dette à taux variable (moteur générique)', () => {
+        const d = { label: 'V', amount: 1000, rate: 2, durationYears: 5, amortType: 'degressif', frequency: 'annual', rateType: 'floating', deferralMonths: 12 };
+        const p = CovenantEngine.debtAnnualProfile(d, 5, { indexPath: [2] });
+        near(p[0].principal, 0);
+        near(p[1].principal, 250, 1e-6);
+    });
+});

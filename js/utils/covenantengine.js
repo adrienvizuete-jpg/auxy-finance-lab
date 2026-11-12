@@ -33,6 +33,7 @@ import { LoanEngine } from './loanengine.js';
  * @property {number} [hedgePct] Part couverte par swap (% de l'encours), taux variable
  * @property {number[]} [customProfile] % du nominal amorti par année ('custom')
  * @property {number} [balloonPct] % remboursé à l'échéance ('balloon')
+ * @property {number} [deferralMonths] Différé d'amortissement (mois, intérêts payés)
  */
 
 /**
@@ -99,6 +100,7 @@ export const CovenantEngine = {
                 amortType: debt.amortType,
                 customProfile: debt.customProfile,
                 balloonPct: debt.balloonPct,
+                deferralMonths: debt.deferralMonths || 0,
                 rateType: floating ? 'floating' : 'fixed',
                 fixedRate: debt.rate,
                 margin: debt.rate,
@@ -113,7 +115,8 @@ export const CovenantEngine = {
             principal: debt.amount,
             annualRate: debt.rate,
             durationMonths: Math.max(1, Math.round(debt.durationYears * 12)),
-            frequency: debt.frequency
+            frequency: debt.frequency,
+            deferralMonths: debt.amortType === 'infine' ? 0 : (debt.deferralMonths || 0)
         };
         let result;
         if (debt.amortType === 'infine') result = Financial.inFine(params);

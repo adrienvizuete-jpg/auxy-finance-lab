@@ -101,6 +101,7 @@ function renderLoanRows() {
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${l.amount}" data-field="amount" step="10000" min="0" style="width:105px"></td>
             <td><input class="er-input" type="month" value="${monthValue(l.startYear, l.startMonth)}" data-field="start" style="width:130px"></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${l.durationMonths}" data-field="durationMonths" step="12" min="1" max="480" style="width:65px"></td>
+            <td style="text-align:right"><input class="er-input narrow" type="number" value="${l.deferralMonths || 0}" data-field="deferralMonths" step="12" min="0" max="60" style="width:60px" title="Différé d'amortissement, inclus dans la durée : intérêts seuls (prêt Bpifrance, PGE…)" ${l.amortType === 'infine' ? 'disabled' : ''}></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${l.rate}" data-field="rate" step="0.05" min="0" max="30" style="width:65px"></td>
             <td><select class="er-input" data-field="amortType" style="width:92px;font-size:0.75rem">${Object.entries(AMORT_OPTIONS).map(([k, v]) => `<option value="${k}" ${k === l.amortType ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
             <td><select class="er-input" data-field="frequency" style="width:92px;font-size:0.75rem">${Object.entries(FREQ_OPTIONS).map(([k, v]) => `<option value="${k}" ${k === l.frequency ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
@@ -568,7 +569,9 @@ function liveDebtsForCovenants() {
             // durée résiduelle exacte en mois, exprimée en années décimales
             durationYears: Math.max(1 / 12, Math.round((s.sched.lastIdx - Math.max(aIdx, s.sched.firstIdx - 1)) / 12 * 100) / 100),
             amortType: s.loan.amortType,
-            frequency: s.loan.frequency
+            frequency: s.loan.frequency,
+            // différé restant à courir à la date d'analyse
+            deferralMonths: Math.max(0, (s.sched.firstIdx - 1 + (s.loan.deferralMonths || 0)) - Math.max(aIdx, s.sched.firstIdx - 1))
         }))
         .filter(d => d.amount > 0);
 }
@@ -714,6 +717,7 @@ function loadParams(p) {
                 startYear: parseInt(l.startYear) || analysis.year,
                 startMonth: Math.min(12, Math.max(1, parseInt(l.startMonth) || 1)),
                 durationMonths: Math.max(1, parseInt(l.durationMonths) || 1),
+                deferralMonths: Math.max(0, parseInt(l.deferralMonths) || 0),
                 rate: parseFloat(l.rate) || 0,
                 amortType: AMORT_OPTIONS[l.amortType] ? l.amortType : 'constant',
                 frequency: FREQ_OPTIONS[l.frequency] ? l.frequency : 'monthly',
@@ -795,6 +799,7 @@ export const DebtProfileModule = {
                                 <th style="text-align:right">Montant initial (€)</th>
                                 <th>1ère échéance</th>
                                 <th style="text-align:right">Durée (mois)</th>
+                                <th style="text-align:right" title="Différé d'amortissement, inclus dans la durée">Différé (mois)</th>
                                 <th style="text-align:right">Taux (%)</th>
                                 <th>Amortissement</th>
                                 <th>Périodicité</th>

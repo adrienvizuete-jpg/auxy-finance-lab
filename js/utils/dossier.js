@@ -29,6 +29,7 @@ import { ensureExportLibs } from './libs.js';
  * @property {number} [hedgePct]
  * @property {number[]} [customProfile]
  * @property {number} [balloonPct]
+ * @property {number} [deferralMonths]
  */
 
 /**

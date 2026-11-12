@@ -143,6 +143,7 @@ function renderDebtRows() {
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${d.rate}" data-field="rate" step="0.05" min="0" max="30" style="width:70px" title="${d.rateType === 'floating' ? 'Marge sur Euribor' : 'Taux fixe'}"></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${d.hedgePct || 0}" data-field="hedgePct" step="10" min="0" max="100" style="width:60px" ${d.rateType === 'floating' ? '' : 'disabled'}></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${d.durationYears}" data-field="durationYears" step="0.25" min="0.08" max="30" style="width:60px"></td>
+            <td style="text-align:right"><input class="er-input narrow" type="number" value="${d.deferralMonths || 0}" data-field="deferralMonths" step="12" min="0" max="60" style="width:60px" title="Différé d'amortissement : intérêts seuls pendant cette période (prêt Bpifrance, PGE…)" ${d.amortType === 'infine' ? 'disabled' : ''}></td>
             <td><select class="er-input" data-field="amortType" style="width:100px;font-size:0.75rem">${Object.entries(AMORT_OPTIONS).map(([k, v]) => `<option value="${k}" ${k === d.amortType ? 'selected' : ''}>${v}</option>`).join('')}</select>
                 ${d.amortType === 'custom' ? `<input class="er-input" type="text" data-field="customProfile" value="${escapeHtml((d.customProfile || []).join('/'))}" placeholder="10/15/20/25/30" style="width:100px;margin-top:4px" title="% du nominal amorti par année">` : ''}
                 ${d.amortType === 'balloon' ? `<input class="er-input narrow" type="number" data-field="balloonPct" value="${d.balloonPct ?? 30}" min="0" max="100" step="5" style="width:60px;margin-top:4px" title="Ballon final (% du nominal)">` : ''}</td>
@@ -365,8 +366,8 @@ function exportExcel() {
     rows.push(['Baisse d\'EBITDA supportable (%)', c.ebitdaDropToBreach]);
     rows.push(['Hausse de l\'Euribor supportable (pts)', c.rateRiseToBreach]);
     rows.push(['']);
-    rows.push(['DETTES (k€)', 'Montant', 'Taux / marge (%)', 'Durée (ans)', 'Amortissement', 'Fréquence', 'Taux', 'Couvert (%)']);
-    debts.forEach(d => rows.push([d.label, d.amount, d.rate, d.durationYears, AMORT_OPTIONS[d.amortType], FREQ_OPTIONS[d.frequency], RATE_TYPES[d.rateType || 'fixed'], d.rateType === 'floating' ? d.hedgePct || 0 : null]));
+    rows.push(['DETTES (k€)', 'Montant', 'Taux / marge (%)', 'Durée (ans)', 'Amortissement', 'Fréquence', 'Taux', 'Couvert (%)', 'Différé (mois)']);
+    debts.forEach(d => rows.push([d.label, d.amount, d.rate, d.durationYears, AMORT_OPTIONS[d.amortType], FREQ_OPTIONS[d.frequency], RATE_TYPES[d.rateType || 'fixed'], d.rateType === 'floating' ? d.hedgePct || 0 : null, d.deferralMonths || 0]));
 
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet(rows);
@@ -502,7 +503,8 @@ function loadParams(p) {
             rateType: d.rateType === 'floating' ? 'floating' : 'fixed',
             hedgePct: Math.min(100, Math.max(0, parseFloat(d.hedgePct) || 0)),
             customProfile: Array.isArray(d.customProfile) ? d.customProfile.map(v => parseFloat(v) || 0) : undefined,
-            balloonPct: d.balloonPct != null ? parseFloat(d.balloonPct) || 0 : undefined
+            balloonPct: d.balloonPct != null ? parseFloat(d.balloonPct) || 0 : undefined,
+            deferralMonths: Math.max(0, parseFloat(d.deferralMonths) || 0)
         }));
     }
     if (Array.isArray(p.indexPath)) indexPath = p.indexPath.map(v => parseFloat(v)).filter(v => isFinite(v));
@@ -620,6 +622,7 @@ export const CovenantsModule = {
                                 <th style="text-align:right">Taux / marge (%)</th>
                                 <th style="text-align:right">Couvert (%)</th>
                                 <th style="text-align:right">Durée (ans)</th>
+                                <th style="text-align:right" title="Différé d'amortissement, inclus dans la durée">Différé (mois)</th>
                                 <th>Amortissement</th>
                                 <th>Fréquence</th>
                                 <th style="text-align:right">Annuité A1 (k€)</th>
