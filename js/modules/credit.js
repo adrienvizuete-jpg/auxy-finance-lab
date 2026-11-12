@@ -126,6 +126,7 @@ function renderTranchingRows() {
             <td><input type="number" class="form-input form-input-sm" value="${t.amount}" data-field="amount" min="0" step="1"></td>
             <td><input type="number" class="form-input form-input-sm" value="${t.rate}" data-field="rate" min="0" max="50" step="0.25" style="width:80px"></td>
             <td><input type="number" class="form-input form-input-sm" value="${t.duration}" data-field="duration" min="1" max="720" step="1" style="width:80px"></td>
+            <td><input type="number" class="form-input form-input-sm" value="${t.deferral || 0}" data-field="deferral" min="0" max="60" step="12" style="width:70px" title="Différé d'amortissement en mois, inclus dans la durée : intérêts seuls (prêt Bpifrance : 12 à 36 mois)"></td>
             <td>
                 <select class="form-input form-input-sm" data-field="type">
                     <option value="constant" ${t.type === 'constant' ? 'selected' : ''}>Constant</option>
@@ -193,6 +194,12 @@ function setupTranchingListeners() {
             document.getElementById('tranching-rows').innerHTML = renderTranchingRows();
             refreshTranchingTotal();
         }
+    });
+
+    document.getElementById('btn-add-bpi')?.addEventListener('click', () => {
+        tranchingTranches.push({ name: 'Prêt Bpifrance', amount: 1000000, rate: 4.5, duration: 84, deferral: 24, type: 'constant', frequency: 'quarterly' });
+        document.getElementById('tranching-rows').innerHTML = renderTranchingRows();
+        refreshTranchingTotal();
     });
 
     document.getElementById('btn-add-tranche')?.addEventListener('click', () => {
@@ -897,6 +904,7 @@ function getFormHTML(type) {
                 <div class="tranching-form">
                     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
                         <div>Total dette : <strong id="tr-total-debt">${Financial.formatCurrency(tranchingTranches.reduce((s, t) => s + t.amount, 0))}</strong></div>
+                        <button type="button" class="btn btn-ghost btn-sm" id="btn-add-bpi" title="7 ans dont 2 ans de différé, échéances constantes trimestrielles">+ Prêt Bpifrance</button>
                         <button type="button" class="btn btn-ghost btn-sm" id="btn-add-tranche">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                             Ajouter une tranche
@@ -910,6 +918,7 @@ function getFormHTML(type) {
                                     <th>Montant (€)</th>
                                     <th>Taux (%)</th>
                                     <th>Durée (mois)</th>
+                                    <th title="Différé d'amortissement, inclus dans la durée">Différé (mois)</th>
                                     <th>Type</th>
                                     <th>Fréquence</th>
                                     <th></th>

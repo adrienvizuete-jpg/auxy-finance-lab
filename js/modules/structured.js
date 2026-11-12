@@ -238,6 +238,7 @@ function renderTranchesRows(c) {
             <td><input class="er-input" type="text" value="${escapeHtml(t.label)}" data-field="label" style="width:70px"></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${t.pct}" data-field="pct" step="5" min="0" max="100"></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${t.duration}" data-field="duration" step="1" min="1"></td>
+            <td style="text-align:right"><input class="er-input narrow" type="number" value="${t.deferral || 0}" data-field="deferral" step="1" min="0" max="5" style="width:55px" title="Différé d'amortissement en années, inclus dans la durée : intérêts seuls"></td>
             <td><select class="er-input" data-field="rateType" style="width:80px;font-size:0.75rem">${Object.entries(RATE_LABELS).map(([k, v]) => `<option value="${k}" ${k === (t.rateType || 'fixed') ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${t.taux || 0}" data-field="taux" step="0.05" min="0" max="50" style="width:70px" title="${t.rateType === 'floating' ? 'Marge sur Euribor 3M' : 'Taux fixe'}"></td>
             <td><select class="er-input" data-field="amortType" style="width:100px;font-size:0.75rem">${selAmort()}</select>
@@ -572,10 +573,10 @@ function exportExcel() {
     rows.push([]);
 
     // Tranches
-    rows.push(['TRANCHES DETTE SENIOR', '% Senior', 'Durée (ans)', 'Taux (%)', 'Amortissement', 'Fréquence', 'Montant', 'Annuité']);
+    rows.push(['TRANCHES DETTE SENIOR', '% Senior', 'Durée (ans)', 'Taux (%)', 'Amortissement', 'Fréquence', 'Montant', 'Annuité', 'Différé (ans)']);
     c.tranchesDetail.forEach(t => {
         const annuity = computeAnnuity(t.amount, t.taux || 0, t.duration || 1, t.amortType || 'constant', t.frequency || 'mensuel', t);
-        rows.push([`Tranche ${t.label}`, t.pct / 100, t.duration, (t.taux || 0) / 100, AMORT_LABELS[t.amortType] || 'Constant', FREQ_LABELS[t.frequency] || 'Mensuel', t.amount, annuity]);
+        rows.push([`Tranche ${t.label}`, t.pct / 100, t.duration, (t.taux || 0) / 100, AMORT_LABELS[t.amortType] || 'Constant', FREQ_LABELS[t.frequency] || 'Mensuel', t.amount, annuity, t.deferral || 0]);
     });
     rows.push([]);
 
@@ -642,7 +643,7 @@ function loadFromHistory() {
         const nums = arr => (Array.isArray(arr) ? arr.map(n) : undefined);
         if (Array.isArray(p.emplois)) emplois = p.emplois.map(e => ({ ...e, label: String(e.label ?? ''), amount: n(e.amount) }));
         if (Array.isArray(p.detteNonRef)) detteNonRef = p.detteNonRef.map(d => ({ ...d, label: String(d.label ?? ''), amount: n(d.amount) }));
-        if (Array.isArray(p.tranchesSenior)) tranchesSenior = p.tranchesSenior.map(t => ({ ...t, label: String(t.label ?? ''), pct: n(t.pct), duration: n(t.duration) || 1, taux: n(t.taux), balloonPct: t.balloonPct != null ? n(t.balloonPct) : undefined, customProfile: nums(t.customProfile) }));
+        if (Array.isArray(p.tranchesSenior)) tranchesSenior = p.tranchesSenior.map(t => ({ ...t, label: String(t.label ?? ''), pct: n(t.pct), duration: n(t.duration) || 1, deferral: Math.max(0, n(t.deferral)), taux: n(t.taux), balloonPct: t.balloonPct != null ? n(t.balloonPct) : undefined, customProfile: nums(t.customProfile) }));
         if (Array.isArray(p.autresFin)) autresFin = p.autresFin.map(a => ({ ...a, label: String(a.label ?? ''), amount: n(a.amount), duration: n(a.duration) || 1, taux: n(a.taux), deferral: Math.max(0, n(a.deferral)) }));
         if (p.sizing && typeof p.sizing === 'object') sizing = { ...sizing, ...p.sizing };
     }
@@ -763,6 +764,7 @@ export const StructuredModule = {
                                 <th>Tranche</th>
                                 <th style="text-align:right">% Senior</th>
                                 <th style="text-align:right">Durée (ans)</th>
+                                <th style="text-align:right" title="Différé d'amortissement, inclus dans la durée">Différé (ans)</th>
                                 <th>Taux</th>
                                 <th style="text-align:right">Taux / marge (%)</th>
                                 <th>Amortissement</th>
@@ -791,6 +793,7 @@ export const StructuredModule = {
             <div class="card section">
                 <div class="card-header">
                     <div class="card-title">Autres financements (hors senior)</div>
+                    <button class="btn btn-sm btn-outline" id="er-add-bpi" title="7 ans dont 2 ans de différé, échéances constantes trimestrielles">${PLUS_SVG} Prêt Bpifrance</button>
                     <button class="btn btn-sm btn-outline" id="er-add-autre">${PLUS_SVG} Ajouter</button>
                 </div>
                 <div class="table-container" style="margin-top:12px">
@@ -965,6 +968,11 @@ export const StructuredModule = {
         autresBody?.addEventListener('input', e => { handleTableInput(e); refreshAutresComputed(); });
         autresBody?.addEventListener('change', e => { handleTableInput(e); refreshAutresComputed(); });
         autresBody?.addEventListener('click', handleRemove);
+        document.getElementById('er-add-bpi')?.addEventListener('click', () => {
+            autresFin.push({ label: 'Prêt Bpifrance', type: 'bpi', amount: 1000, taux: 4.5, duration: 7, deferral: 2, amortType: 'constant', frequency: 'trimestriel', rateType: 'fixed' });
+            autresBody.innerHTML = renderAutresRows();
+            recalculate();
+        });
         document.getElementById('er-add-autre')?.addEventListener('click', () => {
             autresFin.push({ label: 'Crédit vendeur', type: 'vendeur', amount: 1000, taux: 4.0, duration: 5, amortType: 'infine', frequency: 'annuel', rateType: 'fixed' });
             autresBody.innerHTML = renderAutresRows();

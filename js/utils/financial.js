@@ -67,6 +67,7 @@
  * @property {number} duration Durée (mois)
  * @property {string} [type] 'infine' | 'degressif' | amortissable constant par défaut
  * @property {string} [frequency] Périodicité des échéances
+ * @property {number} [deferral] Différé d'amortissement (mois, intérêts payés)
  */
 
 // Formateurs Intl mis en cache : en créer un par appel coûtait ~90 fois plus
@@ -1305,7 +1306,9 @@ export const Financial = {
                 durationMonths: t.duration,
                 insuranceMonthly: 0,
                 fees: 0,
-                frequency: freq
+                frequency: freq,
+                // différé d'amortissement (mois, intérêts payés) : prêt Bpifrance dans un pool
+                deferralMonths: t.type === 'infine' ? 0 : Math.max(0, Number(t.deferral) || 0)
             };
             const result = t.type === 'infine'
                 ? this.inFine(params)

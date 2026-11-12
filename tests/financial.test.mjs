@@ -428,3 +428,18 @@ describe('Prêt Bpifrance — retenue de garantie et cofinancement', () => {
         near(c.schedule[20].payment, c.loans.bpi.schedule[20].payment, 1e-6);
     });
 });
+
+describe('Tranching — prêt Bpifrance avec différé dans un pool', () => {
+    test('la tranche en différé ne paie que ses intérêts, le consolidé en tient compte', () => {
+        const senior = { name: 'Senior A', amount: 3000000, rate: 4, duration: 84, type: 'constant', frequency: 'quarterly' };
+        const bpi = { name: 'Prêt Bpifrance', amount: 1000000, rate: 4, duration: 84, deferral: 24, type: 'constant', frequency: 'quarterly' };
+        const r = Financial.tranching([senior, bpi]);
+        const b = r.tranches.find(t => t.name === 'Prêt Bpifrance');
+        assert.ok(b, 'tranche Bpifrance présente');
+        assert.equal(b.result.schedule.filter(x => x.deferred).length, 8);
+        assert.ok(Math.abs(b.result.schedule[0].payment - 10000) < 1e-6);
+        const flat = Financial.tranching([senior, { ...bpi, deferral: 0 }]);
+        const y1 = (/** @type {any} */ x) => x.consolidated.schedule.slice(0, 12).reduce((/** @type {number} */ s, /** @type {any} */ row) => s + row.payment, 0);
+        assert.ok(y1(r) < y1(flat) - 100000, 'service de dette année 1 allégé par le différé');
+    });
+});
