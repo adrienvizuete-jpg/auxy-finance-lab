@@ -251,7 +251,7 @@ function reloadSimulation(id) {
     if (!sim) return;
 
     // Navigate to the appropriate page
-    const PAGE_BY_TYPE = { structured: 'structured', covenants: 'covenants', debtprofile: 'debtprofile' };
+    const PAGE_BY_TYPE = { structured: 'structured', covenants: 'covenants', debtprofile: 'debtprofile', immobilier: 'immobilier', benchmark: 'benchmark', stress: 'stress' };
     const page = PAGE_BY_TYPE[sim.type] || 'credit';
 
     // À poser AVANT la navigation : init() du module le lit de façon synchrone

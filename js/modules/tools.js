@@ -8,6 +8,8 @@ import { Export } from '../utils/export.js';
 import { Fmt } from '../utils/format.js';
 import { Handoff } from '../utils/handoff.js';
 import * as FormState from '../utils/formstate.js';
+import { Storage } from '../utils/storage.js';
+import { Dialog } from '../utils/dialog.js';
 
 // =============================================
 // FINANCIAL CALCULATOR
@@ -290,6 +292,17 @@ export const StressTestModule = {
     _lastAnalysis: null,
 
     render() {
+        // Analyse rechargée depuis l'Historique : mêmes champs, grille relancée
+        const reloaded = /** @type {any} */ (window)._pendingReload;
+        if (reloaded?.type === 'stress' && reloaded.params) {
+            /** @type {any} */ (window)._pendingReload = null;
+            const p = reloaded.params;
+            /** @type {Record<string, string>} */
+            const values = {};
+            /** @type {Array<[string, unknown]>} */ ([['st-principal', p.principal], ['st-rate', p.annualRate], ['st-duration', p.durationMonths], ['st-insurance', p.insuranceMonthly], ['st-frequency', p.frequency], ['st-rate-min', p.rateMin], ['st-rate-max', p.rateMax], ['st-rate-step', p.rateStep]])
+                .forEach(([id, v]) => { if (v != null && v !== '' && !(typeof v === 'number' && isNaN(v))) values[id] = String(v); });
+            FormState.prefill('stress', values, ['click:st-run']);
+        }
         // Prêt reçu de Crédit : champs pré-remplis et grille de sensibilité lancée
         const incoming = Handoff.take('stress')[0];
         if (incoming) {
@@ -511,6 +524,7 @@ export const StressTestModule = {
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                         Exporter PDF
                     </button>
+                    <button class="btn btn-outline" id="st-save">Sauvegarder</button>
                     <button class="btn btn-outline" id="st-export-xlsx">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                         Exporter Excel
@@ -619,6 +633,20 @@ export const StressTestModule = {
             // === Export handlers ===
             document.getElementById('st-export-pdf')?.addEventListener('click', () => this._exportPdf());
             document.getElementById('st-export-xlsx')?.addEventListener('click', () => this._exportExcel());
+            document.getElementById('st-save')?.addEventListener('click', () => {
+                const d = this._lastAnalysis;
+                if (!d) return;
+                const field = (/** @type {string} */ id) => /** @type {HTMLInputElement | null} */ (document.getElementById(id))?.value ?? '';
+                Dialog.save({ defaultName: `Sensibilité — ${Financial.formatCurrency(d.principal)} à ${Fmt.pct(d.baseRate, 2)}` }).then(saved => {
+                    if (!saved) return;
+                    const id = Storage.saveSimulation({
+                        type: 'stress', typeLabel: 'Sensibilité taux × durée', name: saved.name, notes: saved.notes,
+                        params: { principal: d.principal, annualRate: d.baseRate, durationMonths: d.baseDuration, insuranceMonthly: d.insurance, frequency: d.frequency, rateMin: parseFloat(field('st-rate-min')), rateMax: parseFloat(field('st-rate-max')), rateStep: parseFloat(field('st-rate-step')) },
+                        results: { totalCost: d.baseSim?.totalCost, worstRate: d.worstCell.rate, worstDurationMonths: d.worstCell.duration, worstTotalCost: d.worstCell.totalCost }
+                    });
+                    window.showToast?.(id ? 'Analyse sauvegardée' : 'Sauvegarde impossible : stockage plein', id ? 'success' : 'error');
+                });
+            });
         });
     },
 

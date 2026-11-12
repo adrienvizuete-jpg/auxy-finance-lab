@@ -30,6 +30,10 @@ export const PARAM_LABELS = {
     deferralMonths: 'Différé (mois)',
     deferralType: 'Type de différé',
     amortProfile: 'Amortissement après différé',
+    rateMin: 'Taux minimum testé',
+    rateMax: 'Taux maximum testé',
+    rateStep: 'Pas de taux',
+    loans: 'Prêts comparés',
     retenuePct: 'Retenue de garantie (%)',
     retenueRate: 'Rémunération de la retenue (%)',
     cofinancement: 'Cofinancement bancaire',
@@ -63,6 +67,11 @@ export const RESULT_LABELS = {
     totalCost: 'Co\u00fbt total',
     totalPayment: 'Total rembours\u00e9',
     taeg: 'TAEG',
+    loanCount: 'Pr\u00eats compar\u00e9s',
+    bestLoan: 'Pr\u00eat le moins co\u00fbteux',
+    worstRate: 'Pire sc\u00e9nario \u2014 taux',
+    worstDurationMonths: 'Pire sc\u00e9nario \u2014 dur\u00e9e',
+    worstTotalCost: 'Pire sc\u00e9nario \u2014 co\u00fbt total',
     retenueAmount: 'Retenue de garantie',
     netDisbursed: 'Net d\u00e9caiss\u00e9',
     retenueRefund: 'Retenue restitu\u00e9e en fin de pr\u00eat',
@@ -119,6 +128,8 @@ export const TYPE_LABELS = {
     structured: 'Financement Structur\u00e9',
     tranching: 'Tranching (LBO)',
     immobilier: 'Immobilier',
+    benchmark: 'Benchmark',
+    stress: 'Sensibilit\u00e9 taux \u00d7 dur\u00e9e',
     covenants: 'Covenants & DSCR',
     debtprofile: 'Profil de Dette'
 };
@@ -138,12 +149,12 @@ export function t(key, dict = null) {
 /** @type {Record<string, 'pct' | 'months' | 'eur' | 'keur' | 'x' | 'years' | 'count' | 'enum'>} */
 const KEY_FORMATS = {
     // pourcentages
-    annualRate: 'pct', rate: 'pct', retenuePct: 'pct', retenueRate: 'pct', bankRate: 'pct', tegExRetenue: 'pct', bpiShare: 'pct', cashRate: 'pct', pikRate: 'pct', insuranceRate: 'pct', taeg: 'pct', teg: 'pct',
+    annualRate: 'pct', rate: 'pct', retenuePct: 'pct', retenueRate: 'pct', rateMin: 'pct', rateMax: 'pct', rateStep: 'pct', worstRate: 'pct', bankRate: 'pct', tegExRetenue: 'pct', bpiShare: 'pct', cashRate: 'pct', pikRate: 'pct', insuranceRate: 'pct', taeg: 'pct', teg: 'pct',
     ltv: 'pct', utilization: 'pct', growthPct: 'pct', allInCost: 'pct', effectiveRate: 'pct', lineCostRate: 'pct',
     commitmentFee: 'pct', equityKicker: 'pct', firstRentPct: 'pct', weightedRate: 'pct', pctFP: 'pct', pctSenior: 'pct',
     taxPct: 'pct', capexPct: 'pct', wcPct: 'pct', carryingCostPct: 'pct', amortized3yPct: 'pct',
     // durées
-    durationMonths: 'months', deferralMonths: 'months', bankDurationMonths: 'months', bankDeferralMonths: 'months', finalRecoveryMonth: 'months', effectiveDurationMonths: 'months',
+    durationMonths: 'months', deferralMonths: 'months', bankDurationMonths: 'months', bankDeferralMonths: 'months', worstDurationMonths: 'months', finalRecoveryMonth: 'months', effectiveDurationMonths: 'months',
     horizon: 'years', wal: 'years', amortYears: 'years',
     // ratios
     dscrMin: 'x', leverageMax: 'x', covenantDscr: 'x', covenantLeverage: 'x', ratioLevier: 'x',
@@ -151,7 +162,7 @@ const KEY_FORMATS = {
     ebitda: 'keur', fondsPropres: 'keur', tresorerieMin: 'keur', openingCash: 'keur', totalEmplois: 'keur',
     totalDetteNonRef: 'keur', detteSenior: 'keur', detteFinClosing: 'keur', dfn: 'keur', veRetenue: 'keur', excesFP: 'keur',
     // compteurs et libellés
-    dscrMinYear: 'count', leverageMaxYear: 'count', newCount: 'count', peakYear: 'count',
+    dscrMinYear: 'count', leverageMaxYear: 'count', newCount: 'count', peakYear: 'count', loanCount: 'count',
     frequency: 'enum', deferralType: 'enum', amortType: 'enum', amortProfile: 'enum', bankProfile: 'enum', paymentTiming: 'enum', pikCompounding: 'enum',
     interestMode: 'enum', globalStatus: 'enum', dscrBasis: 'enum', strategy: 'enum', iraMode: 'enum'
 };

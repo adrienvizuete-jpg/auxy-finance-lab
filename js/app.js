@@ -22,6 +22,7 @@ import { Dialog } from './utils/dialog.js';
 import * as FormState from './utils/formstate.js';
 import { mountKpiBar } from './utils/kpibar.js';
 import { initContextBar } from './utils/contextbar.js';
+import { Draft } from './utils/draft.js';
 
 // =============================================
 // MODULE REGISTRY
@@ -84,6 +85,7 @@ function navigateTo(page, { history: mode = 'push' } = {}) {
         if (renderedPage && FormState.DOM_STATE_PAGES.has(renderedPage)) FormState.save(renderedPage, container);
         FormState.reset();
         renderedPage = page;
+        Draft.restore(page); // travail non sauvegardé d'avant un rechargement de la page
         if (AMOUNT_UNITS[page]) container.dataset.amountUnit = AMOUNT_UNITS[page];
         else delete container.dataset.amountUnit;
         container.innerHTML = modules[page].render();

@@ -12,6 +12,7 @@ import { Market } from '../utils/market.js';
 import { Dossier } from '../utils/dossier.js';
 import { Financial } from '../utils/financial.js';
 import { Dialog } from '../utils/dialog.js';
+import { Draft } from '../utils/draft.js';
 
 // ── State ──
 let emplois = [
@@ -350,6 +351,7 @@ function recalculate() {
         params: { ebitda, fondsPropres, tresorerieMin, emplois: [...emplois], detteNonRef: [...detteNonRef], tranchesSenior: tranchesSenior.map(t => ({ ...t })), autresFin: autresFin.map(a => ({ ...a })), sizing: { ...sizing } },
         results: { ...c }
     };
+    Draft.save('structured', lastResult.params);
 }
 
 // ── Input handler (delegated) ──

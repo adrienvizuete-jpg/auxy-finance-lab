@@ -28,6 +28,7 @@ import { RefiEngine } from '../utils/refiengine.js';
 import { Dialog } from '../utils/dialog.js';
 import { Dossier } from '../utils/dossier.js';
 import { Handoff } from '../utils/handoff.js';
+import { Draft } from '../utils/draft.js';
 
 // ── State ──
 const now = new Date();
@@ -71,10 +72,11 @@ function newLoanLine(l, isNew = true) {
 /** Prêts reçus par « Envoyer vers… » : ajoutés comme nouveaux financements */
 function takeHandoff() {
     const incoming = Handoff.take('debtprofile');
-    if (!incoming.length) return;
+    if (!incoming.length) return false;
     const lines = incoming.map(l => newLoanLine(l));
     loans = JSON.stringify(loans) === SAMPLE_LOANS ? lines : loans.concat(lines);
     includeNew = true;
+    return true;
 }
 let marketRates = null; // pré-remplissage du taux des nouveaux financements
 // Scénario de refinancement des crédits cochés « Refinancer »
@@ -385,6 +387,7 @@ function recalculate() {
             years: agg.years
         } : { years: [] }
     };
+    Draft.save('debtprofile', lastResult.params);
 }
 
 // ── Actions ──
@@ -764,7 +767,6 @@ function loadParams(p) {
 
 export const DebtProfileModule = {
     render() {
-        takeHandoff();
         // Un seul « dossier » : le nom suit le client actif tant qu'il n'est pas saisi ici
         if (!dossierName || nameFromActive) {
             dossierName = Dossier.get()?.name?.slice(0, 80) || '';
@@ -1086,6 +1088,8 @@ export const DebtProfileModule = {
             loadParams(pending.params);
             this._rerenderInputs();
         }
+        // Après le rechargement éventuel (brouillon compris) : le prêt reçu s'ajoute à l'état restauré
+        if (takeHandoff()) this._rerenderInputs();
 
         recalculate();
     },

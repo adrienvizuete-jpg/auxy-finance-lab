@@ -28,6 +28,8 @@ export const DashboardModule = {
             structured: 'Structur\u00e9',
             tranching: 'Tranching',
             immobilier: 'Immobilier',
+            benchmark: 'Benchmark',
+            stress: 'Sensibilit\u00e9',
             covenants: 'Covenants',
             debtprofile: 'Profil de Dette'
         };

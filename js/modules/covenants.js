@@ -17,6 +17,7 @@ import { DossierBar } from '../utils/dossierbar.js';
 import { Dialog } from '../utils/dialog.js';
 import { Fmt } from '../utils/format.js';
 import { Handoff } from '../utils/handoff.js';
+import { Draft } from '../utils/draft.js';
 
 // ── State ──
 let horizon = 5; // années
@@ -57,7 +58,7 @@ const SAMPLE_DEBTS = JSON.stringify(debts);
 /** Prêts reçus par « Envoyer vers… » (en €) → lignes de dette (k€) */
 function takeHandoff() {
     const incoming = Handoff.take('covenants');
-    if (!incoming.length) return;
+    if (!incoming.length) return false;
     const lines = incoming.map(l => ({
         label: l.label,
         amount: Math.round(l.amount / 1000),
@@ -71,6 +72,7 @@ function takeHandoff() {
         balloonPct: l.balloonPct
     }));
     debts = JSON.stringify(debts) === SAMPLE_DEBTS ? lines : debts.concat(lines);
+    return true;
 }
 
 const AMORT_OPTIONS = { constant: 'Constant', degressif: 'Dégressif', infine: 'In Fine', custom: 'Profil libre', balloon: 'Ballon' };
@@ -294,6 +296,7 @@ function recalculate() {
             rows: c.rows
         }
     };
+    Draft.save('covenants', lastResult.params);
 }
 
 // ── Actions ──
@@ -540,7 +543,6 @@ function loadParams(p) {
 // ── Module ──
 export const CovenantsModule = {
     render() {
-        takeHandoff();
         // S'assure que le tableau EBITDA couvre l'horizon
         while (ebitdaYears.length < 10) ebitdaYears.push(Math.round((ebitdaYears[ebitdaYears.length - 1] || 0) * (1 + growthPct / 100)));
 
@@ -939,6 +941,8 @@ export const CovenantsModule = {
             loadParams(pending.params);
             this._rerenderInputs();
         }
+        // Après le rechargement éventuel (brouillon compris) : le prêt reçu s'ajoute à l'état restauré
+        if (takeHandoff()) this._rerenderInputs();
 
         recalculate();
     },
