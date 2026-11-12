@@ -38,6 +38,7 @@ jobs:
         run: pip install yfinance httpx python-dotenv feedparser
 
       - name: Run veille
+        id: veille
         env:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
@@ -54,9 +55,11 @@ jobs:
       # Le JSON est utile même si l'envoi du mail a échoué → always().
       # Le script sort en code 1 si aucun taux n'est récupéré → continue-on-error
       # pour ne pas faire échouer le job, et le commit est conditionné à l'outcome.
+      # Un seul export par jour : l'exécution du mauvais créneau (double cron
+      # été / hiver) se signale « skipped » et ne republie pas le fichier.
       - name: Export rates.json
         id: export_rates
-        if: always()
+        if: always() && steps.veille.outputs.skipped != 'true'
         continue-on-error: true
         env:
           BDF_API_KEY: ${{ secrets.BDF_API_KEY }}

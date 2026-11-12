@@ -79,6 +79,16 @@ def _is_correct_cron_run() -> bool:
     return is_correct
 
 
+def _mark_skipped() -> None:
+    """Signale au workflow que cette exécution ne fait rien (mauvais créneau
+    horaire ou jour non ouvré) : il n'exporte alors pas rates.json, ce qui
+    évitait deux commits de données par jour (un par cron été / hiver)."""
+    output = os.environ.get("GITHUB_OUTPUT")
+    if output:
+        with open(output, "a", encoding="utf-8") as fh:
+            fh.write("skipped=true\n")
+
+
 async def run_veille(config: VeilleConfig, force: bool = False) -> None:
     """Exécute la veille complète : collecte → template → envoi."""
     now = datetime.now(PARIS_TZ)
@@ -86,10 +96,12 @@ async def run_veille(config: VeilleConfig, force: bool = False) -> None:
     if not force:
         if not _is_business_day(now):
             logger.info("Jour non ouvré (%s), skip.", now.strftime("%A %d/%m/%Y"))
+            _mark_skipped()
             return
 
         if not _is_correct_cron_run():
             logger.info("Pas la bonne exécution cron (heure Paris : %s), skip.", now.strftime("%H:%M"))
+            _mark_skipped()
             return
 
     logger.info("=" * 60)
