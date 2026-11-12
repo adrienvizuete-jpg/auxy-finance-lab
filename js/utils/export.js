@@ -3,7 +3,6 @@
  */
 
 import { PARAM_LABELS, RESULT_LABELS, t, excelValue, unitOf } from './i18n.js';
-import { LOGO_JPEG_BANNER } from './logo-data.js';
 import { Charts } from './charts.js';
 
 export const Export = {
@@ -14,52 +13,6 @@ export const Export = {
     _sanitizePdf(str) {
         if (typeof str !== 'string') return str;
         return str.replace(/[\u202F\u00A0]/g, ' ');
-    },
-
-    /**
-     * Export schedule to Excel
-     */
-    toExcel(schedule, filename = 'simulation', sheetName = 'Amortissement') {
-        if (typeof XLSX === 'undefined') {
-            window.showToast?.('Outils d\u2019export Excel indisponibles (connexion ?) — réessayez', 'error');
-            return;
-        }
-
-        const wb = XLSX.utils.book_new();
-
-        // Header row
-        const headers = Object.keys(schedule[0] || {}).map(k => {
-            const labels = {
-                period: 'Période',
-                payment: 'Mensualité',
-                principal: 'Capital',
-                interest: 'Intérêts',
-                insurance: 'Assurance',
-                balance: 'CRD',
-                totalInterest: 'Int. Cumulés',
-                totalInsurance: 'Ass. Cumulées',
-                utilized: 'Utilisé',
-                unused: 'Non utilisé',
-                commitmentFee: 'Com. Engagement',
-                totalCost: 'Coût Total',
-                cashPayment: 'Paiement Cash',
-                pikInterest: 'Intérêts PIK',
-                capitalizedInterest: 'Int. Capitalisés'
-            };
-            return labels[k] || k;
-        });
-
-        const data = [headers, ...schedule.map(row => Object.values(row).map(v =>
-            typeof v === 'number' ? Math.round(v * 100) / 100 : v
-        ))];
-
-        const ws = XLSX.utils.aoa_to_sheet(data);
-
-        // Column widths
-        ws['!cols'] = headers.map(() => ({ wch: 16 }));
-
-        XLSX.utils.book_append_sheet(wb, ws, sheetName);
-        XLSX.writeFile(wb, `${filename}_${new Date().toISOString().slice(0, 10)}.xlsx`);
     },
 
     /**
@@ -157,7 +110,7 @@ export const Export = {
         doc.rect(0, 84, pageWidth, 1.8, 'F');
 
         try {
-            doc.addImage(LOGO_JPEG_BANNER, 'JPEG', (pageWidth - 70) / 2, 26, 70, 24.7);
+            doc.addImage(this._logo, 'JPEG', (pageWidth - 70) / 2, 26, 70, 24.7);
         } catch (e) {
             doc.setTextColor(255, 255, 255);
             doc.setFontSize(24);
@@ -220,7 +173,21 @@ export const Export = {
      * Sections supportées : title, keyvalue, table, separator,
      * chart ({ canvasId, title?, maxHeight? } — capture le graphique affiché).
      */
-    toPdf(title, sections, filename = 'simulation', opts = {}) {
+    /** Logo du bandeau PDF (37 Ko), chargé au premier export seulement. @type {string | null} */
+    _logo: null,
+
+    /**
+     * Génère le PDF. Asynchrone : le logo est chargé à la demande au premier
+     * export (il pesait dans le premier affichage de l'outil).
+     */
+    async toPdf(title, sections, filename = 'simulation', opts = {}) {
+        if (!this._logo) {
+            try { this._logo = (await import('./logo-data.js')).LOGO_JPEG_BANNER; } catch { /* repli texte « AUXY PARTNERS » */ }
+        }
+        return this._buildPdf(title, sections, filename, opts);
+    },
+
+    _buildPdf(title, sections, filename = 'simulation', opts = {}) {
         if (typeof jspdf === 'undefined') {
             window.showToast?.('Outils d\u2019export PDF indisponibles (connexion ?) — réessayez', 'error');
             return;
@@ -243,7 +210,7 @@ export const Export = {
 
         // Add logo (white on dark blue background)
         try {
-            doc.addImage(LOGO_JPEG_BANNER, 'JPEG', 15, 4, 52, 18.4);
+            doc.addImage(this._logo, 'JPEG', 15, 4, 52, 18.4);
         } catch (e) {
             // Fallback text if logo fails
             doc.setTextColor(255, 255, 255);

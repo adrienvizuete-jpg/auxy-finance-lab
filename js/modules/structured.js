@@ -12,6 +12,8 @@ import { Market } from '../utils/market.js';
 import { Dossier } from '../utils/dossier.js';
 import { Financial } from '../utils/financial.js';
 import { Dialog } from '../utils/dialog.js';
+import { Draft } from '../utils/draft.js';
+import { Export } from '../utils/export.js';
 
 // ── State ──
 let emplois = [
@@ -127,7 +129,8 @@ function toEngineDebt(t, amount, label = t.label) {
         frequency: FREQ_TO_ENGINE[t.frequency] || 'monthly',
         rateType: t.rateType === 'floating' ? 'floating' : 'fixed',
         customProfile: t.customProfile,
-        balloonPct: t.balloonPct
+        balloonPct: t.balloonPct,
+        deferralMonths: infine ? 0 : Math.max(0, Math.round((t.deferral || 0) * 12))
     };
 }
 
@@ -158,7 +161,7 @@ function refreshAutresComputed() {
 }
 
 function renderAutresRows() {
-    if (!autresFin.length) return '<tr><td colspan="9" style="color:var(--text-muted);font-size:0.85rem">Aucun — crédit vendeur, OC, prêt Bpifrance, mezzanine…</td></tr>';
+    if (!autresFin.length) return '<tr><td colspan="10" style="color:var(--text-muted);font-size:0.85rem">Aucun — crédit vendeur, OC, prêt Bpifrance, mezzanine…</td></tr>';
     return autresFin.map((a, i) => `
         <tr data-section="autres" data-index="${i}">
             <td><input class="er-input" type="text" value="${escapeHtml(a.label)}" data-field="label" style="width:120px"></td>
@@ -167,6 +170,7 @@ function renderAutresRows() {
             <td><select class="er-input" data-field="rateType" style="width:80px;font-size:0.75rem">${Object.entries(RATE_LABELS).map(([k, v]) => `<option value="${k}" ${k === (a.rateType || 'fixed') ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${a.taux || 0}" data-field="taux" step="0.25" min="0" max="30" style="width:70px"></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${a.duration || 1}" data-field="duration" step="1" min="1" style="width:60px"></td>
+            <td style="text-align:right"><input class="er-input narrow" type="number" value="${a.deferral || 0}" data-field="deferral" step="1" min="0" max="5" style="width:55px" title="Différé d'amortissement en années, inclus dans la durée (prêt Bpifrance : 1 à 3 ans)"></td>
             <td><select class="er-input" data-field="amortType" style="width:100px;font-size:0.75rem">${Object.entries(AMORT_LABELS).filter(([k]) => k !== 'custom' && k !== 'balloon').map(([k, v]) => `<option value="${k}" ${k === (a.amortType || 'infine') ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
             <td style="text-align:right" class="er-computed">${fmtK(computeAnnuity(a.amount || 0, a.taux || 0, a.duration || 1, a.amortType || 'infine', a.frequency || 'annuel', a))}</td>
             <td style="width:30px"><button class="er-remove-btn" data-action="remove">${X_SVG}</button></td>
@@ -234,6 +238,7 @@ function renderTranchesRows(c) {
             <td><input class="er-input" type="text" value="${escapeHtml(t.label)}" data-field="label" style="width:70px"></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${t.pct}" data-field="pct" step="5" min="0" max="100"></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${t.duration}" data-field="duration" step="1" min="1"></td>
+            <td style="text-align:right"><input class="er-input narrow" type="number" value="${t.deferral || 0}" data-field="deferral" step="1" min="0" max="5" style="width:55px" title="Différé d'amortissement en années, inclus dans la durée : intérêts seuls"></td>
             <td><select class="er-input" data-field="rateType" style="width:80px;font-size:0.75rem">${Object.entries(RATE_LABELS).map(([k, v]) => `<option value="${k}" ${k === (t.rateType || 'fixed') ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${t.taux || 0}" data-field="taux" step="0.05" min="0" max="50" style="width:70px" title="${t.rateType === 'floating' ? 'Marge sur Euribor 3M' : 'Taux fixe'}"></td>
             <td><select class="er-input" data-field="amortType" style="width:100px;font-size:0.75rem">${selAmort()}</select>
@@ -348,6 +353,7 @@ function recalculate() {
         params: { ebitda, fondsPropres, tresorerieMin, emplois: [...emplois], detteNonRef: [...detteNonRef], tranchesSenior: tranchesSenior.map(t => ({ ...t })), autresFin: autresFin.map(a => ({ ...a })), sizing: { ...sizing } },
         results: { ...c }
     };
+    Draft.save('structured', lastResult.params);
 }
 
 // ── Input handler (delegated) ──
@@ -388,8 +394,13 @@ function handleTableInput(e) {
         }
     }
 
+    // Nature « Prêt Bpifrance » : structure usuelle proposée (7 ans dont 2 de
+    // différé, échéances constantes trimestrielles), modifiable ensuite
+    const bpiPreset = e.type === 'change' && section === 'autres' && field === 'type' && parsed === 'bpi' && autresFin[index];
+    if (bpiPreset) Object.assign(autresFin[index], { duration: 7, deferral: 2, amortType: 'constant', frequency: 'trimestriel', ...(autresFin[index].label === 'Crédit vendeur' ? { label: 'Prêt Bpifrance' } : {}) });
+
     // Changement de nature de taux / d'amortissement : la ligne change de forme
-    if (e.type === 'change' && (field === 'rateType' || field === 'amortType')) {
+    if (e.type === 'change' && (field === 'rateType' || field === 'amortType' || bpiPreset)) {
         const body = row.parentElement;
         if (section === 'tranches' && body) body.innerHTML = renderTranchesRows(compute());
         if (section === 'autres' && body) body.innerHTML = renderAutresRows();
@@ -483,6 +494,55 @@ function shareStructured() {
 }
 
 // ── Export Excel ──
+/** PDF du plan de financement : emplois, ressources, tranches, autres financements, indicateurs. */
+function exportPdf() {
+    if (!lastResult) recalculate();
+    const c = lastResult.results;
+    const k = v => fmtK(v);
+    const pct = v => `${Financial.formatNumber(v, 1)} %`;
+    const client = Dossier.get()?.name || '';
+    const sections = [
+        { type: 'kpicards', items: [
+            { label: 'Total emplois (k€)', value: k(c.totalEmplois) },
+            { label: 'Dette senior (k€)', value: k(c.detteSenior) },
+            { label: c.dfn < 0 ? 'Trésorerie nette (k€)' : 'Dette financière nette (k€)', value: k(Math.abs(c.dfn)) },
+            { label: 'Levier net (DFN / EBITDA)', value: c.ratioLevier == null ? 'n.s.' : fmtRatio(c.ratioLevier) },
+            { label: 'VE retenue (k€)', value: k(c.veRetenue) },
+            { label: 'EBITDA LTM (k€)', value: k(ebitda) }
+        ] },
+        { type: 'title', text: 'Emplois' },
+        { type: 'table', headers: ['Emploi', 'Montant (k€)'], rows: [...emplois.map(e => [e.label, k(e.amount)]), ['Total emplois', k(c.totalEmplois)]] },
+        { type: 'title', text: 'Ressources' },
+        { type: 'table', headers: ['Ressource', 'Montant (k€)', '%'], rows: [
+            ['Fonds propres', k(fondsPropres), pct(c.pctFP)],
+            ['Autres financements', k(c.totalAutres), pct(c.pctAutres)],
+            ['Dette senior', k(c.detteSenior), pct(c.pctSenior)],
+            ['Total ressources', k(c.totalEmplois), pct(100)]
+        ] },
+        { type: 'title', text: 'Tranches de dette senior' },
+        { type: 'table', headers: ['Tranche', '% senior', 'Durée', 'Taux / marge', 'Amortissement', 'Fréquence', 'Montant (k€)', 'Annuité (k€)'],
+            rows: c.tranchesDetail.map(t => [`Tranche ${t.label}`, pct(t.pct), `${t.duration} ans`, `${pct(t.taux || 0)}${t.rateType === 'floating' ? ' + Euribor' : ''}`, AMORT_LABELS[t.amortType] || 'Constant', FREQ_LABELS[t.frequency] || 'Mensuel', k(t.amount),
+                k(computeAnnuity(t.amount, t.taux || 0, t.duration || 1, t.amortType || 'constant', t.frequency || 'mensuel', t))]) }
+    ];
+    if (autresFin.length) {
+        sections.push({ type: 'title', text: 'Autres financements' });
+        sections.push({ type: 'table', headers: ['Libellé', 'Nature', 'Montant (k€)', 'Taux / marge', 'Durée', 'Différé', 'Amortissement', 'Annuité A1 (k€)'],
+            rows: autresFin.map(a => [a.label, AUTRE_TYPES[a.type] || '', k(a.amount || 0), pct(a.taux || 0), `${a.duration || 1} ans`, a.deferral ? `${a.deferral} an${a.deferral > 1 ? 's' : ''}` : '—', AMORT_LABELS[a.amortType] || 'In Fine',
+                k(computeAnnuity(a.amount || 0, a.taux || 0, a.duration || 1, a.amortType || 'infine', a.frequency || 'annuel', a))]) });
+    }
+    if (detteNonRef.length) {
+        sections.push({ type: 'title', text: 'Dette non refinancée' });
+        sections.push({ type: 'table', headers: ['Dette', 'Montant (k€)'], rows: [...detteNonRef.map(d => [d.label, k(d.amount)]), ['Sous-total', k(c.totalDetteNonRef)]] });
+    }
+    Export.toPdf(`Plan de financement${client ? ' — ' + client : ''}`, sections, 'financement_structure', {
+        cover: { subtitle: client || 'Emplois - Ressources', items: [
+            { label: 'Total emplois', value: `${k(c.totalEmplois)} k€` },
+            { label: 'Dette senior', value: `${k(c.detteSenior)} k€` },
+            { label: 'Levier net', value: c.ratioLevier == null ? 'n.s.' : fmtRatio(c.ratioLevier) }
+        ] }
+    });
+}
+
 function exportExcel() {
     if (typeof XLSX === 'undefined') {
         window.showToast?.('Outils d\u2019export Excel indisponibles (connexion ?) — réessayez', 'error');
@@ -513,17 +573,17 @@ function exportExcel() {
     rows.push([]);
 
     // Tranches
-    rows.push(['TRANCHES DETTE SENIOR', '% Senior', 'Durée (ans)', 'Taux (%)', 'Amortissement', 'Fréquence', 'Montant', 'Annuité']);
+    rows.push(['TRANCHES DETTE SENIOR', '% Senior', 'Durée (ans)', 'Taux (%)', 'Amortissement', 'Fréquence', 'Montant', 'Annuité', 'Différé (ans)']);
     c.tranchesDetail.forEach(t => {
         const annuity = computeAnnuity(t.amount, t.taux || 0, t.duration || 1, t.amortType || 'constant', t.frequency || 'mensuel', t);
-        rows.push([`Tranche ${t.label}`, t.pct / 100, t.duration, (t.taux || 0) / 100, AMORT_LABELS[t.amortType] || 'Constant', FREQ_LABELS[t.frequency] || 'Mensuel', t.amount, annuity]);
+        rows.push([`Tranche ${t.label}`, t.pct / 100, t.duration, (t.taux || 0) / 100, AMORT_LABELS[t.amortType] || 'Constant', FREQ_LABELS[t.frequency] || 'Mensuel', t.amount, annuity, t.deferral || 0]);
     });
     rows.push([]);
 
     // Autres financements
     if (autresFin.length) {
-        rows.push(['AUTRES FINANCEMENTS', 'Nature', 'Montant', 'Taux / marge (%)', 'Durée (ans)', 'Amortissement', 'Annuité A1']);
-        autresFin.forEach(a => rows.push([a.label, AUTRE_TYPES[a.type] || '', a.amount || 0, a.taux || 0, a.duration || 1, AMORT_LABELS[a.amortType] || 'In Fine',
+        rows.push(['AUTRES FINANCEMENTS', 'Nature', 'Montant', 'Taux / marge (%)', 'Durée (ans)', 'Différé (ans)', 'Amortissement', 'Annuité A1']);
+        autresFin.forEach(a => rows.push([a.label, AUTRE_TYPES[a.type] || '', a.amount || 0, a.taux || 0, a.duration || 1, a.deferral || 0, AMORT_LABELS[a.amortType] || 'In Fine',
             computeAnnuity(a.amount || 0, a.taux || 0, a.duration || 1, a.amortType || 'infine', a.frequency || 'annuel', a)]));
         rows.push([]);
     }
@@ -583,8 +643,8 @@ function loadFromHistory() {
         const nums = arr => (Array.isArray(arr) ? arr.map(n) : undefined);
         if (Array.isArray(p.emplois)) emplois = p.emplois.map(e => ({ ...e, label: String(e.label ?? ''), amount: n(e.amount) }));
         if (Array.isArray(p.detteNonRef)) detteNonRef = p.detteNonRef.map(d => ({ ...d, label: String(d.label ?? ''), amount: n(d.amount) }));
-        if (Array.isArray(p.tranchesSenior)) tranchesSenior = p.tranchesSenior.map(t => ({ ...t, label: String(t.label ?? ''), pct: n(t.pct), duration: n(t.duration) || 1, taux: n(t.taux), balloonPct: t.balloonPct != null ? n(t.balloonPct) : undefined, customProfile: nums(t.customProfile) }));
-        if (Array.isArray(p.autresFin)) autresFin = p.autresFin.map(a => ({ ...a, label: String(a.label ?? ''), amount: n(a.amount), duration: n(a.duration) || 1, taux: n(a.taux) }));
+        if (Array.isArray(p.tranchesSenior)) tranchesSenior = p.tranchesSenior.map(t => ({ ...t, label: String(t.label ?? ''), pct: n(t.pct), duration: n(t.duration) || 1, deferral: Math.max(0, n(t.deferral)), taux: n(t.taux), balloonPct: t.balloonPct != null ? n(t.balloonPct) : undefined, customProfile: nums(t.customProfile) }));
+        if (Array.isArray(p.autresFin)) autresFin = p.autresFin.map(a => ({ ...a, label: String(a.label ?? ''), amount: n(a.amount), duration: n(a.duration) || 1, taux: n(a.taux), deferral: Math.max(0, n(a.deferral)) }));
         if (p.sizing && typeof p.sizing === 'object') sizing = { ...sizing, ...p.sizing };
     }
 
@@ -704,6 +764,7 @@ export const StructuredModule = {
                                 <th>Tranche</th>
                                 <th style="text-align:right">% Senior</th>
                                 <th style="text-align:right">Durée (ans)</th>
+                                <th style="text-align:right" title="Différé d'amortissement, inclus dans la durée">Différé (ans)</th>
                                 <th>Taux</th>
                                 <th style="text-align:right">Taux / marge (%)</th>
                                 <th>Amortissement</th>
@@ -732,11 +793,12 @@ export const StructuredModule = {
             <div class="card section">
                 <div class="card-header">
                     <div class="card-title">Autres financements (hors senior)</div>
+                    <button class="btn btn-sm btn-outline" id="er-add-bpi" title="7 ans dont 2 ans de différé, échéances constantes trimestrielles">${PLUS_SVG} Prêt Bpifrance</button>
                     <button class="btn btn-sm btn-outline" id="er-add-autre">${PLUS_SVG} Ajouter</button>
                 </div>
                 <div class="table-container" style="margin-top:12px">
                     <table class="er-table">
-                        <thead><tr><th>Libellé</th><th>Nature</th><th style="text-align:right">Montant (k€)</th><th>Taux</th><th style="text-align:right">Taux / marge (%)</th><th style="text-align:right">Durée (ans)</th><th>Amortissement</th><th style="text-align:right">Annuité A1 (k€)</th><th></th></tr></thead>
+                        <thead><tr><th>Libellé</th><th>Nature</th><th style="text-align:right">Montant (k€)</th><th>Taux</th><th style="text-align:right">Taux / marge (%)</th><th style="text-align:right">Durée (ans)</th><th style="text-align:right" title="Différé d'amortissement, inclus dans la durée">Différé (ans)</th><th>Amortissement</th><th style="text-align:right">Annuité A1 (k€)</th><th></th></tr></thead>
                         <tbody id="er-autres-body">${renderAutresRows()}</tbody>
                     </table>
                 </div>
@@ -837,6 +899,7 @@ export const StructuredModule = {
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                     Exporter Excel
                 </button>
+                <button class="btn btn-outline" id="er-export-pdf">Exporter PDF</button>
                 <button class="btn btn-outline" id="er-share">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
                     Partager
@@ -905,6 +968,11 @@ export const StructuredModule = {
         autresBody?.addEventListener('input', e => { handleTableInput(e); refreshAutresComputed(); });
         autresBody?.addEventListener('change', e => { handleTableInput(e); refreshAutresComputed(); });
         autresBody?.addEventListener('click', handleRemove);
+        document.getElementById('er-add-bpi')?.addEventListener('click', () => {
+            autresFin.push({ label: 'Prêt Bpifrance', type: 'bpi', amount: 1000, taux: 4.5, duration: 7, deferral: 2, amortType: 'constant', frequency: 'trimestriel', rateType: 'fixed' });
+            autresBody.innerHTML = renderAutresRows();
+            recalculate();
+        });
         document.getElementById('er-add-autre')?.addEventListener('click', () => {
             autresFin.push({ label: 'Crédit vendeur', type: 'vendeur', amount: 1000, taux: 4.0, duration: 5, amortType: 'infine', frequency: 'annuel', rateType: 'fixed' });
             autresBody.innerHTML = renderAutresRows();
@@ -947,6 +1015,7 @@ export const StructuredModule = {
         document.getElementById('er-recalculate')?.addEventListener('click', recalculate);
         document.getElementById('er-save')?.addEventListener('click', saveSimulation);
         document.getElementById('er-export')?.addEventListener('click', exportExcel);
+        document.getElementById('er-export-pdf')?.addEventListener('click', exportPdf);
         document.getElementById('er-share')?.addEventListener('click', shareStructured);
 
         // ── Lien de partage (#structured?s=...) ──

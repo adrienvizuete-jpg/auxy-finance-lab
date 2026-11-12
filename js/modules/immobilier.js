@@ -10,6 +10,9 @@ import { Export } from '../utils/export.js';
 import { Share } from '../utils/share.js';
 import { escapeHtml } from '../utils/sanitize.js';
 import { LoanEngine } from '../utils/loanengine.js';
+import { Handoff } from '../utils/handoff.js';
+import { Storage } from '../utils/storage.js';
+import { Dialog } from '../utils/dialog.js';
 
 // =============================================
 // CONSTANTS
@@ -1155,11 +1158,13 @@ export const ImmobilierModule = {
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
                         Note d'investissement
                     </button>
+                    <button class="btn btn-outline" id="immo-save">Sauvegarder</button>
                     <button class="btn btn-outline" id="immo-share">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
                         Partager
                     </button>
                 </div>
+                <div id="immo-handoff">${Handoff.barHtml(['debtprofile', 'covenants'])}</div>
             </div>
 
             <!-- Results (KPIs) -->
@@ -1311,6 +1316,21 @@ export const ImmobilierModule = {
         });
 
         // ── Partage par URL ──
+        // Le prêt du montage part dans Profil de dette ou Covenants sans ressaisie
+        document.getElementById('immo-handoff')?.addEventListener('click', e => {
+            const btn = e.target.closest('[data-handoff]');
+            if (!btn) return;
+            if (btn.dataset.handoff === 'debtprofile' && state.amortType === 'balloon') {
+                window.showToast?.('Profil de dette ne modélise pas le ballon : envoyez ce prêt vers Covenants', 'warning');
+                return;
+            }
+            Handoff.send(btn.dataset.handoff, [{
+                label: state.propertyName ? `Prêt immobilier — ${state.propertyName}` : 'Prêt immobilier',
+                amount: state.loanAmount, rate: state.annualRate, durationMonths: state.durationMonths,
+                amortType: state.amortType, frequency: state.frequency, balloonPct: state.amortType === 'balloon' ? state.balloonPct : undefined
+            }]);
+        });
+
         document.getElementById('immo-share')?.addEventListener('click', () => {
             Share.copyLink('immobilier', {
                 type: 'immobilier',
@@ -1319,8 +1339,22 @@ export const ImmobilierModule = {
             });
         });
 
-        // ── Lien partagé (#immobilier?s=...) : restaure l'état et recalcule ──
-        const shared = Share.getPayload();
+        // Sauvegarde dans l'Historique (et donc dans le dossier banque)
+        document.getElementById('immo-save')?.addEventListener('click', () => {
+            if (!lastResult) { window.showToast?.('Lancez d\u2019abord le calcul', 'warning'); return; }
+            const defaultName = `Immobilier — ${state.propertyName || Financial.formatCurrency(state.loanAmount)}`;
+            Dialog.save({ defaultName }).then(saved => {
+                if (!saved) return;
+                const results = Object.fromEntries(Object.entries(lastResult).filter(([, v]) => typeof v === 'number' && isFinite(v)));
+                const id = Storage.saveSimulation({ type: 'immobilier', typeLabel: 'Immobilier', name: saved.name, notes: saved.notes, params: { ...state, nature: currentNature, noiMode, ltvSource }, results });
+                window.showToast?.(id ? 'Analyse sauvegardée' : 'Sauvegarde impossible : stockage plein', id ? 'success' : 'error');
+            });
+        });
+
+        // ── Lien partagé (#immobilier?s=...) ou rechargement depuis l'Historique : restaure l'état et recalcule ──
+        const reloaded = /** @type {any} */ (window)._pendingReload?.type === 'immobilier' ? /** @type {any} */ (window)._pendingReload : null;
+        if (reloaded) /** @type {any} */ (window)._pendingReload = null;
+        const shared = Share.getPayload() || (reloaded?.params ? { type: 'immobilier', autorun: true, params: { nature: reloaded.params.nature, noiMode: reloaded.params.noiMode, ltvSource: reloaded.params.ltvSource, state: reloaded.params } } : null);
         if (shared?.type === 'immobilier' && shared.params) {
             const p = shared.params;
             if (NATURE_CONFIG[p.nature]) currentNature = p.nature;

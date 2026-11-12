@@ -27,6 +27,8 @@ import { DossierBar } from '../utils/dossierbar.js';
 import { RefiEngine } from '../utils/refiengine.js';
 import { Dialog } from '../utils/dialog.js';
 import { Dossier } from '../utils/dossier.js';
+import { Handoff } from '../utils/handoff.js';
+import { Draft } from '../utils/draft.js';
 
 // ── State ──
 const now = new Date();
@@ -51,6 +53,33 @@ let loans = [
     { label: 'Crédit-bail matériel', amount: 230000, startYear: 2024, startMonth: 1, durationMonths: 60, rate: 4.8, amortType: 'constant', frequency: 'monthly', isNew: false, crdCheck: null }
 ];
 let lastResult = null;
+// Crédits d'exemple à l'ouverture : remplacés par les prêts reçus d'un autre module
+/** Signature des crédits (libellé, montant, taux) : insensible aux champs ajoutés par un rechargement */
+const loansSig = () => JSON.stringify(loans.map(l => [l.label, l.amount, l.rate]));
+const SAMPLE_LOANS = loansSig();
+
+/** Ligne de crédit « nouveau financement » démarrant le mois suivant la date d'analyse.
+ *  @param {{ label: string, amount: number, rate: number, durationMonths: number, deferralMonths?: number, amortType?: string, frequency?: string }} l */
+function newLoanLine(l, isNew = true) {
+    const start = new Date(analysis.year, analysis.month, 1); // mois suivant (month est en base 1)
+    return {
+        label: l.label, amount: Math.round(l.amount), startYear: start.getFullYear(), startMonth: start.getMonth() + 1,
+        durationMonths: Math.max(1, Math.round(l.durationMonths)), deferralMonths: Math.max(0, Math.round(l.deferralMonths || 0)),
+        rate: l.rate, amortType: ['degressif', 'infine'].includes(l.amortType || '') ? l.amortType : 'constant',
+        frequency: FREQ_OPTIONS[l.frequency || ''] ? l.frequency : 'monthly',
+        isNew, crdCheck: null, lender: '', security: '', bpiPct: 0, exitCostPct: 0, exitCostFixed: 0
+    };
+}
+
+/** Prêts reçus par « Envoyer vers… » : ajoutés comme nouveaux financements */
+function takeHandoff() {
+    const incoming = Handoff.take('debtprofile');
+    if (!incoming.length) return false;
+    const lines = incoming.map(l => newLoanLine(l));
+    loans = loansSig() === SAMPLE_LOANS ? lines : loans.concat(lines);
+    includeNew = true;
+    return true;
+}
 let marketRates = null; // pré-remplissage du taux des nouveaux financements
 // Scénario de refinancement des crédits cochés « Refinancer »
 let refi = { rateType: 'fixed', rate: 4.0, durationMonths: 84, frequency: 'quarterly', amortType: 'constant', upfrontFeePct: 1.0, financeCosts: true, extraAmount: 0, discountRate: 5 };
@@ -101,6 +130,7 @@ function renderLoanRows() {
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${l.amount}" data-field="amount" step="10000" min="0" style="width:105px"></td>
             <td><input class="er-input" type="month" value="${monthValue(l.startYear, l.startMonth)}" data-field="start" style="width:130px"></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${l.durationMonths}" data-field="durationMonths" step="12" min="1" max="480" style="width:65px"></td>
+            <td style="text-align:right"><input class="er-input narrow" type="number" value="${l.deferralMonths || 0}" data-field="deferralMonths" step="12" min="0" max="60" style="width:60px" title="Différé d'amortissement, inclus dans la durée : intérêts seuls (prêt Bpifrance, PGE…)" ${l.amortType === 'infine' ? 'disabled' : ''}></td>
             <td style="text-align:right"><input class="er-input narrow" type="number" value="${l.rate}" data-field="rate" step="0.05" min="0" max="30" style="width:65px"></td>
             <td><select class="er-input" data-field="amortType" style="width:92px;font-size:0.75rem">${Object.entries(AMORT_OPTIONS).map(([k, v]) => `<option value="${k}" ${k === l.amortType ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
             <td><select class="er-input" data-field="frequency" style="width:92px;font-size:0.75rem">${Object.entries(FREQ_OPTIONS).map(([k, v]) => `<option value="${k}" ${k === l.frequency ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
@@ -359,6 +389,14 @@ function recalculate() {
             years: agg.years
         } : { years: [] }
     };
+    // Brouillon : ni la date d'analyse (elle doit suivre le calendrier) ni un nom
+    // qui vient du client actif (il doit continuer à le suivre)
+    {
+        const draft = { ...lastResult.params };
+        delete draft.analysis;
+        if (nameFromActive) delete draft.dossierName;
+        Draft.save('debtprofile', draft);
+    }
 }
 
 // ── Actions ──
@@ -436,12 +474,12 @@ function exportExcel() {
         ['Date d\'analyse', analysisLabel()],
         ['Clôture d\'exercice', closingMonth === 12 ? 'Décembre (année civile)' : MONTH_NAMES[closingMonth - 1]],
         [''],
-        ['CRÉDITS', 'Montant initial (€)', '1ère échéance', 'Durée (mois)', 'Taux (%)', 'Amortissement', 'Périodicité', 'Nouveau', 'CRD à l\'analyse (€)', 'CRD constaté (€)']
+        ['CRÉDITS', 'Montant initial (€)', '1ère échéance', 'Durée (mois)', 'Différé (mois)', 'Taux (%)', 'Amortissement', 'Périodicité', 'Nouveau', 'CRD à l\'analyse (€)', 'CRD constaté (€)']
     ].filter(row => row.length);
     const aIdx = analysisIdx();
     validLoans().forEach(l => {
         const crd = DebtEngine.crdAt(DebtEngine.buildSchedule(l), aIdx);
-        inv.push([l.label, l.amount, monthValue(l.startYear, l.startMonth), l.durationMonths, l.rate,
+        inv.push([l.label, l.amount, monthValue(l.startYear, l.startMonth), l.durationMonths, l.deferralMonths || 0, l.rate,
             AMORT_OPTIONS[l.amortType], FREQ_OPTIONS[l.frequency], l.isNew ? 'Oui' : '', Math.round(crd), l.crdCheck ?? '']);
     });
     const wsInv = XLSX.utils.aoa_to_sheet(inv);
@@ -568,7 +606,9 @@ function liveDebtsForCovenants() {
             // durée résiduelle exacte en mois, exprimée en années décimales
             durationYears: Math.max(1 / 12, Math.round((s.sched.lastIdx - Math.max(aIdx, s.sched.firstIdx - 1)) / 12 * 100) / 100),
             amortType: s.loan.amortType,
-            frequency: s.loan.frequency
+            frequency: s.loan.frequency,
+            // différé restant à courir à la date d'analyse
+            deferralMonths: Math.max(0, (s.sched.firstIdx - 1 + (s.loan.deferralMonths || 0)) - Math.max(aIdx, s.sched.firstIdx - 1))
         }))
         .filter(d => d.amount > 0);
 }
@@ -714,6 +754,7 @@ function loadParams(p) {
                 startYear: parseInt(l.startYear) || analysis.year,
                 startMonth: Math.min(12, Math.max(1, parseInt(l.startMonth) || 1)),
                 durationMonths: Math.max(1, parseInt(l.durationMonths) || 1),
+                deferralMonths: Math.max(0, parseInt(l.deferralMonths) || 0),
                 rate: parseFloat(l.rate) || 0,
                 amortType: AMORT_OPTIONS[l.amortType] ? l.amortType : 'constant',
                 frequency: FREQ_OPTIONS[l.frequency] ? l.frequency : 'monthly',
@@ -795,6 +836,7 @@ export const DebtProfileModule = {
                                 <th style="text-align:right">Montant initial (€)</th>
                                 <th>1ère échéance</th>
                                 <th style="text-align:right">Durée (mois)</th>
+                                <th style="text-align:right" title="Différé d'amortissement, inclus dans la durée">Différé (mois)</th>
                                 <th style="text-align:right">Taux (%)</th>
                                 <th>Amortissement</th>
                                 <th>Périodicité</th>
@@ -938,7 +980,17 @@ export const DebtProfileModule = {
         // Dossier client : nom et dettes vivantes (CRD, durée résiduelle) → Covenants
         DossierBar.bind({
             toDossier: () => ({ ...(dossierName ? { name: dossierName } : {}), debts: liveDebtsForCovenants(), source: 'module Profil de dette' }),
-            fromDossier: d => { dossierName = d.name.slice(0, 80); this._rerenderInputs(); }
+            fromDossier: d => {
+                dossierName = d.name.slice(0, 80);
+                nameFromActive = true;
+                // dettes du dossier (format Covenants, k€, durées résiduelles) → crédits existants
+                const fromDossier = (d.debts || []).filter(x => x.amount > 0).map(x => newLoanLine({ label: x.label, amount: x.amount * 1000, rate: x.rate, durationMonths: Math.max(1, Math.round(x.durationYears * 12)), deferralMonths: x.deferralMonths, amortType: x.amortType, frequency: x.frequency }, false));
+                const apply = () => { loans = fromDossier; this._rerenderInputs(); recalculate(); };
+                if (!fromDossier.length) { this._rerenderInputs(); return; }
+                if (loansSig() === SAMPLE_LOANS) { apply(); return; }
+                this._rerenderInputs();
+                Dialog.confirm(`Le dossier contient ${fromDossier.length} dette${fromDossier.length > 1 ? 's' : ''}. Elles remplaceront les crédits saisis ici.`, { title: 'Charger les dettes du dossier ?', confirmLabel: 'Remplacer' }).then(ok => { if (ok) apply(); });
+            }
         });
 
         // Taux de marché pour le pré-remplissage des nouveaux financements
@@ -1045,6 +1097,8 @@ export const DebtProfileModule = {
             loadParams(pending.params);
             this._rerenderInputs();
         }
+        // Après le rechargement éventuel (brouillon compris) : le prêt reçu s'ajoute à l'état restauré
+        if (takeHandoff()) this._rerenderInputs();
 
         recalculate();
     },

@@ -341,3 +341,105 @@ describe('parseNumber — séparateurs de milliers', () => {
         assert.equal(Financial.parseNumber('1,000.50'), 1000.5);
     });
 });
+
+describe('Prêt Bpifrance — différé puis échéances constantes', () => {
+    const near = (/** @type {number} */ a, /** @type {number} */ b, tol = 1e-6) => assert.ok(Math.abs(a - b) <= tol, `${a} ≠ ${b}`);
+    const base = { principal: 1000000, annualRate: 4, durationYears: 7, deferralYears: 2, frequency: 'quarterly' };
+
+    test('7 ans dont 2 de différé : 8 trimestres d\'intérêts seuls, puis 20 échéances constantes', () => {
+        const r = Financial.pretBpifrance(base);
+        assert.equal(r.schedule.length, 28);
+        const deferred = r.schedule.slice(0, 8);
+        deferred.forEach(row => {
+            assert.equal(row.principal, 0);
+            near(row.payment, 1000000 * 0.04 / 4, 1e-6);
+            near(row.balance, 1000000, 1e-6);
+        });
+        near(r.deferralPayment, 10000, 1e-6);
+        const amort = r.schedule.slice(8);
+        // échéance = annuité constante sur 20 trimestres à 1 % par trimestre
+        const expected = 1000000 * 0.01 / (1 - Math.pow(1.01, -20));
+        amort.forEach(row => near(row.payment, expected, 1e-6));
+        near(r.schedule[27].balance, 0, 1e-4);
+        assert.equal(r.amortYears, 5);
+        near(/** @type {number} */ (r.teg), 4, 1e-6);
+    });
+
+    test('durée de 10 ans et différé de 3 ans : amortissement sur 7 ans', () => {
+        const r = Financial.pretBpifrance({ ...base, durationYears: 10, deferralYears: 3 });
+        assert.equal(r.schedule.filter(row => row.deferred).length, 12);
+        assert.equal(r.schedule.length, 40);
+        assert.equal(r.amortYears, 7);
+    });
+
+    test('option capital constant : même capital à chaque échéance après le différé', () => {
+        const r = Financial.pretBpifrance({ ...base, amortProfile: 'degressif' });
+        r.schedule.slice(8).forEach(row => near(row.principal, 1000000 / 20, 1e-6));
+        assert.equal(r.amortProfile, 'degressif');
+    });
+
+    test('un différé égal à la durée est ramené à durée − 1 an', () => {
+        const r = Financial.pretBpifrance({ ...base, durationYears: 3, deferralYears: 3 });
+        assert.equal(r.amortYears, 1);
+        near(r.schedule[r.schedule.length - 1].balance, 0, 1e-4);
+    });
+});
+
+describe('Prêt Bpifrance — retenue de garantie et cofinancement', () => {
+    const near = (/** @type {number} */ a, /** @type {number} */ b, tol = 1e-6) => assert.ok(Math.abs(a - b) <= tol, `${a} ≠ ${b}`);
+    const base = { principal: 1000000, annualRate: 4, durationYears: 7, deferralYears: 2, frequency: 'quarterly' };
+
+    test('retenue de 5 % : net décaissé 950 k€, restituée à la fin, TEG au-dessus du taux facial', () => {
+        const r = Financial.pretBpifrance({ ...base, retenuePct: 5 });
+        near(r.retenueAmount, 50000);
+        near(r.netDisbursed, 950000);
+        near(r.retenueRefund, 50000);
+        near(/** @type {number} */ (r.tegExRetenue), 4, 1e-6);
+        assert.ok(/** @type {number} */ (r.teg) > 4.05 && /** @type {number} */ (r.teg) < 4.4, `TEG ${r.teg}`);
+        // le TEG trouvé annule bien la valeur actuelle des flux nets
+        const i = /** @type {number} */ (r.teg) / 100 / 4;
+        const flows = [-950000, ...r.schedule.map(x => x.payment)];
+        flows[flows.length - 1] -= 50000;
+        near(flows.reduce((s, f, k) => s + f / Math.pow(1 + i, k), 0), 0, 1e-3);
+    });
+
+    test('retenue rémunérée au taux du prêt : le TEG revient au taux facial', () => {
+        const r = Financial.pretBpifrance({ ...base, retenuePct: 5, retenueRate: 4 });
+        near(/** @type {number} */ (r.teg), 4, 1e-6);
+        assert.ok(r.retenueRefund > 50000);
+    });
+
+    test('cofinancement : l\'échéancier consolidé est la somme des deux prêts', () => {
+        const c = Financial.cofinancementBpifrance({ bpi: { ...base, retenuePct: 5 }, bank: { principal: 1000000, annualRate: 4.5, durationYears: 7 }, frequency: 'quarterly' });
+        assert.equal(c.schedule.length, 28);
+        c.schedule.forEach((row, k) => near(row.payment, c.loans.bpi.schedule[k].payment + c.loans.bank.schedule[k].payment, 1e-6));
+        near(c.totalPrincipal, 2000000);
+        near(c.weightedRate, 4.25);
+        near(c.schedule[27].balance, 0, 1e-3);
+        near(c.totalInterest, c.loans.bpi.totalInterest + c.loans.bank.totalInterest, 1e-4);
+        // pic du service de dette après le différé Bpifrance
+        assert.ok(c.peakYear >= 3, `pic année ${c.peakYear}`);
+        assert.ok(/** @type {number} */ (c.teg) > 4.25);
+    });
+
+    test('cofinancement : durées différentes (banque 5 ans, Bpifrance 10 ans)', () => {
+        const c = Financial.cofinancementBpifrance({ bpi: { ...base, durationYears: 10, deferralYears: 3 }, bank: { principal: 500000, annualRate: 4.5, durationYears: 5 }, frequency: 'quarterly' });
+        assert.equal(c.schedule.length, 40);
+        near(c.schedule[20].payment, c.loans.bpi.schedule[20].payment, 1e-6);
+    });
+});
+
+describe('Tranching — prêt Bpifrance avec différé dans un pool', () => {
+    test('la tranche en différé ne paie que ses intérêts, le consolidé en tient compte', () => {
+        const senior = { name: 'Senior A', amount: 3000000, rate: 4, duration: 84, type: 'constant', frequency: 'quarterly' };
+        const bpi = { name: 'Prêt Bpifrance', amount: 1000000, rate: 4, duration: 84, deferral: 24, type: 'constant', frequency: 'quarterly' };
+        const r = Financial.tranching([senior, bpi]);
+        const b = r.tranches.find(t => t.name === 'Prêt Bpifrance');
+        assert.ok(b, 'tranche Bpifrance présente');
+        assert.equal(b.result.schedule.filter(x => x.deferred).length, 8);
+        assert.ok(Math.abs(b.result.schedule[0].payment - 10000) < 1e-6);
+        const flat = Financial.tranching([senior, { ...bpi, deferral: 0 }]);
+        const y1 = (/** @type {any} */ x) => x.consolidated.schedule.slice(0, 12).reduce((/** @type {number} */ s, /** @type {any} */ row) => s + row.payment, 0);
+        assert.ok(y1(r) < y1(flat) - 100000, 'service de dette année 1 allégé par le différé');
+    });
+});

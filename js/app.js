@@ -3,15 +3,6 @@
  * Main Application Entry Point
  */
 
-import { DashboardModule } from './modules/dashboard.js';
-import { CreditModule } from './modules/credit.js';
-import { StructuredModule } from './modules/structured.js';
-import { BenchmarkModule } from './modules/benchmark.js';
-import { CalculatorModule, StressTestModule } from './modules/tools.js';
-import { HistoryModule } from './modules/history.js';
-import { ImmobilierModule } from './modules/immobilier.js';
-import { CovenantsModule } from './modules/covenants.js';
-import { DebtProfileModule } from './modules/debtprofile.js';
 import { Storage } from './utils/storage.js';
 import { Cloud } from './utils/cloud.js';
 import { initExportLibs } from './utils/libs.js';
@@ -22,23 +13,29 @@ import { Dialog } from './utils/dialog.js';
 import * as FormState from './utils/formstate.js';
 import { mountKpiBar } from './utils/kpibar.js';
 import { initContextBar } from './utils/contextbar.js';
+import { Draft } from './utils/draft.js';
 
 // =============================================
 // MODULE REGISTRY
 // =============================================
 
-const modules = {
-    dashboard: DashboardModule,
-    credit: CreditModule,
-    structured: StructuredModule,
-    benchmark: BenchmarkModule,
-    immobilier: ImmobilierModule,
-    covenants: CovenantsModule,
-    debtprofile: DebtProfileModule,
-    calculator: CalculatorModule,
-    stress: StressTestModule,
-    history: HistoryModule
-};
+// Chaque module est importé à sa première ouverture : le premier affichage
+// ne télécharge plus les dix modules (le service worker les garde hors ligne).
+const loaders = /** @type {Record<string, () => Promise<any>>} */ ({
+    dashboard: () => import('./modules/dashboard.js').then(m => m.DashboardModule),
+    credit: () => import('./modules/credit.js').then(m => m.CreditModule),
+    structured: () => import('./modules/structured.js').then(m => m.StructuredModule),
+    benchmark: () => import('./modules/benchmark.js').then(m => m.BenchmarkModule),
+    immobilier: () => import('./modules/immobilier.js').then(m => m.ImmobilierModule),
+    covenants: () => import('./modules/covenants.js').then(m => m.CovenantsModule),
+    debtprofile: () => import('./modules/debtprofile.js').then(m => m.DebtProfileModule),
+    calculator: () => import('./modules/tools.js').then(m => m.CalculatorModule),
+    stress: () => import('./modules/tools.js').then(m => m.StressTestModule),
+    history: () => import('./modules/history.js').then(m => m.HistoryModule)
+});
+
+/** Modules déjà chargés */
+const modules = /** @type {Record<string, any>} */ ({});
 
 /** Unité des montants saisis par module (affichée dans chaque champ montant) */
 const AMOUNT_UNITS = /** @type {Record<string, string>} */ ({
@@ -51,7 +48,7 @@ let currentPage = 'dashboard';
 let renderedPage = '';
 /** @type {(() => void) | undefined} */
 let refreshContext;
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 
 // =============================================
 // ROUTER
@@ -64,7 +61,7 @@ const APP_VERSION = '1.3.0';
  *   vient lui-même de changer d'URL (Retour / Suivant), 'replace' au démarrage.
  */
 function navigateTo(page, { history: mode = 'push' } = {}) {
-    if (!modules[page]) page = 'dashboard';
+    if (!loaders[page]) page = 'dashboard';
     currentPage = page;
 
     // Update nav (+ page courante annoncée aux lecteurs d'écran)
@@ -78,12 +75,35 @@ function navigateTo(page, { history: mode = 'push' } = {}) {
     // Titre d'onglet par module : onglets et historique du navigateur lisibles
     document.title = `${label || 'Accueil'} · Auxy Finance Lab`;
 
+    // Close mobile sidebar
+    document.getElementById('sidebar')?.classList.remove('open');
+
+    // Historique : jamais d'entrée ajoutée sur un Retour / Suivant (sinon le
+    // bouton Retour tourne en boucle sur la même page). Mis à jour APRÈS le
+    // rendu : init() du module lit d'abord le lien de partage (#page?s=…).
+    const show = () => {
+        renderPage(page);
+        if (mode === 'push' && location.hash.split('?')[0] !== `#${page}`) history.pushState(null, '', `#${page}`);
+        else if (mode === 'replace') history.replaceState(null, '', `#${page}`);
+    };
+
+    // Rendu immédiat si le module est déjà chargé, sinon dès son arrivée
+    if (modules[page]) { show(); return; }
+    loaders[page]().then(mod => {
+        modules[page] = mod;
+        if (currentPage === page) show(); // l'utilisateur n'est pas reparti ailleurs entre-temps
+    }).catch(() => showToast('Module indisponible (connexion ?) — réessayez', 'error'));
+}
+
+/** Affiche un module chargé. @param {string} page */
+function renderPage(page) {
     // Render page (saisies de la page quittée gardées pour le retour)
     const container = document.getElementById('page-container');
     if (container) {
         if (renderedPage && FormState.DOM_STATE_PAGES.has(renderedPage)) FormState.save(renderedPage, container);
         FormState.reset();
         renderedPage = page;
+        Draft.restore(page); // travail non sauvegardé d'avant un rechargement de la page
         if (AMOUNT_UNITS[page]) container.dataset.amountUnit = AMOUNT_UNITS[page];
         else delete container.dataset.amountUnit;
         container.innerHTML = modules[page].render();
@@ -103,14 +123,6 @@ function navigateTo(page, { history: mode = 'push' } = {}) {
         mountKpiBar(page, container);
     }
     refreshContext?.();
-
-    // Historique : jamais d'entrée ajoutée sur un Retour / Suivant (sinon le
-    // bouton Retour tourne en boucle sur la même page)
-    if (mode === 'push' && location.hash.split('?')[0] !== `#${page}`) history.pushState(null, '', `#${page}`);
-    else if (mode === 'replace') history.replaceState(null, '', `#${page}`);
-
-    // Close mobile sidebar
-    document.getElementById('sidebar')?.classList.remove('open');
 }
 
 // Expose globally for modules
@@ -355,6 +367,12 @@ function init() {
         });
     });
 
+    // Stockage plein : les plus anciennes simulations ont été retirées — on prévient
+    window.addEventListener('storage:purged', e => {
+        const n = /** @type {CustomEvent} */ (e).detail?.removed || 0;
+        showToast(`Stockage du navigateur plein : ${n} simulation${n > 1 ? 's' : ''} parmi les plus anciennes ${n > 1 ? 'ont été retirées' : 'a été retirée'} de l'Historique. Exportez ou synchronisez pour ne rien perdre.`, 'error');
+    });
+
     // En-tête : client actif et parcours de mission ; l'accueil suit le dossier
     refreshContext = initContextBar(() => currentPage);
     window.addEventListener('dossier:change', () => {
@@ -417,6 +435,11 @@ function init() {
 
     // Bibliothèques d'export (jsPDF, SheetJS) : après le premier affichage
     initExportLibs();
+
+    // Autres modules préchargés au calme : la navigation reste instantanée
+    setTimeout(() => Object.entries(loaders).forEach(([page, load]) => {
+        if (!modules[page]) load().then(mod => { modules[page] = modules[page] || mod; }).catch(() => { /* rechargé au clic */ });
+    }), 2500);
 
     // Service worker (PWA) — uniquement servi en http(s), ignoré en file://
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {

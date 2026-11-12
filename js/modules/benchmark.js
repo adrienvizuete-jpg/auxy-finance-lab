@@ -7,6 +7,10 @@ import { Financial } from '../utils/financial.js';
 import { Charts } from '../utils/charts.js';
 import { Export } from '../utils/export.js';
 import { escapeHtml } from '../utils/sanitize.js';
+import { Handoff } from '../utils/handoff.js';
+import * as FormState from '../utils/formstate.js';
+import { Storage } from '../utils/storage.js';
+import { Dialog } from '../utils/dialog.js';
 
 const MAX_LOANS = 5;
 
@@ -316,6 +320,7 @@ function renderComparison() {
             <div class="card-header">
                 <div class="card-title">Tableau comparatif</div>
                 <div class="btn-group">
+                    <button class="btn btn-sm btn-outline" id="bench-save">Sauvegarder</button>
                     <button class="btn btn-sm btn-outline" id="bench-export-excel">Excel</button>
                     <button class="btn btn-sm btn-accent" id="bench-export-pdf">PDF</button>
                 </div>
@@ -443,6 +448,19 @@ function renderComparison() {
     // Export handlers
     // onclick (et non addEventListener) : un seul export par clic même après
     // plusieurs comparaisons successives
+    const saveBtn = document.getElementById('bench-save');
+    if (saveBtn) saveBtn.onclick = () => {
+        const best = results.reduce((a, b) => (a.totalCost <= b.totalCost ? a : b));
+        Dialog.save({ defaultName: `Benchmark — ${results.length} prêts` }).then(saved => {
+            if (!saved) return;
+            const id = Storage.saveSimulation({
+                type: 'benchmark', typeLabel: 'Benchmark', name: saved.name, notes: saved.notes,
+                params: { loans: JSON.parse(JSON.stringify(loans)) },
+                results: { loanCount: results.length, bestLoan: best.name, totalCost: best.totalCost, taeg: best.taeg }
+            });
+            window.showToast?.(id ? 'Comparaison sauvegardée' : 'Sauvegarde impossible : stockage plein', id ? 'success' : 'error');
+        });
+    };
     const pdfBtn = document.getElementById('bench-export-pdf');
     if (pdfBtn) pdfBtn.onclick = () => Export.benchmarkPdf(results);
     const xlsBtn = document.getElementById('bench-export-excel');
@@ -478,6 +496,25 @@ function renderComparison() {
 
 export const BenchmarkModule = {
     render() {
+        // Comparaison rechargée depuis l'Historique
+        const reloaded = /** @type {any} */ (window)._pendingReload;
+        if (reloaded?.type === 'benchmark') {
+            /** @type {any} */ (window)._pendingReload = null;
+            const saved = Array.isArray(reloaded.params?.loans) ? reloaded.params.loans.slice(0, MAX_LOANS) : [];
+            if (saved.length >= 2) {
+                loans.splice(0, loans.length, ...saved.map((/** @type {any} */ l) => ({ ...defaultLoan(String(l.name ?? 'Prêt')), ...l })));
+                FormState.prefill('benchmark', {}, ['click:run-benchmark']);
+            }
+        }
+        // Prêt reçu par « Envoyer vers… » : il prend la place du prêt A, à comparer aux autres
+        const incoming = Handoff.take('benchmark')[0];
+        if (incoming) {
+            Object.assign(loans[0], defaultLoan(incoming.label), {
+                principal: incoming.amount, rate: incoming.rate, duration: incoming.durationMonths,
+                type: ['degressif', 'infine'].includes(incoming.amortType || '') ? incoming.amortType : 'constant'
+            });
+            FormState.forget('benchmark'); // les saisies gardées ne doivent pas écraser ce prêt
+        }
         return `
             <div class="page-header">
                 <h1>Benchmark - Comparaison de Prêts</h1>

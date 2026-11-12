@@ -71,3 +71,28 @@ test('suppression locale : tombe enregistrée pour propagation au cloud', () => 
     Storage.clearTombstones(['aaa111bbb']);
     assert.deepEqual(Storage.getTombstones().map(t => t.id), ['ccc222ddd']);
 });
+
+// ── Historique allégé ──
+test('slimResults retire l\'échéancier et les grands tableaux, garde la synthèse', async () => {
+    const { slimResults } = await import('../js/utils/storage.js');
+    const { Financial } = await import('../js/utils/financial.js');
+    const full = Financial.amortissableConstant({ principal: 500000, annualRate: 4.5, durationMonths: 240 });
+    const slim = slimResults({ ...full, loans: { a: { schedule: full.schedule, totalInterest: 1 } }, rows: full.schedule, years: [1, 2, 3] });
+    assert.equal(slim.schedule, undefined);
+    assert.equal(slim.rows, undefined);
+    assert.equal(slim.loans.a.schedule, undefined);
+    assert.equal(slim.loans.a.totalInterest, 1);
+    assert.deepEqual(slim.years, [1, 2, 3]);
+    assert.equal(slim.totalInterest, full.totalInterest);
+    assert.ok(JSON.stringify(slim).length < 1500, `${JSON.stringify(slim).length} octets`);
+});
+
+test('l\'échéancier se recalcule à l\'identique depuis les paramètres', async () => {
+    const { recomputeSchedule } = await import('../js/utils/creditcompute.js');
+    const { Financial } = await import('../js/utils/financial.js');
+    const p = { principal: 500000, annualRate: 4.5, durationMonths: 84, frequency: 'quarterly', deferralMonths: 12 };
+    assert.deepEqual(recomputeSchedule('constant', p), Financial.amortissableConstant(p).schedule);
+    const bpi = { principal: 1000000, annualRate: 4, durationMonths: 84, deferralMonths: 24, frequency: 'quarterly', amortProfile: 'constant', retenuePct: 5, cofinancement: true, bankAmount: 500000, bankRate: 4.5, bankDurationMonths: 84, bankDeferralMonths: 0, bankProfile: 'constant' };
+    assert.equal(recomputeSchedule('bpi', bpi)?.length, 28);
+    assert.equal(recomputeSchedule('covenants', {}), null);
+});

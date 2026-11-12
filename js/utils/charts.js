@@ -410,55 +410,6 @@ export const Charts = {
     },
 
     /**
-     * Waterfall chart for structured finance
-     */
-    waterfallChart(canvasId, tranches, metric) {
-        this.destroy(canvasId);
-        const ctx = document.getElementById(canvasId);
-        if (!ctx) return;
-        const theme = getThemeColors();
-        const trancheColors = { senior: COLORS.primary, mezzanine: COLORS.accent, equity: COLORS.dark, junior: COLORS.teal };
-
-        chartInstances[canvasId] = new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: tranches.map(t => t.name),
-                datasets: [{
-                    data: tranches.map(t => t[metric]),
-                    backgroundColor: tranches.map(t => (trancheColors[t.type] || COLORS.gray) + 'cc'),
-                    borderRadius: 6,
-                    maxBarThickness: 80
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        backgroundColor: theme.bg,
-                        titleColor: theme.text,
-                        bodyColor: theme.text,
-                        borderColor: theme.grid,
-                        borderWidth: 1
-                    }
-                },
-                scales: {
-                    x: { grid: { display: false }, ticks: { color: theme.text } },
-                    y: {
-                        grid: { color: theme.grid },
-                        ticks: {
-                            color: theme.text,
-                            callback: v => new Intl.NumberFormat('fr-FR', { notation: 'compact' }).format(v) + ' \u20ac'
-                        }
-                    }
-                }
-            }
-        });
-        return chartInstances[canvasId];
-    },
-
-    /**
      * Capture un graphique en image PNG (dataURL) pour insertion dans un PDF.
      * Le canvas Chart.js est transparent : on le compose sur le fond du thème
      * courant pour rester lisible (blanc en mode clair).
@@ -580,57 +531,6 @@ export const Charts = {
                         ticks: { color: theme.text, callback: v => v.toFixed(1) + 'x' },
                         beginAtZero: true
                     }
-                }
-            }
-        });
-        return chartInstances[canvasId];
-    },
-
-    /**
-     * Mur de la dette : barres empilées (capital remboursé par an), une série par ligne de dette.
-     * series = [{ label, data }]
-     */
-    debtWall(canvasId, labels, series, { unit = '€' } = {}) {
-        this.destroy(canvasId);
-        const ctx = document.getElementById(canvasId);
-        if (!ctx) return;
-        const theme = getThemeColors();
-        const fmt = v => new Intl.NumberFormat('fr-FR', { notation: 'compact', compactDisplay: 'short' }).format(v) + ' ' + unit;
-
-        chartInstances[canvasId] = new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels,
-                datasets: series.map((s, i) => ({
-                    label: s.label,
-                    data: s.data,
-                    backgroundColor: COLORS.series[i % COLORS.series.length] + 'cc',
-                    borderRadius: 3,
-                    maxBarThickness: 64
-                }))
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: { intersect: false, mode: 'index' },
-                plugins: {
-                    legend: { position: 'top', labels: { color: theme.text, usePointStyle: true, padding: 16 } },
-                    tooltip: {
-                        backgroundColor: theme.bg,
-                        titleColor: theme.text,
-                        bodyColor: theme.text,
-                        borderColor: theme.grid,
-                        borderWidth: 1,
-                        padding: 12,
-                        callbacks: {
-                            label: c => `${c.dataset.label}: ${new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(c.raw)}`,
-                            footer: items => `Total : ${new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(items.reduce((s, it) => s + it.raw, 0))}`
-                        }
-                    }
-                },
-                scales: {
-                    x: { stacked: true, grid: { display: false }, ticks: { color: theme.text } },
-                    y: { stacked: true, grid: { color: theme.grid }, ticks: { color: theme.text, callback: fmt } }
                 }
             }
         });

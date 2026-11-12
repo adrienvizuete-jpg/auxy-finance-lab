@@ -2122,3 +2122,7 @@ input[type="month"].form-input {
 @media (max-width: 768px) { .home-missions, .home-stats { grid-template-columns: 1fr; } }
 .bank-pack { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 45vh; overflow: auto; }
 .bank-pack-row { padding: 8px 10px; border: 1px solid var(--border-color); border-radius: 8px; }
+
+/* « Envoyer vers… » : un prêt passe d'un module à l'autre sans ressaisie */
+.handoff-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 14px; }
+.handoff-label { font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }

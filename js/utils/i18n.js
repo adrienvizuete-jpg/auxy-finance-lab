@@ -29,6 +29,19 @@ export const PARAM_LABELS = {
     frequency: "Fréquence d'amortissement",
     deferralMonths: 'Différé (mois)',
     deferralType: 'Type de différé',
+    amortProfile: 'Amortissement après différé',
+    rateMin: 'Taux minimum testé',
+    rateMax: 'Taux maximum testé',
+    rateStep: 'Pas de taux',
+    loans: 'Prêts comparés',
+    retenuePct: 'Retenue de garantie (%)',
+    retenueRate: 'Rémunération de la retenue (%)',
+    cofinancement: 'Cofinancement bancaire',
+    bankAmount: 'Prêt bancaire — montant',
+    bankRate: 'Prêt bancaire — taux',
+    bankDurationMonths: 'Prêt bancaire — durée',
+    bankDeferralMonths: 'Prêt bancaire — différé',
+    bankProfile: 'Prêt bancaire — amortissement',
     // Immobilier
     propertyValue: 'Valeur du bien (\u20ac)',
     acquisitionCost: 'Co\u00fbt d\'acquisition (\u20ac)',
@@ -46,6 +59,7 @@ export const PARAM_LABELS = {
 
 /** @type {Record<string, string>} */
 export const RESULT_LABELS = {
+    periodicPayment: '\u00c9ch\u00e9ance',
     monthlyPayment: 'Mensualit\u00e9',
     monthlyPaymentExInsurance: 'Mensualit\u00e9 hors assurance',
     totalInterest: 'Total int\u00e9r\u00eats',
@@ -53,6 +67,22 @@ export const RESULT_LABELS = {
     totalCost: 'Co\u00fbt total',
     totalPayment: 'Total rembours\u00e9',
     taeg: 'TAEG',
+    loanCount: 'Pr\u00eats compar\u00e9s',
+    bestLoan: 'Pr\u00eat le moins co\u00fbteux',
+    worstRate: 'Pire sc\u00e9nario \u2014 taux',
+    worstDurationMonths: 'Pire sc\u00e9nario \u2014 dur\u00e9e',
+    worstTotalCost: 'Pire sc\u00e9nario \u2014 co\u00fbt total',
+    retenueAmount: 'Retenue de garantie',
+    netDisbursed: 'Net d\u00e9caiss\u00e9',
+    retenueRefund: 'Retenue restitu\u00e9e en fin de pr\u00eat',
+    tegExRetenue: 'TEG hors retenue de garantie',
+    totalPrincipal: 'Financement total',
+    bpiShare: 'Part Bpifrance',
+    firstYearService: 'Service de dette ann\u00e9e 1',
+    peakService: 'Service de dette maximal',
+    peakYear: 'Ann\u00e9e du service maximal',
+    deferralPayment: '\u00c9ch\u00e9ance pendant le diff\u00e9r\u00e9 (int\u00e9r\u00eats seuls)',
+    amortYears: 'Dur\u00e9e d\u2019amortissement apr\u00e8s diff\u00e9r\u00e9',
     firstPayment: '1\u00e8re mensualit\u00e9',
     lastPayment: 'Derni\u00e8re mensualit\u00e9',
     averagePayment: 'Mensualit\u00e9 moyenne',
@@ -90,6 +120,7 @@ export const TYPE_LABELS = {
     constant: 'Amortissable Constant',
     degressif: 'Amortissable D\u00e9gressif',
     infine: 'In Fine',
+    bpi: 'Pr\u00eat Bpifrance',
     creditbail: 'Cr\u00e9dit-Bail',
     revolving: 'Revolving',
     relais: 'Pr\u00eat Relais',
@@ -97,6 +128,8 @@ export const TYPE_LABELS = {
     structured: 'Financement Structur\u00e9',
     tranching: 'Tranching (LBO)',
     immobilier: 'Immobilier',
+    benchmark: 'Benchmark',
+    stress: 'Sensibilit\u00e9 taux \u00d7 dur\u00e9e',
     covenants: 'Covenants & DSCR',
     debtprofile: 'Profil de Dette'
 };
@@ -116,21 +149,21 @@ export function t(key, dict = null) {
 /** @type {Record<string, 'pct' | 'months' | 'eur' | 'keur' | 'x' | 'years' | 'count' | 'enum'>} */
 const KEY_FORMATS = {
     // pourcentages
-    annualRate: 'pct', rate: 'pct', cashRate: 'pct', pikRate: 'pct', insuranceRate: 'pct', taeg: 'pct', teg: 'pct',
+    annualRate: 'pct', rate: 'pct', retenuePct: 'pct', retenueRate: 'pct', rateMin: 'pct', rateMax: 'pct', rateStep: 'pct', worstRate: 'pct', bankRate: 'pct', tegExRetenue: 'pct', bpiShare: 'pct', cashRate: 'pct', pikRate: 'pct', insuranceRate: 'pct', taeg: 'pct', teg: 'pct',
     ltv: 'pct', utilization: 'pct', growthPct: 'pct', allInCost: 'pct', effectiveRate: 'pct', lineCostRate: 'pct',
     commitmentFee: 'pct', equityKicker: 'pct', firstRentPct: 'pct', weightedRate: 'pct', pctFP: 'pct', pctSenior: 'pct',
     taxPct: 'pct', capexPct: 'pct', wcPct: 'pct', carryingCostPct: 'pct', amortized3yPct: 'pct',
     // durées
-    durationMonths: 'months', deferralMonths: 'months', finalRecoveryMonth: 'months', effectiveDurationMonths: 'months',
-    horizon: 'years', wal: 'years',
+    durationMonths: 'months', deferralMonths: 'months', bankDurationMonths: 'months', bankDeferralMonths: 'months', worstDurationMonths: 'months', finalRecoveryMonth: 'months', effectiveDurationMonths: 'months',
+    horizon: 'years', wal: 'years', amortYears: 'years',
     // ratios
     dscrMin: 'x', leverageMax: 'x', covenantDscr: 'x', covenantLeverage: 'x', ratioLevier: 'x',
     // montants en k€ (modules Structuré / Covenants)
     ebitda: 'keur', fondsPropres: 'keur', tresorerieMin: 'keur', openingCash: 'keur', totalEmplois: 'keur',
     totalDetteNonRef: 'keur', detteSenior: 'keur', detteFinClosing: 'keur', dfn: 'keur', veRetenue: 'keur', excesFP: 'keur',
     // compteurs et libellés
-    dscrMinYear: 'count', leverageMaxYear: 'count', newCount: 'count',
-    frequency: 'enum', deferralType: 'enum', amortType: 'enum', paymentTiming: 'enum', pikCompounding: 'enum',
+    dscrMinYear: 'count', leverageMaxYear: 'count', newCount: 'count', peakYear: 'count', loanCount: 'count',
+    frequency: 'enum', deferralType: 'enum', amortType: 'enum', amortProfile: 'enum', bankProfile: 'enum', paymentTiming: 'enum', pikCompounding: 'enum',
     interestMode: 'enum', globalStatus: 'enum', dscrBasis: 'enum', strategy: 'enum', iraMode: 'enum'
 };
 

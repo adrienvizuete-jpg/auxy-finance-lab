@@ -167,18 +167,18 @@ async function run() {
         // --- 4 ter. Socle commun : champ montant, saisies conservées, parcours ---
         console.log('Parcours 4 ter : champ montant, saisies conservées, parcours de mission');
         await navByClick(page, 'calculator');
-        await page.waitForSelector('#calc-pmt-pv[data-amount]', { timeout: 5000 });
-        const amount = await page.$eval('#calc-pmt-pv', el => {
+        await page.waitForSelector('#calc-wacc-debt[data-amount]', { timeout: 5000 });
+        const amount = await page.$eval('#calc-wacc-debt', el => {
             const shown = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.get?.call(el);
             return { shown, value: /** @type {HTMLInputElement} */ (el).value };
         });
-        check('Montant affiché formaté, lu en nombre brut', /^500[\s\u00a0\u202f]000$/.test(amount.shown || '') && amount.value === '500000', JSON.stringify(amount));
-        await page.$eval('#calc-pmt-pv', el => { /** @type {HTMLInputElement} */ (el).value = '1250000'; el.dispatchEvent(new Event('input', { bubbles: true })); });
-        await page.click('#calc-pmt-btn');
+        check('Montant affiché formaté, lu en nombre brut', /^3[\s\u00a0\u202f]000[\s\u00a0\u202f]000$/.test(amount.shown || '') && amount.value === '3000000', JSON.stringify(amount));
+        await page.$eval('#calc-wacc-debt', el => { /** @type {HTMLInputElement} */ (el).value = '1250000'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+        await page.click('#calc-wacc-btn');
         await navByClick(page, 'dashboard');
         await navByClick(page, 'calculator');
-        await page.waitForSelector('#calc-pmt-pv[data-amount]', { timeout: 5000 });
-        check('Saisie de la Calculatrice conservée au retour', await page.$eval('#calc-pmt-pv', el => /** @type {HTMLInputElement} */ (el).value === '1250000'));
+        await page.waitForSelector('#calc-wacc-debt[data-amount]', { timeout: 5000 });
+        check('Saisie de la Calculatrice conservée au retour', await page.$eval('#calc-wacc-debt', el => /** @type {HTMLInputElement} */ (el).value === '1250000'));
         await navByClick(page, 'dashboard');
         await page.click('.home-mission[data-mission="refi"]');
         await page.waitForFunction(() => location.hash === '#debtprofile', { timeout: 5000 });
@@ -186,6 +186,21 @@ async function run() {
         await page.waitForFunction(() => location.hash === '#credit', { timeout: 5000 });
         check('Parcours : étape Crédit ouverte sur le bon type', await page.$eval('#credit-tabs .tab.active', el => el.getAttribute('data-type') === 'variable'));
         await page.click('#mission-stop');
+
+        // --- 4 quater. Prêt Bpifrance : différé puis échéances constantes ---
+        console.log('Parcours 4 quater : prêt Bpifrance');
+        await navByClick(page, 'credit');
+        await page.click('.credit-family[data-family="mt"]').catch(() => {});
+        await page.waitForSelector('#credit-tabs .tab[data-type="bpi"]', { timeout: 5000 });
+        await page.click('#credit-tabs .tab[data-type="bpi"]');
+        await page.waitForSelector('#cr-bpi-years', { timeout: 5000 });
+        await page.click('#credit-form button[type="submit"]');
+        await page.waitForSelector('#credit-results .results-panel', { timeout: 10000 });
+        const bpi = await page.evaluate(() => ({
+            rows: document.querySelectorAll('#amort-table tbody tr').length,
+            text: document.querySelector('#credit-results .results-panel')?.textContent || ''
+        }));
+        check('Bpifrance : phase de différé affichée', /pendant le différé/i.test(bpi.text) && /5 ans/.test(bpi.text), bpi.text.replace(/\s+/g, ' ').slice(0, 120));
 
         console.log('Parcours 5 : Service worker (install + bandeau de mise à jour)');
         const swActive = await page.evaluate(async () => {

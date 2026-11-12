@@ -57,6 +57,40 @@ export const Dialog = {
     },
 
     /**
+     * Fenêtre « Sauvegarder » commune (nom + notes).
+     * @param {{ title?: string, defaultName: string }} opts
+     * @returns {Promise<{ name: string, notes: string } | null>}
+     */
+    save({ title = 'Sauvegarder l\u2019analyse', defaultName }) {
+        if (pending) Dialog.close();
+        Dialog.open(`
+            <h2 style="margin-bottom:20px">${escapeHtml(title)}</h2>
+            <div class="form-group" style="margin-bottom:16px">
+                <label class="form-label" for="dlg-save-name">Nom</label>
+                <input type="text" class="form-input" id="dlg-save-name" value="${escapeHtml(defaultName)}" maxlength="120" style="width:100%">
+            </div>
+            <div class="form-group" style="margin-bottom:24px">
+                <label class="form-label" for="dlg-save-notes">Notes (optionnel)</label>
+                <textarea class="form-input notes-input" id="dlg-save-notes" rows="3" placeholder="Ajoutez des notes ou commentaires..."></textarea>
+            </div>
+            <div class="btn-group" style="justify-content:flex-end">
+                <button type="button" class="btn btn-outline" id="dlg-cancel">Annuler</button>
+                <button type="button" class="btn btn-primary" id="dlg-ok">Sauvegarder</button>
+            </div>`);
+        return new Promise(resolve => {
+            pending = ok => { if (!ok) resolve(null); };
+            document.getElementById('dlg-cancel')?.addEventListener('click', () => Dialog.close());
+            document.getElementById('dlg-ok')?.addEventListener('click', () => {
+                const name = /** @type {HTMLInputElement | null} */ (document.getElementById('dlg-save-name'))?.value.trim() || defaultName;
+                const notes = /** @type {HTMLTextAreaElement | null} */ (document.getElementById('dlg-save-notes'))?.value || '';
+                pending = null;
+                overlay()?.classList.add('hidden');
+                resolve({ name, notes });
+            });
+        });
+    },
+
+    /**
      * Confirmation dans la fenêtre de l'outil.
      * @param {string} message
      * @param {{ title?: string, confirmLabel?: string, danger?: boolean }} [opts]

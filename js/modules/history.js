@@ -10,6 +10,7 @@ import { escapeHtml } from '../utils/sanitize.js';
 import { Cloud } from '../utils/cloud.js';
 import { Dialog } from '../utils/dialog.js';
 import { Dossier } from '../utils/dossier.js';
+import { recomputeSchedule } from '../utils/creditcompute.js';
 
 /**
  * Export « dossier banque » : plusieurs analyses enregistrées (Structuré,
@@ -95,6 +96,13 @@ function bankPackSections(sims) {
     return sections;
 }
 
+/** L'Historique ne garde pas les échéanciers : recalcul à partir des paramètres pour l'export. */
+function withSchedule(sim) {
+    if (sim.results?.schedule) return sim;
+    const schedule = recomputeSchedule(sim.type, sim.params);
+    return schedule?.length ? { ...sim, results: { ...sim.results, schedule } } : sim;
+}
+
 function renderHistory() {
     const history = Storage.getHistory();
 
@@ -136,7 +144,7 @@ function renderHistory() {
                             // Structuré et Covenants travaillent en k€ : conversion pour un affichage en €
                             const kEur = s.type === 'structured' || s.type === 'covenants';
                             const covDebt = Array.isArray(s.params?.debts) ? s.params.debts.reduce((t, d) => t + (parseFloat(d.amount) || 0), 0) : 0;
-                            const raw = s.params?.principal || s.params?.assetValue || s.params?.creditLine || s.params?.bridgeAmount || s.params?.totalDebt || s.results?.totalEmplois || covDebt || 0;
+                            const raw = s.params?.principal || s.params?.loanAmount || s.params?.loans?.[0]?.principal || s.params?.assetValue || s.params?.creditLine || s.params?.bridgeAmount || s.params?.totalDebt || s.results?.totalEmplois || covDebt || 0;
                             const amount = kEur ? raw * 1000 : raw;
                             return `
                                 <tr>
@@ -242,7 +250,7 @@ function showSimDetails(id) {
     });
     body.querySelector('.modal-export')?.addEventListener('click', () => {
         const s = Storage.getSimulation(id);
-        if (s) Export.fullReportExcel(s);
+        if (s) Export.fullReportExcel(withSchedule(s));
     });
 }
 
@@ -251,7 +259,7 @@ function reloadSimulation(id) {
     if (!sim) return;
 
     // Navigate to the appropriate page
-    const PAGE_BY_TYPE = { structured: 'structured', covenants: 'covenants', debtprofile: 'debtprofile' };
+    const PAGE_BY_TYPE = { structured: 'structured', covenants: 'covenants', debtprofile: 'debtprofile', immobilier: 'immobilier', benchmark: 'benchmark', stress: 'stress' };
     const page = PAGE_BY_TYPE[sim.type] || 'credit';
 
     // À poser AVANT la navigation : init() du module le lit de façon synchrone
@@ -406,7 +414,7 @@ export const HistoryModule = {
             const exportBtn = e.target.closest('.export-sim');
             if (exportBtn) {
                 const sim = Storage.getSimulation(exportBtn.dataset.id);
-                if (sim) Export.fullReportExcel(sim);
+                if (sim) Export.fullReportExcel(withSchedule(sim));
                 return;
             }
 

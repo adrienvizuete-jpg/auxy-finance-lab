@@ -41,6 +41,37 @@ const MIGRATIONS = {
     1: () => {}
 };
 
+/**
+ * Copie allégée de résultats pour l'Historique : sans échéancier ni grands
+ * tableaux de lignes (recalculés à la demande, js/utils/creditcompute.js).
+ * Un échéancier pèse 17 à 48 Ko : 100 simulations saturaient le stockage.
+ * @template T
+ * @param {T} value
+ * @returns {T}
+ */
+export function slimResults(value) {
+    /** @param {any} v @param {number} depth @returns {any} */
+    const walk = (v, depth) => {
+        if (Array.isArray(v)) {
+            if (v.length > 60 && v.every(x => x && typeof x === 'object')) return undefined;
+            return depth > 6 ? v : v.map(x => walk(x, depth + 1));
+        }
+        if (v && typeof v === 'object') {
+            if (depth > 6) return v;
+            /** @type {Record<string, any>} */
+            const out = {};
+            for (const [k, x] of Object.entries(v)) {
+                if (k === 'schedule') continue;
+                const w = walk(x, depth + 1);
+                if (w !== undefined) out[k] = w;
+            }
+            return out;
+        }
+        return v;
+    };
+    return walk(value, 0);
+}
+
 export const Storage = {
     /**
      * Applique les migrations de schéma en attente. Appelé au démarrage de
@@ -49,6 +80,14 @@ export const Storage = {
     migrate() {
         let version = this.get('schema_version', 1);
         if (typeof version !== 'number' || version < 1) version = 1;
+        // Historique antérieur à l'allègement : échéanciers retirés une fois pour toutes
+        if (!this.get('history_slim')) {
+            const raw = this.get('history');
+            if (Array.isArray(raw) && raw.length) {
+                this.set('history', raw.map(s => (s && typeof s === 'object' && s.results ? { ...s, results: slimResults(s.results) } : s)));
+            }
+            this.set('history_slim', true);
+        }
         while (version < SCHEMA_VERSION) {
             try {
                 MIGRATIONS[version]?.();
@@ -120,6 +159,7 @@ export const Storage = {
         const history = this.getHistory();
         simulation.id = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
         simulation.date = new Date().toISOString();
+        if (simulation.results) simulation.results = slimResults(simulation.results);
         // Rattachée au dossier client actif (accueil : dossiers récents, export dossier banque)
         const active = this.get('dossier_active');
         if (!simulation.dossier && active && typeof active.name === 'string') simulation.dossier = active.name.slice(0, 80);
@@ -127,9 +167,11 @@ export const Storage = {
         // Keep last 100 simulations
         if (history.length > 100) history.length = 100;
         if (!this.set('history', history)) {
-            // Quota plein : on retente avec un historique réduit de moitié
+            // Quota plein : on retente avec un historique réduit de moitié, et on le dit
+            const before = history.length;
             history.length = Math.max(1, Math.floor(history.length / 2));
             if (!this.set('history', history)) return null;
+            if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('storage:purged', { detail: { removed: before - history.length } }));
         }
         return simulation.id;
     },
@@ -186,26 +228,6 @@ export const Storage = {
         this.set('cloud_tombstones', this.getTombstones().filter(t => !done.has(t.id)));
     },
 
-    // Benchmark saves — retourne null si l'écriture a échoué (quota plein)
-    /**
-     * @param {Benchmark} benchmark
-     * @returns {string | null}
-     */
-    saveBenchmark(benchmark) {
-        const benchmarks = this.get('benchmarks', /** @type {Benchmark[]} */ ([]));
-        benchmark.id = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
-        benchmark.date = new Date().toISOString();
-        benchmarks.unshift(benchmark);
-        if (benchmarks.length > 50) benchmarks.length = 50;
-        if (!this.set('benchmarks', benchmarks)) return null;
-        return benchmark.id;
-    },
-
-    /** @returns {Benchmark[]} */
-    getBenchmarks() {
-        return this.get('benchmarks', /** @type {Benchmark[]} */ ([]));
-    },
-
     // Theme
     /** @returns {string} */
     getTheme() {
@@ -220,9 +242,7 @@ export const Storage = {
     // Stats
     getStats() {
         const history = this.getHistory();
-        const benchmarks = this.getBenchmarks();
         const totalSimulations = history.length;
-        const totalBenchmarks = benchmarks.length;
 
         /** @type {Record<string, number>} */
         const byType = {};
@@ -234,7 +254,6 @@ export const Storage = {
 
         return {
             totalSimulations,
-            totalBenchmarks,
             byType,
             totalAmount,
             lastSimulation: history[0] || null
