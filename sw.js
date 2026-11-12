@@ -7,7 +7,7 @@
  * Incrémenter CACHE_VERSION à chaque évolution notable du front.
  */
 
-const CACHE_VERSION = 'auxy-finance-lab-v10';
+const CACHE_VERSION = 'auxy-finance-lab-v11';
 
 const PRECACHE = [
     './',

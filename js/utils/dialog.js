@@ -91,6 +91,39 @@ export const Dialog = {
     },
 
     /**
+     * Demande une ligne de texte. Résout la saisie ('' si laissée vide), ou
+     * null si la fenêtre est fermée sans valider.
+     * @param {{ title: string, label: string, text?: string, placeholder?: string, confirmLabel?: string }} opts
+     * @returns {Promise<string | null>}
+     */
+    prompt({ title, label, text = '', placeholder = '', confirmLabel = 'Valider' }) {
+        if (pending) Dialog.close();
+        Dialog.open(`
+            <h2 style="margin-bottom:12px">${escapeHtml(title)}</h2>
+            ${text ? `<p style="margin-bottom:16px;color:var(--text-secondary)">${escapeHtml(text)}</p>` : ''}
+            <div class="form-group" style="margin-bottom:24px">
+                <label class="form-label" for="dlg-prompt">${escapeHtml(label)}</label>
+                <input type="text" class="form-input" id="dlg-prompt" maxlength="80" placeholder="${escapeHtml(placeholder)}" style="width:100%">
+            </div>
+            <div class="btn-group" style="justify-content:flex-end">
+                <button type="button" class="btn btn-outline" id="dlg-cancel">Annuler</button>
+                <button type="button" class="btn btn-primary" id="dlg-ok">${escapeHtml(confirmLabel)}</button>
+            </div>`);
+        return new Promise(resolve => {
+            pending = ok => { if (!ok) resolve(null); };
+            const input = /** @type {HTMLInputElement | null} */ (document.getElementById('dlg-prompt'));
+            const validate = () => {
+                pending = null;
+                overlay()?.classList.add('hidden');
+                resolve(input?.value.trim() || '');
+            };
+            document.getElementById('dlg-cancel')?.addEventListener('click', () => Dialog.close());
+            document.getElementById('dlg-ok')?.addEventListener('click', validate);
+            input?.addEventListener('keydown', e => { if (e.key === 'Enter') validate(); });
+        });
+    },
+
+    /**
      * Confirmation dans la fenêtre de l'outil.
      * @param {string} message
      * @param {{ title?: string, confirmLabel?: string, danger?: boolean }} [opts]
