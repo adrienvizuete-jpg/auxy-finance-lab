@@ -396,7 +396,7 @@ function handleTableInput(e) {
     // Nature « Prêt Bpifrance » : structure usuelle proposée (7 ans dont 2 de
     // différé, échéances constantes trimestrielles), modifiable ensuite
     const bpiPreset = e.type === 'change' && section === 'autres' && field === 'type' && parsed === 'bpi' && autresFin[index];
-    if (bpiPreset) Object.assign(autresFin[index], { duration: 7, deferral: 2, amortType: 'constant', frequency: 'trimestriel' });
+    if (bpiPreset) Object.assign(autresFin[index], { duration: 7, deferral: 2, amortType: 'constant', frequency: 'trimestriel', ...(autresFin[index].label === 'Crédit vendeur' ? { label: 'Prêt Bpifrance' } : {}) });
 
     // Changement de nature de taux / d'amortissement : la ligne change de forme
     if (e.type === 'change' && (field === 'rateType' || field === 'amortType' || bpiPreset)) {
