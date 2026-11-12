@@ -416,10 +416,16 @@ export const Financial = {
      * (7 ans le plus souvent, parfois 8 ou 10) INCLUT le différé.
      * amortProfile : 'constant' = échéances constantes (défaut),
      * 'degressif' = capital constant (linéaire).
-     * @param {{ principal: number, annualRate: number, durationYears: number, deferralYears: number, frequency?: string, fees?: number, amortProfile?: string }} p
-     * @returns {LoanResult & { amortProfile: string, deferralPayment: number, amortYears: number }}
+     *
+     * Retenue de garantie (5 % du montant en général) : prélevée sur le
+     * décaissement, restituée après complet remboursement, augmentée le cas
+     * échéant de ses intérêts (retenueRate, capitalisés). Les intérêts du prêt
+     * courent sur le nominal entier : le TEG / TAEG, calculés sur les flux
+     * nets, sont donc supérieurs au taux facial.
+     * @param {{ principal: number, annualRate: number, durationYears: number, deferralYears: number, frequency?: string, fees?: number, amortProfile?: string, retenuePct?: number, retenueRate?: number }} p
+     * @returns {LoanResult & { amortProfile: string, deferralPayment: number, amortYears: number, retenueAmount: number, netDisbursed: number, retenueRefund: number, tegExRetenue: number | null }}
      */
-    pretBpifrance({ principal, annualRate, durationYears, deferralYears, frequency = 'quarterly', fees = 0, amortProfile = 'constant' }) {
+    pretBpifrance({ principal, annualRate, durationYears, deferralYears, frequency = 'quarterly', fees = 0, amortProfile = 'constant', retenuePct = 0, retenueRate = 0 }) {
         const years = Math.max(1, Number(durationYears) || 0);
         // au moins un an d'amortissement après le différé
         const deferral = Math.min(Math.max(0, Number(deferralYears) || 0), years - 1);
@@ -427,7 +433,93 @@ export const Financial = {
         const profile = amortProfile === 'degressif' ? 'degressif' : 'constant';
         const result = profile === 'degressif' ? this.amortissableDegressif(params) : this.amortissableConstant(params);
         const deferredRow = result.schedule.find(r => r.deferred);
-        return { ...result, amortProfile: profile, deferralPayment: deferredRow ? deferredRow.payment : 0, amortYears: years - deferral };
+
+        const ppy = this.getPeriodsPerYear(frequency);
+        const n = result.schedule.length;
+        const retenueAmount = n ? Math.max(0, principal * (Number(retenuePct) || 0) / 100) : 0;
+        const retenueRefund = retenueAmount * Math.pow(1 + (Number(retenueRate) || 0) / 100 / ppy, n);
+        let taeg = result.taeg ?? null, teg = result.teg ?? null;
+        if (retenueAmount > 0) {
+            const flows = [-(principal - retenueAmount) + fees, ...result.schedule.map(r => r.payment)];
+            flows[flows.length - 1] -= retenueRefund;
+            ({ taeg, teg } = this._effectiveRates(flows, ppy));
+        }
+        return {
+            ...result,
+            taeg, teg,
+            tegExRetenue: result.teg ?? null,
+            // les intérêts servis sur la retenue viennent en déduction du coût
+            totalCost: result.totalCost - (retenueRefund - retenueAmount),
+            amortProfile: profile,
+            deferralPayment: deferredRow ? deferredRow.payment : 0,
+            amortYears: years - deferral,
+            retenueAmount,
+            netDisbursed: principal - retenueAmount - fees,
+            retenueRefund
+        };
+    },
+
+    /**
+     * Cofinancement : prêt Bpifrance + prêt bancaire amortissable, même
+     * périodicité, échéancier consolidé période par période. Le TEG
+     * consolidé porte sur les flux nets des deux prêts (retenue de garantie
+     * Bpifrance comprise).
+     * @param {{ bpi: { principal: number, annualRate: number, durationYears: number, deferralYears: number, fees?: number, amortProfile?: string, retenuePct?: number, retenueRate?: number }, bank: { principal: number, annualRate: number, durationYears: number, deferralMonths?: number, amortProfile?: string, fees?: number }, frequency?: string }} p
+     */
+    cofinancementBpifrance({ bpi, bank, frequency = 'quarterly' }) {
+        const ppy = this.getPeriodsPerYear(frequency);
+        const bpiRes = this.pretBpifrance({ ...bpi, frequency });
+        const bankParams = { principal: bank.principal, annualRate: bank.annualRate, durationMonths: Math.max(1, Number(bank.durationYears) || 0) * 12, fees: bank.fees || 0, frequency, deferralMonths: bank.deferralMonths || 0, deferralType: 'partial' };
+        const bankRes = bank.amortProfile === 'degressif' ? this.amortissableDegressif(bankParams) : this.amortissableConstant(bankParams);
+
+        const n = Math.max(bpiRes.schedule.length, bankRes.schedule.length);
+        /** @type {AmortRow[]} */
+        const schedule = [];
+        let totalInterest = 0;
+        for (let i = 0; i < n; i++) {
+            const a = bpiRes.schedule[i], b = bankRes.schedule[i];
+            const interest = (a?.interest || 0) + (b?.interest || 0);
+            totalInterest += interest;
+            schedule.push({
+                period: i + 1,
+                payment: (a?.payment || 0) + (b?.payment || 0),
+                principal: (a?.principal || 0) + (b?.principal || 0),
+                interest,
+                insurance: 0,
+                balance: (a?.balance || 0) + (b?.balance || 0),
+                totalInterest,
+                totalInsurance: 0
+            });
+        }
+        const total = bpi.principal + bank.principal;
+        const flows = [-(total - bpiRes.retenueAmount) + (bpi.fees || 0) + (bank.fees || 0), ...schedule.map(r => r.payment)];
+        if (bpiRes.schedule.length) flows[bpiRes.schedule.length] -= bpiRes.retenueRefund;
+        const { taeg, teg } = this._effectiveRates(flows, ppy);
+        const year = (/** @type {number} */ y) => schedule.slice(y * ppy, (y + 1) * ppy).reduce((s, r) => s + r.payment, 0);
+        const years = Math.ceil(n / ppy);
+        const annualService = Array.from({ length: years }, (_, y) => year(y));
+        const peak = annualService.reduce((m, v, y) => (v > m.service ? { service: v, year: y + 1 } : m), { service: 0, year: 1 });
+        return {
+            cofinancement: true,
+            frequency,
+            schedule,
+            loans: { bpi: bpiRes, bank: bankRes },
+            totalPrincipal: total,
+            bpiShare: total > 0 ? bpi.principal / total * 100 : 0,
+            weightedRate: total > 0 ? (bpi.principal * bpi.annualRate + bank.principal * bank.annualRate) / total : 0,
+            totalInterest,
+            totalCost: bpiRes.totalCost + bankRes.totalCost,
+            totalPayment: bpiRes.totalPayment + bankRes.totalPayment,
+            totalInsurance: 0,
+            firstYearService: annualService[0] || 0,
+            peakService: peak.service,
+            peakYear: peak.year,
+            annualService,
+            netDisbursed: bpiRes.netDisbursed + bank.principal - (bank.fees || 0),
+            retenueAmount: bpiRes.retenueAmount,
+            taeg, teg,
+            effectiveDurationMonths: n * (12 / ppy)
+        };
     },
 
     /**

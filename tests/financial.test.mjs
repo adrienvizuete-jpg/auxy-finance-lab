@@ -384,3 +384,47 @@ describe('Prêt Bpifrance — différé puis échéances constantes', () => {
         near(r.schedule[r.schedule.length - 1].balance, 0, 1e-4);
     });
 });
+
+describe('Prêt Bpifrance — retenue de garantie et cofinancement', () => {
+    const near = (/** @type {number} */ a, /** @type {number} */ b, tol = 1e-6) => assert.ok(Math.abs(a - b) <= tol, `${a} ≠ ${b}`);
+    const base = { principal: 1000000, annualRate: 4, durationYears: 7, deferralYears: 2, frequency: 'quarterly' };
+
+    test('retenue de 5 % : net décaissé 950 k€, restituée à la fin, TEG au-dessus du taux facial', () => {
+        const r = Financial.pretBpifrance({ ...base, retenuePct: 5 });
+        near(r.retenueAmount, 50000);
+        near(r.netDisbursed, 950000);
+        near(r.retenueRefund, 50000);
+        near(/** @type {number} */ (r.tegExRetenue), 4, 1e-6);
+        assert.ok(/** @type {number} */ (r.teg) > 4.05 && /** @type {number} */ (r.teg) < 4.4, `TEG ${r.teg}`);
+        // le TEG trouvé annule bien la valeur actuelle des flux nets
+        const i = /** @type {number} */ (r.teg) / 100 / 4;
+        const flows = [-950000, ...r.schedule.map(x => x.payment)];
+        flows[flows.length - 1] -= 50000;
+        near(flows.reduce((s, f, k) => s + f / Math.pow(1 + i, k), 0), 0, 1e-3);
+    });
+
+    test('retenue rémunérée au taux du prêt : le TEG revient au taux facial', () => {
+        const r = Financial.pretBpifrance({ ...base, retenuePct: 5, retenueRate: 4 });
+        near(/** @type {number} */ (r.teg), 4, 1e-6);
+        assert.ok(r.retenueRefund > 50000);
+    });
+
+    test('cofinancement : l\'échéancier consolidé est la somme des deux prêts', () => {
+        const c = Financial.cofinancementBpifrance({ bpi: { ...base, retenuePct: 5 }, bank: { principal: 1000000, annualRate: 4.5, durationYears: 7 }, frequency: 'quarterly' });
+        assert.equal(c.schedule.length, 28);
+        c.schedule.forEach((row, k) => near(row.payment, c.loans.bpi.schedule[k].payment + c.loans.bank.schedule[k].payment, 1e-6));
+        near(c.totalPrincipal, 2000000);
+        near(c.weightedRate, 4.25);
+        near(c.schedule[27].balance, 0, 1e-3);
+        near(c.totalInterest, c.loans.bpi.totalInterest + c.loans.bank.totalInterest, 1e-4);
+        // pic du service de dette après le différé Bpifrance
+        assert.ok(c.peakYear >= 3, `pic année ${c.peakYear}`);
+        assert.ok(/** @type {number} */ (c.teg) > 4.25);
+    });
+
+    test('cofinancement : durées différentes (banque 5 ans, Bpifrance 10 ans)', () => {
+        const c = Financial.cofinancementBpifrance({ bpi: { ...base, durationYears: 10, deferralYears: 3 }, bank: { principal: 500000, annualRate: 4.5, durationYears: 5 }, frequency: 'quarterly' });
+        assert.equal(c.schedule.length, 40);
+        near(c.schedule[20].payment, c.loans.bpi.schedule[20].payment, 1e-6);
+    });
+});
